@@ -183,4 +183,4 @@ Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data lang
     - Import ulang hanya memperbarui nama, kategori, dan harga. Stok dan barcode yang sudah diganti tidak berubah.
 - Stok awal di file import boleh minus.
 - Saran Restock: barang yang stok tokonya 0 karena belum pernah dipajang (mis. hasil import) tampil biasa. Merah hanya untuk barang yang habis/minus karena terjual di kasir, dan hilang setelah rak diisi lagi (Mutasi / Penerimaan ke Toko).
-- Shortcut: F1 Kasir, F2 fokus scan, F3 Mutasi, F4 Penerimaan, F5 Daftar Barang, F6 Shift, F8 kosongkan keranjang, F9 bayar, F10 Cetak Barcode, F12 isi Uang Diterima (lalu Enter = bayar). Pengaturan dibuka lewat tombol di sidebar. Di layar Kasir, tombol `*` di kolom barcode yang kosong memindahkan fokus ke kolom Jumlah.
+- Shortcut: F1 Kasir, F2 fokus scan, F3 Mutasi, F4 Penerimaan, F5 Daftar Barang, F6 Shift, F8 kosongkan keranjang, F9 bayar, F10 Cetak Barcode, F12 isi Uang Diterima (F12 lagi = Uang Pas, lalu Enter = bayar). Pengaturan dibuka lewat tombol di sidebar. Di layar Kasir, tombol `*` di kolom barcode yang kosong memindahkan fokus ke kolom Jumlah.

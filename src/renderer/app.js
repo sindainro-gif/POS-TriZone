@@ -385,9 +385,16 @@ views.checkout = (() => {
     $('#cashBlock').classList.toggle('hidden', method !== 'Tunai');
     updateChange();
   }
-  // F12: kolom uang hanya ada untuk Tunai, jadi metode dipindah ke Tunai dulu
+  // F12: kolom uang hanya ada untuk Tunai, jadi metode dipindah ke Tunai dulu.
+  // F12 lagi saat sudah di kolom uang = Uang Pas.
   function focusCash() {
     if (!state.shift || $('#modalRoot').children.length) return;
+    if (method === 'Tunai' && document.activeElement === cashInput && total() > 0) {
+      setMoney(cashInput, total());
+      updateChange();
+      cashInput.select();
+      return;
+    }
     if (method !== 'Tunai') { method = 'Tunai'; renderMethods(); }
     cashInput.focus();
     cashInput.select();

@@ -91,6 +91,11 @@ app.on('browser-window-created', (_e, win) => {
         return { focus: document.activeElement.id, method: document.querySelector('#payMethods .active').dataset.m, view: state.view }; })()`);
       console.log('F12:', JSON.stringify(f12));
       if (f12.focus !== 'cashInput' || f12.method !== 'Tunai' || f12.view !== 'checkout') throw new Error('F12 tidak mengisi Uang Diterima');
+      // F12 lagi di kolom Uang Diterima = Uang Pas
+      const f12Pas = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true }));
+        return { cash: document.querySelector('#cashInput').value.replace(/\\D/g, ''), pas: document.querySelector('#quickCash [data-v]').dataset.v, focus: document.activeElement.id }; })()`);
+      console.log('F12 lagi:', JSON.stringify(f12Pas));
+      if (f12Pas.cash !== f12Pas.pas || f12Pas.focus !== 'cashInput') throw new Error('F12 kedua tidak mengisi Uang Pas');
       await run(`(() => { const c = document.querySelector('#cashInput'); c.value = '200.000'; c.dispatchEvent(new Event('input')); })()`);
       await shot('02-kasir-keranjang');
       const alertText = await run(`document.querySelector('#stockAlert').className + ' | ' + document.querySelector('#stockAlert').innerText`);
