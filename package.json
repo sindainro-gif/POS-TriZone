@@ -1,0 +1,39 @@
+{
+  "name": "pos-trizone",
+  "productName": "POS Tri-Zone",
+  "version": "1.2.2",
+  "description": "POS Desktop Offline dengan Tri-Zone Inventory (Toko, Gudang Utama, Gudang BS/Retur)",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/services.test.js && node test/receipt.test.js && node test/labels.test.js && node test/db.test.js && node test/remote.test.js && node test/offline.test.js && node test/auth.test.js && node test/search.test.js && node test/demo.test.js && node test/drafts.test.js",
+    "smoke": "electron test/smoke.js",
+    "smoke:lan": "electron test/smoke-lan.js",
+    "smoke:demo": "electron test/smoke-demo.js",
+    "dist": "electron-builder --win"
+  },
+  "dependencies": {
+    "nodemailer": "6.9.14",
+    "sql.js": "1.10.3",
+    "xlsx": "0.18.5"
+  },
+  "devDependencies": {
+    "electron": "32.2.0",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "id.pos.trizone",
+    "productName": "POS Tri-Zone",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

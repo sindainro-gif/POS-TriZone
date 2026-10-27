@@ -1,0 +1,18 @@
+# Dependensi & hasil build (dibuat ulang dengan `npm install` / `npm run dist`)
+node_modules/
+dist/
+
+# Data toko & cadangan database (jangan masuk repo)
+Pemulihan/
+*.db
+*.db.tmp
+*.db-journal
+
+# Pengaturan lokal Claude Code di komputer ini
+.claude/settings.local.json
+
+# Sampah sistem
+Thumbs.db
+desktop.ini
+.DS_Store
+*.log

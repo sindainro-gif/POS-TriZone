@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'">
+  <title>POS Tri-Zone</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">POS</div>
+      <div>
+        <div class="brand-name" id="storeName">Toko Saya</div>
+        <div class="brand-sub">Tri-Zone Inventory</div>
+      </div>
+    </div>
+    <nav id="nav">
+      <button class="nav-btn" data-view="checkout"><span class="nav-ico">⌁</span><span>Kasir / Pembayaran</span><kbd>F1</kbd></button>
+      <button class="nav-btn" data-view="transfers"><span class="nav-ico">⇄</span><span>Mutasi &amp; Pindah Stok</span><kbd>F3</kbd></button>
+      <button class="nav-btn" data-view="receiving"><span class="nav-ico">⇩</span><span>Penerimaan Barang</span><kbd>F4</kbd></button>
+      <button class="nav-btn" data-view="products"><span class="nav-ico">≡</span><span>Daftar Barang</span><kbd>F5</kbd></button>
+      <button class="nav-btn" data-view="barcode"><span class="nav-ico">▥</span><span>Cetak Barcode</span><kbd>F10</kbd></button>
+      <button class="nav-btn" data-view="shift"><span class="nav-ico">◷</span><span>Laporan Shift &amp; Tutup Kasir</span><kbd>F6</kbd></button>
+    </nav>
+    <div class="sidebar-foot">
+      <div id="demoRibbon" class="demo-ribbon hidden">
+        <div><b>DEMO</b> <span>Data latihan, bukan data toko asli</span></div>
+        <div class="btn-row">
+          <button class="btn sm danger" id="demoReset">Reset Data</button>
+        </div>
+      </div>
+      <div id="userBadge" class="user-badge hidden"></div>
+      <div id="connBadge" class="conn-badge hidden"></div>
+      <div id="shiftBadge" class="shift-badge off">Shift belum dibuka</div>
+      <button class="nav-btn small" data-view="settings"><span class="nav-ico">⚙</span><span>Pengaturan</span></button>
+      <div class="clock" id="clock"></div>
+    </div>
+  </aside>
+
+  <main>
+    <!-- ======================= KASIR ======================= -->
+    <section class="view" id="view-checkout">
+      <div class="checkout">
+        <div class="co-left">
+          <div id="emergencyBanner" class="emergency-banner hidden"></div>
+          <div class="scanbar">
+            <div class="scan-row">
+              <label class="qty-field" for="qtyInput"><span>Jumlah</span><input id="qtyInput" type="number" min="1" step="1" value="1" inputmode="numeric" autocomplete="off"></label>
+              <div class="scan-field picker-wrap">
+                <span class="scan-ico">▮▯▮▮▯▮</span>
+                <input id="scanInput" autocomplete="off" spellcheck="false" placeholder="Scan barcode atau ketik SKU / nama barang…">
+              </div>
+            </div>
+            <div class="hint"><b>Enter</b> di kolom scan kosong = pindah ke Jumlah, Enter lagi = kembali ke scan · F2 fokus scan · F12 uang diterima (Enter = bayar) · F8 kosongkan · F9 bayar</div>
+          </div>
+          <div id="stockAlert" class="alert danger hidden"></div>
+          <div class="card cart-card">
+            <table class="tbl cart">
+              <thead><tr><th class="w-num">#</th><th>Barang</th><th class="r">Harga</th><th class="c">Jumlah (Biji)</th><th class="r">Subtotal</th><th class="w-act"></th></tr></thead>
+              <tbody id="cartBody"></tbody>
+            </table>
+            <div id="cartEmpty" class="empty">
+              <div class="empty-big">Keranjang kosong</div>
+              Scan barcode barang untuk memulai transaksi.
+            </div>
+          </div>
+        </div>
+        <div class="co-right card">
+          <div id="coShiftInfo" class="co-shift"></div>
+          <div class="total-box">
+            <div class="lbl">Total Belanja</div>
+            <div class="total" id="coTotal">Rp 0</div>
+            <div class="sub" id="coCount">0 Biji · 0 baris</div>
+          </div>
+          <div class="lbl">Metode Pembayaran</div>
+          <div class="seg" id="payMethods"></div>
+          <div id="cashBlock">
+            <label class="lbl" for="cashInput">Uang Diterima <kbd>F12</kbd></label>
+            <input id="cashInput" class="money big-input" inputmode="numeric" autocomplete="off" placeholder="0">
+            <div class="quick-cash" id="quickCash"></div>
+            <div class="change-row"><span>Kembalian</span><strong id="coChange">Rp 0</strong></div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn primary xl" id="payBtn">Bayar <kbd>F9</kbd></button>
+          <div class="draft-row">
+            <button class="btn ghost" id="draftHoldBtn" title="Simpan keranjang ini, layani pelanggan lain dulu">Tahan (Draft)</button>
+            <button class="btn ghost" id="draftListBtn">Daftar Draft</button>
+          </div>
+          <button class="btn ghost" id="clearBtn">Kosongkan Keranjang <kbd>F8</kbd></button>
+        </div>
+      </div>
+      <div id="coNoShift" class="overlay hidden"><div class="card overlay-card" id="coNoShiftCard"></div></div>
+    </section>
+
+    <!-- ======================= MUTASI ======================= -->
+    <section class="view" id="view-transfers">
+      <header class="page-head">
+        <div><h1>Mutasi &amp; Pindah Stok</h1><p>Pindahkan stok antar zona: Toko, Gudang Utama, dan Gudang BS / Retur.</p></div>
+      </header>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Form Mutasi</h2>
+          <div class="field picker-wrap">
+            <label>Barang</label>
+            <input id="trPicker" autocomplete="off" placeholder="Scan barcode / ketik nama barang…">
+          </div>
+          <div id="trProduct" class="product-box muted">Belum ada barang dipilih.</div>
+          <div class="field">
+            <label>Arah Mutasi</label>
+            <select id="trDirection"></select>
+          </div>
+          <div class="row-2">
+            <div class="field"><label>Jumlah</label><input id="trQty" type="number" min="1" step="1" value="1"></div>
+            <div class="field"><label>Satuan</label><select id="trUnit"><option value="Biji">Biji</option><option value="Dus">Dus</option></select></div>
+          </div>
+          <div id="trQtyHint" class="hint"></div>
+          <div class="field">
+            <label>Alasan Mutasi <span class="muted">(opsional)</span></label>
+            <input id="trReason" maxlength="200" placeholder="Contoh: Pecah terinjak">
+            <div class="chips" id="trReasonChips"></div>
+          </div>
+          <button class="btn primary" id="trSubmit">Simpan Mutasi</button>
+        </div>
+        <div class="card">
+          <h2>Saran Restock Rak Toko</h2>
+          <p class="muted small"><b class="diff-neg">Merah</b> = stok toko habis/minus karena terjual di kasir, selalu paling atas. Lainnya = stok toko di bawah / sama dengan batas minimum (termasuk barang yang belum dipajang).</p>
+          <div id="trLowList" class="low-list"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Riwayat Mutasi</h2>
+          <input id="trSearch" class="search" placeholder="Cari barang / alasan…">
+        </div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Waktu</th><th>Barang</th><th>Dari</th><th></th><th>Ke</th><th class="r">Jumlah (Biji)</th><th>Alasan</th></tr></thead>
+          <tbody id="trHistory"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= PENERIMAAN ======================= -->
+    <section class="view" id="view-receiving">
+      <header class="page-head">
+        <div><h1>Penerimaan Barang</h1><p>Catat barang masuk dari supplier berdasarkan Surat Jalan / Nota.</p></div>
+      </header>
+      <div class="card">
+        <h2>Dokumen Penerimaan Baru</h2>
+        <div class="row-3">
+          <div class="field"><label>No. Surat Jalan / Nota Supplier *</label><input id="rcRef" maxlength="60" placeholder="SJ-0001"></div>
+          <div class="field"><label>Nama Supplier</label><input id="rcSupplier" maxlength="100" placeholder="PT Sumber Makmur"></div>
+          <div class="field"><label>Catatan</label><input id="rcNotes" maxlength="500" placeholder="Opsional"></div>
+        </div>
+        <div class="add-row">
+          <div class="field picker-wrap grow"><label>Barang</label><input id="rcPicker" autocomplete="off" placeholder="Scan barcode / ketik nama barang…"></div>
+          <div class="field w-sm"><label>Jumlah</label><input id="rcQty" type="number" min="1" step="1" value="1"></div>
+          <div class="field w-md"><label>Satuan Masuk</label><select id="rcUnit"><option value="Dus">Dus</option><option value="Biji">Biji</option></select></div>
+          <div class="field w-md"><label>Tujuan</label>
+            <select id="rcDest"><option value="warehouse">Gudang Utama</option><option value="floor">Toko</option><option value="damaged">Gudang BS</option></select>
+          </div>
+          <button class="btn" id="rcAdd">Tambah</button>
+        </div>
+        <div id="rcPicked" class="hint"></div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Barang</th><th class="r">Jumlah</th><th>Satuan</th><th class="r">= Biji</th><th>Tujuan</th><th class="w-act"></th></tr></thead>
+          <tbody id="rcItems"></tbody>
+        </table></div>
+        <div class="foot-row">
+          <div id="rcTotal" class="muted">0 barang · 0 Biji</div>
+          <div class="btn-row"><button class="btn ghost" id="rcReset">Batal</button><button class="btn primary" id="rcSave">Simpan Penerimaan</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Riwayat Penerimaan</h2>
+          <input id="rcSearch" class="search" placeholder="Cari no. surat jalan / supplier…">
+        </div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Tanggal</th><th>No. Surat Jalan</th><th>Supplier</th><th class="r">Baris</th><th class="r">Total Biji</th><th>Catatan</th><th class="w-act"></th></tr></thead>
+          <tbody id="rcHistory"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= DAFTAR BARANG ======================= -->
+    <section class="view" id="view-products">
+      <header class="page-head">
+        <div><h1>Daftar Barang</h1><p>Master produk dan stok tiga zona.</p></div>
+        <div class="btn-row">
+          <button class="btn ghost" id="pdTemplate">Unduh Template</button>
+          <button class="btn ghost" id="pdImport">Import Excel / CSV</button>
+          <button class="btn primary" id="pdAdd">+ Tambah Barang</button>
+        </div>
+      </header>
+      <div class="card">
+        <div class="card-head">
+          <div class="btn-row">
+            <input id="pdSearch" class="search wide" placeholder="Cari SKU, barcode, nama, merk, kategori…">
+            <select id="pdFilter">
+              <option value="all">Semua barang</option>
+              <option value="low">Stok toko menipis</option>
+              <option value="empty">Stok toko habis</option>
+              <option value="damaged">Ada barang BS</option>
+            </select>
+          </div>
+          <div class="legend">
+            <span class="badge floor">Tersedia</span><span class="badge wh">Cadangan</span><span class="badge bs">Barang Rusak / BS</span>
+          </div>
+        </div>
+        <div class="tbl-wrap tall"><table class="tbl">
+          <thead><tr><th>SKU</th><th>Barcode</th><th>Nama Barang</th><th>Merk</th><th>Kategori</th><th class="r">Harga Jual (Rp)</th>
+            <th class="c">Stok Toko</th><th class="c">Stok Gudang</th><th class="c">Gudang BS</th><th class="w-act2">Aksi</th></tr></thead>
+          <tbody id="pdBody"></tbody>
+        </table></div>
+        <div id="pdCount" class="muted small"></div>
+      </div>
+    </section>
+
+    <!-- ======================= CETAK BARCODE ======================= -->
+    <section class="view" id="view-barcode">
+      <header class="page-head">
+        <div><h1>Cetak Barcode</h1><p>Desain label barcode dan cetak untuk barang yang masuk.</p></div>
+      </header>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head">
+            <h2>Desain Label</h2>
+            <div class="btn-row">
+              <select id="lbDesign" style="width:auto;min-width:200px"></select>
+              <button class="btn sm ghost" id="lbNew">Baru</button>
+            </div>
+          </div>
+          <div class="field"><label>Nama Desain</label><input id="lbName" maxlength="60"></div>
+          <div class="row-2">
+            <div class="field"><label>Ukuran Kertas</label><select data-k="paper_type"><option value="roll">Kertas Label Rol</option></select></div>
+            <div class="field"><label>Kolom</label><input data-k="columns" type="number" min="1" max="6" step="1"></div>
+          </div>
+          <div class="row-3">
+            <div class="field"><label>Lebar Kertas (mm)</label><input data-k="paper_width_mm" type="number" min="10" step="0.5"></div>
+            <div class="field"><label>Tinggi Label (mm)</label><input data-k="label_height_mm" type="number" min="5" step="0.5"></div>
+            <div class="field"><label>Jarak Antar Kolom (mm)</label><input data-k="gap_mm" type="number" min="0" step="0.5"></div>
+          </div>
+          <div class="row-3">
+            <div class="field"><label>Margin (mm)</label><input data-k="margin_mm" type="number" min="0" step="0.5"></div>
+            <div class="field"><label>Jenis Barcode</label>
+              <select data-k="barcode_type"><option value="auto">Otomatis (EAN-13 / Code 128)</option><option value="ean13">EAN-13</option><option value="code128">Code 128</option></select></div>
+            <div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" data-k="rotate"> Putar 180°</label></div>
+          </div>
+          <p class="muted small">Klik <b>Buka Designer Label</b> untuk mengatur isi label (nama, harga, barcode, garis, kotak).</p>
+          <div class="btn-row" style="margin-top:14px">
+            <button class="btn primary" id="lbSave">Simpan Desain</button>
+            <button class="btn ghost" id="lbDesignerToggle">Buka Designer Label</button>
+            <button class="btn ghost" id="lbDefault">Jadikan Default</button>
+            <button class="btn danger" id="lbDelete">Hapus</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Pratinjau (satu baris label)</h2>
+          <div class="label-preview"><div id="lbPreviewPaper" class="label-paper"></div></div>
+          <div id="lbPreviewInfo" class="hint"></div>
+          <div id="lbPreviewErr" class="alert danger hidden" style="margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="card hidden" id="lbDesigner">
+        <div class="card-head">
+          <h2>Designer Label <button class="btn sm ghost" id="dzClose" style="margin-left:8px">Tutup Designer</button></h2>
+          <div class="btn-row dz-tools" id="dzAdd">
+            <span class="muted small">Tambah:</span>
+            <button class="btn sm ghost" data-add="name">Nama</button>
+            <button class="btn sm ghost" data-add="price">Harga</button>
+            <button class="btn sm ghost" data-add="barcode">Barcode</button>
+            <button class="btn sm ghost" data-add="code">Angka Barcode</button>
+            <button class="btn sm ghost" data-add="sku">SKU</button>
+            <button class="btn sm ghost" data-add="brand">Merk</button>
+            <button class="btn sm ghost" data-add="text">Teks</button>
+            <button class="btn sm ghost" data-add="line">Garis</button>
+            <button class="btn sm ghost" data-add="box">Kotak</button>
+            <button class="btn sm ghost" id="dzReset" title="Kembalikan susunan bawaan">Reset Tata Letak</button>
+          </div>
+        </div>
+        <div class="dz-body">
+          <div class="dz-stage" id="dzStage" tabindex="0">
+            <div class="dz-label" id="dzLabel"><div class="dz-render" id="dzRender"></div><div class="dz-overlay" id="dzOverlay"></div></div>
+          </div>
+          <div class="dz-props" id="dzProps"></div>
+        </div>
+        <div class="hint">Klik elemen untuk memilih · seret untuk memindah · tarik kotak kecil di sudut/sisi untuk mengubah ukuran · panah = geser 0,5 mm (Shift = 2 mm) · Delete = hapus. Jangan lupa <b>Simpan Desain</b>.</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Antrian Cetak</h2>
+          <div class="btn-row">
+            <select id="lbReception" style="width:auto;min-width:280px"></select>
+            <button class="btn ghost" id="lbFromReception">Ambil dari Penerimaan</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Tambah barang manual</label>
+          <div class="scan-row compact">
+            <label class="qty-field" for="lbQty"><span>Jumlah label</span><input id="lbQty" type="number" min="1" max="5000" step="1" value="1" inputmode="numeric" autocomplete="off"></label>
+            <div class="picker-wrap grow"><input id="lbPicker" autocomplete="off" placeholder="Scan barcode / ketik nama barang…"></div>
+          </div>
+          <div class="hint">Kursor di Jumlah label: isi jumlah → Enter → scan barcode (kembali ke Jumlah otomatis) · Enter di kolom scan kosong = kembali ke Jumlah</div>
+        </div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Barang</th><th>Barcode</th><th class="r">Harga</th><th class="c">Jumlah Label</th><th class="w-act"></th></tr></thead>
+          <tbody id="lbQueue"></tbody>
+        </table></div>
+        <div class="foot-row">
+          <div id="lbTotal" class="muted">0 label</div>
+          <div class="btn-row">
+            <button class="btn ghost" id="lbClear">Kosongkan</button>
+            <select id="lbPrinter" style="width:auto;min-width:240px" title="Printer label"></select>
+            <button class="btn primary" id="lbPrint">Cetak Label</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= SHIFT ======================= -->
+    <section class="view" id="view-shift">
+      <header class="page-head">
+        <div><h1>Laporan Shift &amp; Tutup Kasir</h1><p>Rekap omset shift berjalan dan kirim laporan ke owner.</p></div>
+      </header>
+      <div id="shiftContent"></div>
+    </section>
+
+    <!-- ======================= PENGATURAN ======================= -->
+    <section class="view" id="view-settings">
+      <header class="page-head">
+        <div><h1>Pengaturan</h1><p>Identitas toko dan email pengiriman laporan tutup shift.</p></div>
+      </header>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Identitas Toko</h2>
+          <div class="field"><label>Nama Toko</label><input id="stStoreName" maxlength="80"></div>
+          <div class="field"><label>Alamat / Keterangan (tampil di struk)</label><input id="stStoreAddress" maxlength="200"></div>
+          <h2 class="mt">Email Laporan (SMTP)</h2>
+          <div class="row-2">
+            <div class="field"><label>Server SMTP</label><input id="stHost" placeholder="smtp.gmail.com"></div>
+            <div class="field"><label>Port</label><input id="stPort" type="number" placeholder="587"></div>
+          </div>
+          <div class="field"><label>Keamanan</label>
+            <select id="stSecurity"><option value="starttls">STARTTLS (port 587)</option><option value="ssl">SSL/TLS (port 465)</option><option value="none">Tanpa enkripsi</option></select>
+          </div>
+          <div class="row-2">
+            <div class="field"><label>Username SMTP</label><input id="stUser" autocomplete="off" placeholder="toko@gmail.com"></div>
+            <div class="field"><label>Password SMTP</label><input id="stPass" type="password" autocomplete="new-password"></div>
+          </div>
+          <div class="field"><label>Email Pengirim</label><input id="stFrom" placeholder="toko@gmail.com"></div>
+          <div class="field"><label>Email Owner (penerima; pisahkan dengan koma)</label><input id="stOwner" placeholder="owner@gmail.com"></div>
+          <div class="btn-row">
+            <button class="btn primary" id="stSave">Simpan Pengaturan</button>
+            <button class="btn ghost" id="stTest">Kirim Email Tes</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Informasi</h2>
+          <div class="kv"><span>Versi aplikasi</span><b id="infoVersion">-</b></div>
+          <div class="kv"><span>File database</span><code id="infoDb">-</code></div>
+          <div class="kv"><span>Folder laporan</span><code id="infoReports">-</code></div>
+          <div class="btn-row">
+            <button class="btn ghost" id="stOpenReports">Buka Folder Laporan</button>
+            <button class="btn ghost" id="stOpenData">Buka Folder Data</button>
+          </div>
+          <h2 class="mt">Cadangkan &amp; Pulihkan Data</h2>
+          <p class="muted small" style="margin-top:-6px">Untuk pindah ke komputer lain: <b>Cadangkan</b> di sini → salin file .db (flashdisk/email) → <b>Pulihkan</b> di komputer baru.</p>
+          <div class="btn-row">
+            <button class="btn primary" id="stBackup">Cadangkan Database…</button>
+            <button class="btn danger" id="stRestore">Pulihkan dari Cadangan…</button>
+          </div>
+          <h2 class="mt">Catatan</h2>
+          <ul class="notes">
+            <li>Untuk Gmail: aktifkan Verifikasi 2 Langkah, lalu buat <b>App Password</b> dan gunakan sebagai Password SMTP.</li>
+            <li>Password SMTP disimpan terenkripsi dengan akun Windows.</li>
+            <li>Saat tutup shift, data penjualan shift <b>hanya dihapus setelah server SMTP membalas 250 OK</b>. Salinan file laporan tetap tersimpan di folder laporan.</li>
+            <li>Database dicadangkan otomatis setiap hari (14 salinan terakhir).</li>
+          </ul>
+        </div>
+      </div>
+      <div class="card" id="usersCard">
+        <div class="card-head">
+          <h2>Pengguna &amp; Hak Akses</h2>
+          <button class="btn sm primary" id="usAdd">+ Tambah Pengguna</button>
+        </div>
+        <p class="muted small" style="margin-top:-6px"><b>Admin</b>: semua menu. <b>Gudang</b>: Mutasi, Penerimaan, Daftar Barang, Cetak Barcode.
+          <b>Kasir</b>: Kasir / Pembayaran, Laporan Shift, dan Daftar Barang (hanya lihat). Akun disimpan di database PC Gudang dan berlaku di semua komputer.</p>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Dibuat</th><th class="w-act2"></th></tr></thead><tbody id="usBody"></tbody></table></div>
+      </div>
+      <div class="card">
+        <h2>Mode Komputer &amp; Jaringan</h2>
+        <p class="muted small" style="margin-top:-6px">Untuk 2 komputer: PC Gudang menjadi <b>Server</b> (menyimpan database), PC Kasir memakai mode <b>Kasir</b> dan terhubung ke PC Gudang lewat jaringan toko. Stok selalu sama di kedua komputer.</p>
+        <div class="mode-opts" id="mdModes">
+          <label class="mode-opt"><input type="radio" name="mdMode" value="standalone"><div><b>Mandiri</b><span>Satu komputer saja, database di komputer ini.</span></div></label>
+          <label class="mode-opt"><input type="radio" name="mdMode" value="server"><div><b>Server (PC Gudang)</b><span>Database di komputer ini, PC kasir terhubung ke sini.</span></div></label>
+          <label class="mode-opt"><input type="radio" name="mdMode" value="client"><div><b>Kasir (terhubung ke PC Gudang)</b><span>Semua data dibaca &amp; disimpan di PC gudang.</span></div></label>
+        </div>
+        <div id="mdServer" class="mode-panel hidden">
+          <div class="row-3">
+            <div class="field"><label>Alamat IP komputer ini</label><div id="mdIps" class="big-code"></div></div>
+            <div class="field"><label>Port</label><input id="mdServerPort" type="number" min="1024" max="65535"></div>
+            <div class="field"><label>Kode Pasangan</label><div class="btn-row"><div id="mdKey" class="big-code"></div><button class="btn sm ghost" id="mdNewKey">Buat Kode Baru</button></div></div>
+          </div>
+          <p class="muted small">Ketik alamat IP &amp; kode ini di Pengaturan PC kasir. Saat pertama kali, Windows Firewall akan bertanya — pilih <b>Allow / Izinkan</b> untuk jaringan <b>Private</b>.</p>
+        </div>
+        <div id="mdClient" class="mode-panel hidden">
+          <div class="row-3">
+            <div class="field"><label>Alamat IP PC Gudang</label><input id="mdHost" placeholder="192.168.1.10"></div>
+            <div class="field"><label>Port</label><input id="mdPort" type="number" min="1024" max="65535"></div>
+            <div class="field"><label>Kode Pasangan (6 digit)</label><input id="mdPair" maxlength="6" inputmode="numeric" placeholder="000000"></div>
+          </div>
+          <button class="btn ghost" id="mdTest">Tes Koneksi</button>
+          <span id="mdTestResult" class="small" style="margin-left:10px"></span>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <button class="btn primary" id="mdSave">Simpan &amp; Mulai Ulang Aplikasi</button>
+          <span id="mdCurrent" class="muted small"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Printer Nota (Thermal)</h2>
+        <div class="grid-2 receipt-settings">
+          <div>
+            <div class="row-2">
+              <div class="field"><label>Printer</label><select id="stPrinter"></select></div>
+              <div class="field"><label>Lebar Kertas</label>
+                <select id="stPaper"><option value="58">58 mm (32 karakter)</option><option value="80">80 mm (48 karakter)</option></select>
+              </div>
+            </div>
+            <label class="check"><input type="checkbox" id="stAutoPrint"> Cetak nota otomatis setiap transaksi selesai</label>
+            <div class="field"><label>Header Nota (satu baris per baris teks, rata tengah)</label>
+              <textarea id="stHeader" rows="4" maxlength="500" placeholder="KANO 5000 SEPANJANG&#10;Jl. Raya Wonocolo No. 48&#10;Telp:085111328510"></textarea>
+            </div>
+            <div class="field"><label>Footer Nota</label>
+              <textarea id="stFooter" rows="3" maxlength="500" placeholder="KUMPULKAN HINGGA 200 BIJI&#10;DAN TUKARKAN SOUVENIR"></textarea>
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" id="stSave2">Simpan Pengaturan</button>
+              <button class="btn ghost" id="stTestPrint">Cetak Tes</button>
+            </div>
+          </div>
+          <div>
+            <label class="lbl">Pratinjau Nota</label>
+            <div class="receipt-preview"><pre id="stPreview"></pre></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="loginScreen" class="login-screen hidden">
+    <div class="login-box">
+      <div class="login-brand"><div class="logo">POS</div><div><div class="brand-name">POS Tri-Zone</div><div class="brand-sub" id="lgSub">Masuk dengan nama &amp; PIN</div></div></div>
+      <div class="field"><label for="lgName">Nama</label><input id="lgName" autocomplete="off" spellcheck="false" maxlength="40"></div>
+      <div class="field"><label for="lgPin">PIN (6 digit)</label><input id="lgPin" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></div>
+      <div class="field hidden" id="lgPin2Wrap"><label for="lgPin2">Ulangi PIN</label><input id="lgPin2" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></div>
+      <div class="pin-pad" id="lgPad">
+        <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+        <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+        <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+        <button data-k="del">⌫</button><button data-k="0">0</button><button data-k="clr">C</button>
+      </div>
+      <div id="lgDemo" class="demo-accounts hidden"></div>
+      <div id="lgErr" class="alert danger hidden"></div>
+      <button class="btn primary xl" id="lgBtn">Masuk</button>
+    </div>
+  </div>
+  <div id="modalRoot"></div>
+  <div id="toasts"></div>
+  <script src="app.js"></script>
+</body>
+</html>
