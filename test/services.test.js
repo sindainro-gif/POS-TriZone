@@ -122,6 +122,42 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(svc.getProduct('MNM-001').damaged_stock, 1);
   });
 
+  await t('form mutasi multi-barang: satu nomor, SKU sama digabung', () => {
+    svc.importRows([
+      { Barcode: '7770000000011', SKU: 'TF-A', Nama_Barang: 'Mutasi Uji A', Harga_Jual: 1000, Stok_Awal_Gudang: 20 },
+      { Barcode: '7770000000028', SKU: 'TF-B', Nama_Barang: 'Mutasi Uji B', Harga_Jual: 1000, Stok_Awal_Gudang: 5 },
+    ]);
+    const d = svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', reason: 'Restock pagi', items: [
+      { sku: 'TF-A', qty: 3 }, { sku: 'TF-B', qty: 2 }, { sku: 'TF-A', qty: 1 },
+    ] });
+    assert.match(d.doc_no, /^MT-\d{8}-\d{3}$/);
+    assert.deepStrictEqual([d.line_count, d.total_qty, d.items.length], [2, 6, 2]);
+    assert.deepStrictEqual(d.items.map((i) => [i.sku, i.qty]), [['TF-A', 4], ['TF-B', 2]]);
+    const [a, b] = [svc.getProduct('TF-A'), svc.getProduct('TF-B')];
+    assert.deepStrictEqual([a.warehouse_stock, a.floor_stock, b.warehouse_stock, b.floor_stock], [16, 4, 3, 2]);
+    const d2 = svc.createTransferDoc({ from_zone: 'floor', to_zone: 'damaged', items: [{ sku: 'TF-A', qty: 1 }] });
+    assert.strictEqual(Number(d2.doc_no.slice(-3)), Number(d.doc_no.slice(-3)) + 1);
+    assert.strictEqual(svc.listTransferDocs({ q: 'Mutasi Uji B' })[0].id, d.id);
+    assert.strictEqual(svc.getTransferDoc({ id: d.id }).reason, 'Restock pagi');
+  });
+
+  await t('form mutasi: satu barang kurang stok = seluruh form batal', () => {
+    const docs = svc.listTransferDocs().length;
+    throwsMsg(() => svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'TF-A', qty: 1 }, { sku: 'TF-B', qty: 999 }] }), /Mutasi Uji B.*tidak cukup/);
+    assert.strictEqual(svc.getProduct('TF-A').warehouse_stock, 16);
+    assert.strictEqual(svc.listTransferDocs().length, docs);
+    throwsMsg(() => svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [] }), /minimal satu barang/);
+  });
+
+  await t('mutasi lama tanpa dokumen dibuatkan dokumen MT-LAMA saat database dibuka', async () => {
+    db.tx(() => db.run("INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason) VALUES('TF-A', 'floor', 'damaged', 1, 'versi lama')"));
+    const db2 = await Database.open(file);
+    const row = db2.get("SELECT d.doc_no, d.total_qty FROM stock_transfers t JOIN stock_transfer_docs d ON d.id = t.doc_id WHERE t.reason = 'versi lama'");
+    assert.match(row.doc_no, /^MT-LAMA-\d+$/);
+    assert.strictEqual(row.total_qty, 1);
+    assert.strictEqual(db2.get('SELECT COUNT(*) AS n FROM stock_transfers WHERE doc_id IS NULL').n, 0);
+  });
+
   await t('penerimaan Dus dikalikan rasio, tujuan per baris', () => {
     const r = svc.createReception({
       reference_no: 'SJ-001', supplier_name: 'PT Segar',

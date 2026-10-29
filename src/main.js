@@ -561,7 +561,7 @@ const ACCESS = {
   'settings:get': ALL, 'printer:list': ALL, 'stock:low': ALL, 'shift:get': ALL,
   'products:list': ALL, 'products:categories': ALL, 'products:get': ALL, 'products:findByCode': ALL, 'products:search': ALL,
   'products:save': GUDANG, 'products:delete': GUDANG, 'products:import': GUDANG, 'products:template': GUDANG,
-  'transfers:create': GUDANG, 'transfers:list': GUDANG,
+  'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
   'labels:designs': GUDANG, 'labels:saveDesign': GUDANG, 'labels:deleteDesign': GUDANG, 'labels:setDefault': GUDANG,
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
@@ -670,8 +670,9 @@ const handlers = {
   },
   'labels:print': (a) => printLabels(a),
 
-  'transfers:create': (a) => svc.createTransfer(a),
-  'transfers:list': (a) => svc.listTransfers(a),
+  'transfers:create': (a) => svc.createTransferDoc(a),
+  'transfers:list': (a) => svc.listTransferDocs(a),
+  'transfers:get': (a) => svc.getTransferDoc(a),
 
   'receptions:create': (a) => svc.createReception(a),
   'receptions:list': (a) => svc.listReceptions(a),

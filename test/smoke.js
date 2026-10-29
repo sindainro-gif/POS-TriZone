@@ -124,7 +124,36 @@ app.on('browser-window-created', (_e, win) => {
         enter(document.querySelector('#trQty')); return { start, toQty, back: document.activeElement.id, unit: !!document.querySelector('#trUnit') }; })()`);
       console.log('navigasi Mutasi:', JSON.stringify(trNav));
       if (trNav.start !== 'trPicker' || trNav.toQty !== 'trQty' || trNav.back !== 'trPicker' || trNav.unit) throw new Error('navigasi Enter Barang/Jumlah di Mutasi salah');
+      // Form Mutasi multi-barang: scan → Jumlah → Enter = masuk list; Simpan = satu nomor mutasi
+      const bsBefore = svc.getProduct('SNK-010').damaged_stock;
+      await run(`(() => { const d = document.querySelector('#trDirection'); d.value = 'customer>damaged'; d.dispatchEvent(new Event('change')); })()`);
+      const trAdd = async (code, n) => {
+        await run(`(() => { const i = document.querySelector('#trPicker'); i.focus(); i.value = ${JSON.stringify(code)}; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+        await wait(400);
+        await run(`(() => { const q = document.querySelector('#trQty'); q.value = '${n}'; q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      };
+      await trAdd('8997654321098', 2);
+      await trAdd('8990001112223', 1);
+      await trAdd('8997654321098', 1); // barang sama → jumlah digabung
+      const trList = await run(`({ rows: [...document.querySelectorAll('#trItems tr[data-i]')].map((r) => r.children[1].textContent + ':' + r.querySelector('[data-act=qty]').value), focus: document.activeElement.id, total: document.querySelector('#trTotal').textContent })`);
+      console.log('list Mutasi:', JSON.stringify(trList));
+      if (trList.rows.join(',') !== 'SNK-010:3,SBN-005:1' || trList.focus !== 'trPicker') throw new Error('barang tidak masuk list Mutasi dengan benar');
       await shot('04-mutasi');
+      await run(`document.querySelector('#trSubmit').click()`);
+      await wait(300);
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(700);
+      const trDoc = await run(`({ first: document.querySelector('#trHistory tr').innerText.replace(/\\s+/g, ' '), left: document.querySelectorAll('#trItems tr[data-i]').length })`);
+      console.log('riwayat Mutasi teratas:', JSON.stringify(trDoc));
+      if (!/MT-\d{8}-\d{3}/.test(trDoc.first) || !/\b2 4\b/.test(trDoc.first) || trDoc.left !== 0) throw new Error('form Mutasi tidak tersimpan sebagai satu dokumen');
+      if (svc.getProduct('SNK-010').damaged_stock !== bsBefore + 3) throw new Error('stok BS Keripik tidak bertambah 3');
+      await run(`document.querySelector('#trHistory [data-id]').click()`);
+      await wait(400);
+      const trDetail = await run(`document.querySelectorAll('#modalRoot tbody tr').length`);
+      if (trDetail !== 2) throw new Error(`detail mutasi seharusnya 2 baris, bukan ${trDetail}`);
+      await shot('04b-mutasi-detail');
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(200);
       const f12View = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true })); return state.view + '/' + document.activeElement.id; })()`);
       if (f12View !== 'checkout/cashInput') throw new Error(`F12 dari layar lain seharusnya ke Uang Diterima Kasir, bukan ${f12View}`);
       await run(`document.querySelector('[data-view=receiving]').click()`);

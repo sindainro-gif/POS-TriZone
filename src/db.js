@@ -65,6 +65,18 @@ CREATE TABLE IF NOT EXISTS stock_transfers (
     FOREIGN KEY (sku) REFERENCES products(sku)
 );
 
+-- Satu form mutasi (1 arah + 1 alasan) berisi beberapa baris stock_transfers (doc_id)
+CREATE TABLE IF NOT EXISTS stock_transfer_docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_no TEXT UNIQUE NOT NULL,
+    from_zone TEXT NOT NULL,
+    to_zone TEXT NOT NULL,
+    reason TEXT,
+    created_at DATETIME DEFAULT (datetime('now','localtime')),
+    line_count INTEGER NOT NULL,
+    total_qty INTEGER NOT NULL
+);
+
 -- ========================================================
 -- PARTISI B: DATA TRANSAKSI SHIFT KASIR (EPHEMERAL / PURGE VIA EMAIL)
 -- ========================================================
@@ -138,6 +150,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
 CREATE INDEX IF NOT EXISTS idx_transfers_created ON stock_transfers(created_at);
+CREATE INDEX IF NOT EXISTS idx_transfer_docs_created ON stock_transfer_docs(created_at);
 CREATE INDEX IF NOT EXISTS idx_sales_receipt ON shift_sales(receipt_no);
 `;
 
@@ -150,12 +163,20 @@ function loadSql() {
 const REQUIRED_TABLES = ['products', 'inventory', 'settings'];
 
 // Kolom yang ditambahkan setelah versi pertama: CREATE TABLE IF NOT EXISTS tidak menambah kolom ke tabel lama
-const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME']];
+const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfers', 'doc_id', 'INTEGER']];
 
 function migrate(sqlDb) {
   for (const [table, col, type] of ADDED_COLUMNS) {
     const cols = (sqlDb.exec(`PRAGMA table_info(${table})`)[0]?.values || []).map((r) => r[1]);
     if (!cols.includes(col)) sqlDb.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  }
+  sqlDb.exec('CREATE INDEX IF NOT EXISTS idx_transfers_doc ON stock_transfers(doc_id)');
+  // Mutasi lama (sebelum ada form multi-item): satu baris = satu dokumen MT-LAMA-<id>
+  const old = sqlDb.exec('SELECT id, from_zone, to_zone, reason, created_at, qty FROM stock_transfers WHERE doc_id IS NULL ORDER BY id')[0]?.values || [];
+  for (const [id, from, to, reason, at, qty] of old) {
+    sqlDb.run('INSERT INTO stock_transfer_docs(doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty) VALUES(?, ?, ?, ?, ?, 1, ?)', [`MT-LAMA-${id}`, from, to, reason, at, qty]);
+    const docId = sqlDb.exec('SELECT last_insert_rowid()')[0].values[0][0];
+    sqlDb.run('UPDATE stock_transfers SET doc_id = ? WHERE id = ?', [docId, id]);
   }
 }
 

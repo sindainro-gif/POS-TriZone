@@ -684,17 +684,22 @@ views.checkout = (() => {
 
 // ================================================================ 2. MUTASI
 views.transfers = (() => {
-  let product = null;
+  let picked = null; // barang hasil scan yang menunggu Jumlah
+  const items = []; // {product, qty} — satu form = satu arah + satu alasan
   const qty = $('#trQty');
   const dir = $('#trDirection');
   const picker = $('#trPicker');
+  const HINT = $('#trPicked').innerHTML;
+  const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock' };
 
-  // Kursor default di Barang. Enter di Barang kosong → Jumlah; Enter di Jumlah → kembali ke Barang
+  // Kursor default di Barang. Scan → Jumlah; Enter di Jumlah → barang masuk list, kembali ke Barang
   qty.addEventListener('focus', () => qty.select());
   qty.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    if (!pieces()) { sound('err'); toast('Jumlah minimal 1.', 'err'); return; }
+    const n = Number(qty.value);
+    if (!Number.isInteger(n) || n < 1) { sound('err'); toast('Jumlah minimal 1.', 'err'); return; }
+    if (picked) add(picked, n);
     picker.focus();
     picker.select();
   });
@@ -702,52 +707,86 @@ views.transfers = (() => {
     if (e.key === 'Enter' && !picker.value.trim()) { e.preventDefault(); qty.focus(); }
   });
 
-  makePicker(picker, { onPick: (p) => { picker.value = ''; select(p); qty.focus(); } });
+  makePicker(picker, {
+    onPick: (p) => {
+      picked = p;
+      picker.value = '';
+      $('#trPicked').innerHTML = `Dipilih: <b>${esc(p.name)}</b> · ${esc(p.sku)} — isi Jumlah lalu Enter`;
+      qty.focus();
+    },
+  });
 
-  function select(p) {
-    product = p;
-    $('#trProduct').classList.remove('muted');
-    $('#trProduct').innerHTML = `<div class="pname">${esc(p.name)}</div><div class="psub mono" style="margin-bottom:8px">${esc(p.sku)} · ${esc(p.barcode)} · 1 ${esc(p.pack_unit)} = ${num(p.pack_ratio)} Biji</div>${zoneBadges(p)}`;
-    updateHint();
+  function add(p, n) {
+    const same = items.find((i) => i.product.sku === p.sku);
+    if (same) same.qty += n;
+    else items.push({ product: p, qty: n });
+    picked = null;
+    qty.value = 1;
+    $('#trPicked').innerHTML = HINT;
+    render();
   }
 
-  function pieces() {
-    const n = Number(qty.value);
-    return Number.isInteger(n) && n >= 1 ? n : 0;
-  }
+  const zoneStock = (p) => { const col = ZONE_COL[dir.value.split('>')[0]]; return col ? p[col] : null; };
 
-  function updateHint() {
-    const [from, to] = dir.value.split('>');
-    const n = pieces();
-    let h = n ? `= ${num(n)} Biji` : 'Jumlah harus angka bulat ≥ 1';
-    if (product && n) {
-      const col = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock' }[from];
-      if (col) h += ` · ${state.meta.zones[from]} tersedia ${num(product[col])} Biji${product[col] < n ? ' — TIDAK CUKUP' : ''}`;
-      h += ` → ${state.meta.zones[to]}`;
-    }
-    $('#trQtyHint').textContent = h;
+  function render() {
+    $('#trItems').innerHTML = items.length ? items.map((i, idx) => {
+      const avail = zoneStock(i.product);
+      const short = avail !== null && avail < i.qty;
+      return `<tr data-i="${idx}">
+        <td class="r muted">${idx + 1}</td><td class="mono">${esc(i.product.sku)}</td><td>${esc(i.product.name)}</td>
+        <td class="r"><input type="number" min="1" value="${i.qty}" data-act="qty" style="width:80px;text-align:right"></td>
+        <td>Biji</td>
+        <td class="r ${short ? 'diff-neg' : 'muted'}">${avail === null ? '-' : `${num(avail)}${short ? ' — KURANG' : ''}`}</td>
+        <td class="c"><button class="icon-btn" data-act="del">✕</button></td></tr>`;
+    }).join('')
+      : '<tr><td colspan="7" class="empty-row">Belum ada barang. Scan barang, isi Jumlah, lalu Enter.</td></tr>';
+    $('#trTotal').textContent = `${items.length} baris · ${num(items.reduce((s, i) => s + i.qty, 0))} Biji`;
   }
-  [qty, dir].forEach((el) => el.addEventListener('input', updateHint));
+  dir.addEventListener('change', render);
+  $('#trItems').addEventListener('click', (e) => {
+    if (e.target.dataset.act === 'del') { items.splice(Number(e.target.closest('tr').dataset.i), 1); render(); picker.focus(); }
+  });
+  $('#trItems').addEventListener('change', (e) => {
+    if (e.target.dataset.act !== 'qty') return;
+    const q = Number(e.target.value);
+    if (Number.isInteger(q) && q >= 1) items[Number(e.target.closest('tr').dataset.i)].qty = q;
+    render();
+  });
+  $('#trItems').addEventListener('keydown', (e) => {
+    if (e.target.dataset.act === 'qty' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); picker.focus(); }
+  });
+
+  function reset() {
+    items.length = 0;
+    picked = null;
+    picker.value = '';
+    qty.value = 1;
+    $('#trReason').value = '';
+    $('#trPicked').innerHTML = HINT;
+    render();
+    picker.focus();
+  }
+  $('#trReset').addEventListener('click', async () => {
+    if (items.length && !(await confirmDialog('Batalkan Mutasi', 'Semua barang di list akan dihapus dari form.', { okLabel: 'Ya, Batalkan', danger: true }))) return;
+    reset();
+  });
 
   const REASONS = ['Pecah terinjak', 'Retur konsumen', 'Kardus basah', 'Cacat pabrik saat unboxing', 'Kedaluwarsa', 'Kemasan penyok', 'Restock harian'];
   $('#trReasonChips').innerHTML = REASONS.map((r) => `<span class="chip">${esc(r)}</span>`).join('');
   $('#trReasonChips').addEventListener('click', (e) => { if (e.target.classList.contains('chip')) $('#trReason').value = e.target.textContent; });
 
   $('#trSubmit').addEventListener('click', async () => {
-    if (!product) { toast('Pilih barang terlebih dahulu.', 'err'); picker.focus(); return; }
-    const n = pieces();
-    if (!n) { toast('Jumlah mutasi tidak valid.', 'err'); return; }
+    if (!items.length) { toast('Tambahkan minimal satu barang ke list.', 'err'); picker.focus(); return; }
     const [from_zone, to_zone] = dir.value.split('>');
+    const total = items.reduce((s, i) => s + i.qty, 0);
+    const ok = await confirmDialog('Simpan Mutasi', `Simpan mutasi <b>${esc(state.meta.zones[from_zone])} → ${esc(state.meta.zones[to_zone])}</b> berisi ${items.length} baris (${num(total)} Biji)? Stok akan langsung berpindah.`, { okLabel: 'Simpan' });
+    if (!ok) return;
     try {
-      const p = await api('transfers:create', { sku: product.sku, from_zone, to_zone, qty: n, reason: $('#trReason').value });
-      toast(`Mutasi ${num(n)} Biji "${p.name}" berhasil: ${state.meta.zones[from_zone]} → ${state.meta.zones[to_zone]}.`, 'ok');
-      select(p);
-      qty.value = 1;
-      $('#trReason').value = '';
-      updateHint();
+      const d = await api('transfers:create', { from_zone, to_zone, reason: $('#trReason').value, items: items.map((i) => ({ sku: i.product.sku, qty: i.qty })) });
+      toast(`Mutasi ${d.doc_no} tersimpan: ${num(d.line_count)} baris, ${num(d.total_qty)} Biji.`, 'ok');
+      reset();
       loadLow();
       loadHistory();
-      picker.focus();
     } catch (e) { toast(e.message, 'err', 6000); }
   });
 
@@ -767,11 +806,10 @@ views.transfers = (() => {
       const b = e.target.closest('[data-sku]');
       if (!b) return;
       const p = rows.find((r) => r.sku === b.dataset.sku);
-      select(p);
+      if (items.length && dir.value !== 'warehouse>floor') { toast('Form berisi arah mutasi lain — simpan atau batalkan dulu.', 'err'); return; }
       dir.value = 'warehouse>floor';
-      qty.value = Math.max(1, Math.min(p.warehouse_stock, p.min_floor_alert * 2 - p.floor_stock));
-      updateHint();
-      qty.focus();
+      add(p, Math.max(1, Math.min(p.warehouse_stock, p.min_floor_alert * 2 - p.floor_stock)));
+      picker.focus();
     };
   }
 
@@ -780,13 +818,29 @@ views.transfers = (() => {
 
   async function loadHistory() {
     const rows = await api('transfers:list', { q: $('#trSearch').value, limit: 300 });
-    $('#trHistory').innerHTML = rows.length ? rows.map((t) => `<tr>
-        <td class="muted">${fmtTime(t.created_at)}</td>
-        <td><div class="pname">${esc(t.name || t.sku)}</div><div class="psub mono">${esc(t.sku)}</div></td>
-        <td>${zoneTag(t.from_zone)}</td><td class="arrow">→</td><td>${zoneTag(t.to_zone)}</td>
-        <td class="r"><b>${num(t.qty)}</b></td><td>${esc(t.reason || '-')}</td></tr>`).join('')
-      : '<tr><td colspan="7" class="empty-row">Belum ada riwayat mutasi.</td></tr>';
+    $('#trHistory').innerHTML = rows.length ? rows.map((d) => `<tr>
+        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b></td>
+        <td>${zoneTag(d.from_zone)}</td><td class="arrow">→</td><td>${zoneTag(d.to_zone)}</td>
+        <td class="r">${num(d.line_count)}</td><td class="r"><b>${num(d.total_qty)}</b></td><td>${esc(d.reason || '-')}</td>
+        <td><button class="btn sm ghost" data-id="${d.id}">Detail</button></td></tr>`).join('')
+      : '<tr><td colspan="9" class="empty-row">Belum ada riwayat mutasi.</td></tr>';
   }
+  $('#trHistory').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-id]');
+    if (!b) return;
+    const d = await api('transfers:get', { id: Number(b.dataset.id) });
+    modal({
+      title: `Mutasi ${d.doc_no}`,
+      wide: true,
+      body: `<div class="kv"><span>Tanggal</span><b>${fmtTime(d.created_at)}</b></div>
+        <div class="kv"><span>Arah</span><b>${zoneTag(d.from_zone)} → ${zoneTag(d.to_zone)}</b></div>
+        <div class="kv"><span>Alasan</span><b>${esc(d.reason || '-')}</b></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Jumlah</th><th>Satuan</th></tr></thead><tbody>
+        ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td><td class="r"><b>${num(i.qty)}</b></td><td>Biji</td></tr>`).join('')}
+        </tbody></table></div>`,
+      actions: [{ label: 'Tutup', kind: 'primary' }],
+    });
+  });
 
   let inited = false;
   function show() {
@@ -794,8 +848,9 @@ views.transfers = (() => {
       dir.innerHTML = state.meta.directions.map((d) => `<option value="${d.from}>${d.to}">${esc(d.label)}</option>`).join('');
       inited = true;
     }
-    if (product) api('products:get', { sku: product.sku }).then((p) => p && select(p));
-    updateHint();
+    // Perbarui stok barang di list (bisa berubah karena penjualan / penerimaan)
+    Promise.all(items.map((i) => api('products:get', { sku: i.product.sku }).then((p) => { if (p) i.product = p; }))).then(render);
+    render();
     loadLow();
     loadHistory();
     setTimeout(() => picker.focus(), 30);

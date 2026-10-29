@@ -573,28 +573,79 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   // ---------------------------------------------------------------- Mutasi
-  function createTransfer({ sku, from_zone, to_zone, qty, reason } = {}) {
+  // Satu form mutasi: satu arah + satu alasan untuk beberapa barang; gagal satu = batal semua
+  function createTransferDoc({ from_zone, to_zone, reason, items = [] } = {}) {
     const dir = DIRECTIONS.find((d) => d.from === from_zone && d.to === to_zone);
     if (!dir) fail('Arah mutasi tidak valid.');
-    const p = getProduct(sku);
-    if (!p) fail('Pilih barang terlebih dahulu.');
-    const n = toInt(qty, 'Jumlah mutasi', { min: 1 });
     const why = toStr(reason, 'Alasan', { max: 200 });
-    db.tx(() => {
-      db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [sku]);
-      if (ZONE_COL[from_zone]) {
-        const col = ZONE_COL[from_zone];
-        const r = db.run(`UPDATE inventory SET ${col} = ${col} - ? WHERE sku = ? AND ${col} >= ?`, [n, sku, n]);
-        if (r.changes !== 1) fail(`${ZONE_LABEL[from_zone]} untuk "${p.name}" tidak cukup. Tersedia ${p[col]} Biji.`);
-      }
-      if (ZONE_COL[to_zone]) {
-        const col = ZONE_COL[to_zone];
-        db.run(`UPDATE inventory SET ${col} = ${col} + ? WHERE sku = ?`, [n, sku]);
-        if (to_zone === 'floor') clearSoldOut(sku);
-      }
-      db.run('INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason, created_at) VALUES(?, ?, ?, ?, ?, ?)', [sku, from_zone, to_zone, n, why, localNow()]);
+    if (!Array.isArray(items) || !items.length) fail('Tambahkan minimal satu barang.');
+    const lines = [];
+    items.forEach((it, idx) => {
+      const p = getProduct(it && it.sku);
+      if (!p) fail(`Barang baris ${idx + 1} tidak ditemukan.`);
+      const n = toInt(it.qty, `Jumlah "${p.name}"`, { min: 1 });
+      const same = lines.find((l) => l.p.sku === p.sku);
+      if (same) same.qty += n;
+      else lines.push({ p, qty: n });
     });
+    const now = localNow();
+    const id = db.tx(() => {
+      for (const { p, qty: n } of lines) {
+        db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [p.sku]);
+        if (ZONE_COL[from_zone]) {
+          const col = ZONE_COL[from_zone];
+          const r = db.run(`UPDATE inventory SET ${col} = ${col} - ? WHERE sku = ? AND ${col} >= ?`, [n, p.sku, n]);
+          if (r.changes !== 1) fail(`${ZONE_LABEL[from_zone]} untuk "${p.name}" tidak cukup. Tersedia ${p[col]} Biji.`);
+        }
+        if (ZONE_COL[to_zone]) {
+          const col = ZONE_COL[to_zone];
+          db.run(`UPDATE inventory SET ${col} = ${col} + ? WHERE sku = ?`, [n, p.sku]);
+          if (to_zone === 'floor') clearSoldOut(p.sku);
+        }
+      }
+      // Nomor urut per hari: MT-YYYYMMDD-001
+      const prefix = `MT-${now.slice(0, 10).replace(/-/g, '')}-`;
+      const last = db.get('SELECT doc_no FROM stock_transfer_docs WHERE doc_no LIKE ? ORDER BY doc_no DESC LIMIT 1', [`${prefix}%`]);
+      const docNo = prefix + String((last ? Number(last.doc_no.slice(prefix.length)) : 0) + 1).padStart(3, '0');
+      db.run('INSERT INTO stock_transfer_docs(doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty) VALUES(?, ?, ?, ?, ?, ?, ?)', [
+        docNo, from_zone, to_zone, why, now, lines.length, lines.reduce((s, l) => s + l.qty, 0),
+      ]);
+      const did = db.lastId();
+      for (const { p, qty: n } of lines) {
+        db.run('INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason, created_at, doc_id) VALUES(?, ?, ?, ?, ?, ?, ?)', [p.sku, from_zone, to_zone, n, why, now, did]);
+      }
+      return did;
+    });
+    return getTransferDoc({ id });
+  }
+
+  // Mutasi satu barang (dipakai demo/tes): satu dokumen berisi satu baris
+  function createTransfer({ sku, from_zone, to_zone, qty, reason } = {}) {
+    if (!getProduct(sku)) fail('Pilih barang terlebih dahulu.');
+    createTransferDoc({ from_zone, to_zone, reason, items: [{ sku, qty: toInt(qty, 'Jumlah mutasi', { min: 1 }) }] });
     return getProduct(sku);
+  }
+
+  function listTransferDocs({ limit = 200, q = '' } = {}) {
+    const like = `%${String(q || '').trim()}%`;
+    return db.all(
+      `SELECT d.* FROM stock_transfer_docs d
+       WHERE (? = '%%' OR d.doc_no LIKE ? OR d.reason LIKE ? OR EXISTS (
+         SELECT 1 FROM stock_transfers t LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = d.id AND (p.name LIKE ? OR t.sku LIKE ?)))
+       ORDER BY d.id DESC LIMIT ?`,
+      [like, like, like, like, like, Math.min(Number(limit) || 200, 2000)],
+    );
+  }
+
+  function getTransferDoc({ id } = {}) {
+    const d = db.get('SELECT * FROM stock_transfer_docs WHERE id = ?', [id]);
+    if (!d) fail('Dokumen mutasi tidak ditemukan.');
+    d.items = db.all(
+      `SELECT t.sku, t.qty, p.name, p.barcode FROM stock_transfers t
+       LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = ? ORDER BY t.id`,
+      [id],
+    );
+    return d;
   }
 
   function listTransfers({ limit = 200, q = '' } = {}) {
@@ -789,7 +840,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     stockSnapshot, lowStock,
     getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, shiftSalesRows, purgeShift,
     importOfflineSale, offlineChecks, markOfflineChecked,
-    createTransfer, listTransfers,
+    createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
     createReception, listReceptions, getReception,
   };
 }
