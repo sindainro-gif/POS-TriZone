@@ -101,20 +101,20 @@
       <div class="grid-2">
         <div class="card">
           <h2>Form Mutasi</h2>
-          <div class="field picker-wrap">
+          <div class="field">
             <label>Barang</label>
-            <input id="trPicker" autocomplete="off" placeholder="Scan barcode / ketik nama barang…">
+            <div class="scan-row compact">
+              <div class="picker-wrap grow"><input id="trPicker" autocomplete="off" placeholder="Scan barcode / ketik nama barang…"></div>
+              <label class="qty-field" for="trQty"><span>Jumlah (Biji)</span><input id="trQty" type="number" min="1" step="1" value="1" inputmode="numeric" autocomplete="off"></label>
+            </div>
+            <div class="hint">Scan barang → kursor ke Jumlah · Enter di Jumlah = kembali ke Barang · Enter di Barang kosong = ke Jumlah</div>
           </div>
           <div id="trProduct" class="product-box muted">Belum ada barang dipilih.</div>
           <div class="field">
             <label>Arah Mutasi</label>
             <select id="trDirection"></select>
           </div>
-          <div class="row-2">
-            <div class="field"><label>Jumlah</label><input id="trQty" type="number" min="1" step="1" value="1"></div>
-            <div class="field"><label>Satuan</label><select id="trUnit"><option value="Biji">Biji</option><option value="Dus">Dus</option></select></div>
-          </div>
-          <div id="trQtyHint" class="hint"></div>
+          <div id="trQtyHint" class="hint" style="margin:-4px 0 12px"></div>
           <div class="field">
             <label>Alasan Mutasi <span class="muted">(opsional)</span></label>
             <input id="trReason" maxlength="200" placeholder="Contoh: Pecah terinjak">

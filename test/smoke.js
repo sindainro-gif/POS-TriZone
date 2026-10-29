@@ -118,6 +118,12 @@ app.on('browser-window-created', (_e, win) => {
         badge: (document.querySelector('#nav [data-view="transfers"] .nav-badge:not(.hidden)') || {}).textContent || '' })`);
       console.log('saran restock teratas:', JSON.stringify(restock));
       if (!/\bout\b/.test(restock.first) || !/MINUS -7/.test(restock.first) || !/Keripik/.test(restock.first) || !restock.badge) throw new Error('barang minus tidak tampil merah paling atas / badge Mutasi tidak muncul');
+      // Form Mutasi: kursor awal di Barang, Enter di Barang kosong → Jumlah, Enter di Jumlah → Barang; tanpa Satuan
+      const trNav = await run(`(() => { const enter = (el) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        const start = document.activeElement.id; enter(document.querySelector('#trPicker')); const toQty = document.activeElement.id;
+        enter(document.querySelector('#trQty')); return { start, toQty, back: document.activeElement.id, unit: !!document.querySelector('#trUnit') }; })()`);
+      console.log('navigasi Mutasi:', JSON.stringify(trNav));
+      if (trNav.start !== 'trPicker' || trNav.toQty !== 'trQty' || trNav.back !== 'trPicker' || trNav.unit) throw new Error('navigasi Enter Barang/Jumlah di Mutasi salah');
       await shot('04-mutasi');
       const f12View = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true })); return state.view + '/' + document.activeElement.id; })()`);
       if (f12View !== 'checkout/cashInput') throw new Error(`F12 dari layar lain seharusnya ke Uang Diterima Kasir, bukan ${f12View}`);

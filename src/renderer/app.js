@@ -686,23 +686,34 @@ views.checkout = (() => {
 views.transfers = (() => {
   let product = null;
   const qty = $('#trQty');
-  const unit = $('#trUnit');
   const dir = $('#trDirection');
+  const picker = $('#trPicker');
 
-  makePicker($('#trPicker'), { onPick: (p) => { $('#trPicker').value = ''; select(p); qty.focus(); qty.select(); } });
+  // Kursor default di Barang. Enter di Barang kosong → Jumlah; Enter di Jumlah → kembali ke Barang
+  qty.addEventListener('focus', () => qty.select());
+  qty.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!pieces()) { sound('err'); toast('Jumlah minimal 1.', 'err'); return; }
+    picker.focus();
+    picker.select();
+  });
+  picker.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !picker.value.trim()) { e.preventDefault(); qty.focus(); }
+  });
+
+  makePicker(picker, { onPick: (p) => { picker.value = ''; select(p); qty.focus(); } });
 
   function select(p) {
     product = p;
     $('#trProduct').classList.remove('muted');
     $('#trProduct').innerHTML = `<div class="pname">${esc(p.name)}</div><div class="psub mono" style="margin-bottom:8px">${esc(p.sku)} · ${esc(p.barcode)} · 1 ${esc(p.pack_unit)} = ${num(p.pack_ratio)} Biji</div>${zoneBadges(p)}`;
-    $('#trUnit option[value="Dus"]').textContent = `${p.pack_unit} (isi ${p.pack_ratio})`;
     updateHint();
   }
 
   function pieces() {
     const n = Number(qty.value);
-    if (!Number.isInteger(n) || n < 1) return 0;
-    return unit.value === 'Dus' && product ? n * product.pack_ratio : n;
+    return Number.isInteger(n) && n >= 1 ? n : 0;
   }
 
   function updateHint() {
@@ -716,14 +727,14 @@ views.transfers = (() => {
     }
     $('#trQtyHint').textContent = h;
   }
-  [qty, unit, dir].forEach((el) => el.addEventListener('input', updateHint));
+  [qty, dir].forEach((el) => el.addEventListener('input', updateHint));
 
   const REASONS = ['Pecah terinjak', 'Retur konsumen', 'Kardus basah', 'Cacat pabrik saat unboxing', 'Kedaluwarsa', 'Kemasan penyok', 'Restock harian'];
   $('#trReasonChips').innerHTML = REASONS.map((r) => `<span class="chip">${esc(r)}</span>`).join('');
   $('#trReasonChips').addEventListener('click', (e) => { if (e.target.classList.contains('chip')) $('#trReason').value = e.target.textContent; });
 
   $('#trSubmit').addEventListener('click', async () => {
-    if (!product) { toast('Pilih barang terlebih dahulu.', 'err'); $('#trPicker').focus(); return; }
+    if (!product) { toast('Pilih barang terlebih dahulu.', 'err'); picker.focus(); return; }
     const n = pieces();
     if (!n) { toast('Jumlah mutasi tidak valid.', 'err'); return; }
     const [from_zone, to_zone] = dir.value.split('>');
@@ -736,6 +747,7 @@ views.transfers = (() => {
       updateHint();
       loadLow();
       loadHistory();
+      picker.focus();
     } catch (e) { toast(e.message, 'err', 6000); }
   });
 
@@ -757,11 +769,9 @@ views.transfers = (() => {
       const p = rows.find((r) => r.sku === b.dataset.sku);
       select(p);
       dir.value = 'warehouse>floor';
-      unit.value = 'Biji';
       qty.value = Math.max(1, Math.min(p.warehouse_stock, p.min_floor_alert * 2 - p.floor_stock));
       updateHint();
       qty.focus();
-      qty.select();
     };
   }
 
@@ -788,7 +798,7 @@ views.transfers = (() => {
     updateHint();
     loadLow();
     loadHistory();
-    setTimeout(() => $('#trPicker').focus(), 30);
+    setTimeout(() => picker.focus(), 30);
   }
   return { show };
 })();
