@@ -108,7 +108,7 @@ const whBadge = (p) => `<span class="badge wh" title="Gudang Utama (cadangan)">$
 const bsBadge = (p) => `<span class="badge bs ${p.damaged_stock ? '' : 'none'}" title="Gudang BS / Retur (tidak bisa dijual)">${num(p.damaged_stock)}</span>`;
 function zoneBadges(p) {
   return `<div class="zone-badges">
-    <span class="badge floor ${p.floor_stock <= 0 ? 'zero' : p.floor_stock <= p.min_floor_alert ? 'low' : 'ok'}">Toko: ${num(p.floor_stock)}</span>
+    <span class="badge floor ${p.floor_stock <= 0 ? 'zero' : p.floor_stock <= p.min_floor_alert ? 'low' : 'ok'}">Display Toko: ${num(p.floor_stock)}</span>
     <span class="badge wh">Gudang: ${num(p.warehouse_stock)}</span>
     <span class="badge bs ${p.damaged_stock ? '' : 'none'}">BS: ${num(p.damaged_stock)}</span></div>`;
 }
@@ -862,7 +862,7 @@ views.transfers = (() => {
 views.receiving = (() => {
   let picked = null;
   const items = []; // {product, qty, pack_type, destination}
-  const DEST = { warehouse: 'Gudang Utama', floor: 'Toko', damaged: 'Gudang BS' };
+  const DEST = { warehouse: 'Gudang Utama', floor: 'Display Toko', damaged: 'Gudang BS' };
   const DEST_CLASS = { warehouse: 'wh', floor: 'floor', damaged: 'bs' };
 
   makePicker($('#rcPicker'), {

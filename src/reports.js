@@ -66,7 +66,7 @@ ${byMethod.map((m) => `<tr><td>${esc(m.method)}</td><td class="r">${num(m.receip
 ${byItem.map((i) => `<tr><td>${esc(i.sku)}</td><td>${esc(i.name)}</td><td class="r">${num(i.qty)}</td><td class="r">${rp(i.total)}</td></tr>`).join('') || '<tr><td colspan="4">Tidak ada penjualan.</td></tr>'}
 </table>
 ${lowStock.length ? `<h2>Peringatan Display Toko Menipis</h2>
-<table><tr><th>SKU</th><th>Nama Barang</th><th class="r">Toko</th><th class="r">Min</th><th class="r">Gudang Utama</th><th class="r">Gudang BS</th></tr>
+<table><tr><th>SKU</th><th>Nama Barang</th><th class="r">Display Toko</th><th class="r">Min</th><th class="r">Gudang Utama</th><th class="r">Gudang BS</th></tr>
 ${lowStock.map((p) => `<tr><td>${esc(p.sku)}</td><td>${esc(p.name)}</td><td class="r">${num(p.floor_stock)}</td><td class="r">${num(p.min_floor_alert)}</td><td class="r">${num(p.warehouse_stock)}</td><td class="r">${num(p.damaged_stock)}</td></tr>`).join('')}
 </table>` : ''}
 ${off.receipts ? `<p>Termasuk <b>${num(off.receipts)} transaksi MODE DARURAT</b> (nomor struk OFF-…) yang dicatat PC kasir saat PC gudang tidak terhubung.</p>` : ''}
@@ -74,7 +74,7 @@ ${off.checks.length ? `<h2>Transaksi Mode Darurat — Perlu Dicek</h2>
 <table><tr><th>No. Struk</th><th>Waktu</th><th class="r">Total</th><th>Catatan</th></tr>
 ${off.checks.map((c) => `<tr><td>${esc(c.receipt_no)}</td><td>${esc(c.created_at)}</td><td class="r">${rp(c.total)}</td><td>${c.notes.map(esc).join('<br>')}</td></tr>`).join('')}
 </table>` : ''}
-<p class="muted" style="margin-top:18px">Snapshot stok lengkap (Toko, Gudang Utama, Gudang BS) terlampir dalam file CSV terpisah.</p>
+<p class="muted" style="margin-top:18px">Snapshot stok lengkap (Display Toko, Gudang Utama, Gudang BS) terlampir dalam file CSV terpisah.</p>
 </body></html>`;
 }
 

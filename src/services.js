@@ -18,13 +18,13 @@ const ZONE_LABEL = {
 };
 
 const DIRECTIONS = [
-  { from: 'warehouse', to: 'floor', label: 'Gudang Utama → Toko (Restock rak)' },
-  { from: 'floor', to: 'damaged', label: 'Toko → Gudang BS (Rusak / pecah di rak)' },
+  { from: 'warehouse', to: 'floor', label: 'Gudang Utama → Display Toko (Restock rak)' },
+  { from: 'floor', to: 'damaged', label: 'Display Toko → Gudang BS (Rusak / pecah di rak)' },
   { from: 'warehouse', to: 'damaged', label: 'Gudang Utama → Gudang BS (Cacat bawaan supplier)' },
   { from: 'customer', to: 'damaged', label: 'Retur Pelanggan → Gudang BS' },
   { from: 'damaged', to: 'supplier', label: 'Gudang BS → Supplier (Retur keluar)' },
   { from: 'damaged', to: 'disposed', label: 'Gudang BS → Dibuang / Dimusnahkan' },
-  { from: 'floor', to: 'warehouse', label: 'Toko → Gudang Utama (Tarik dari rak)' },
+  { from: 'floor', to: 'warehouse', label: 'Display Toko → Gudang Utama (Tarik dari rak)' },
 ];
 
 const DESTINATIONS = ['warehouse', 'floor', 'damaged'];
