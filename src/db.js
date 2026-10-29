@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     warehouse_stock INTEGER DEFAULT 0,
     damaged_stock INTEGER DEFAULT 0,
     min_floor_alert INTEGER DEFAULT 5,
-    sold_out_at DATETIME, -- terisi saat stok toko habis/minus karena terjual di kasir (merah di Saran Restock)
+    sold_out_at DATETIME, -- terisi saat display toko habis/minus karena terjual di kasir (merah di Saran Restock)
     FOREIGN KEY (sku) REFERENCES products(sku) ON DELETE CASCADE
 );
 
@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS label_designs (
 
 -- Transaksi mode darurat yang dikirim PC kasir setelah koneksi kembali.
 -- Tidak ikut dihapus saat tutup shift: mencegah transaksi tercatat dua kali bila dikirim ulang,
--- dan menyimpan tanda "perlu dicek" (status = 'check') bila stok toko tidak cukup saat diterima.
+-- dan menyimpan tanda "perlu dicek" (status = 'check') bila display toko tidak cukup saat diterima.
 CREATE TABLE IF NOT EXISTS offline_sales (
     receipt_no TEXT PRIMARY KEY,
     client_ref TEXT,

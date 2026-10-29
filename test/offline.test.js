@@ -88,7 +88,7 @@ async function t(name, fn) {
     second = store.checkout({ items: [{ sku: 'B-2', qty: 5 }], payment_method: 'QRIS' });
     assert.match(second.receipt_no, /-0002$/);
     assert.strictEqual(second.warnings.length, 1);
-    assert.match(second.warnings[0], /Barang B: stok toko terakhir 2, dijual 5/);
+    assert.match(second.warnings[0], /Barang B: display toko terakhir 2, dijual 5/);
   });
 
   await t('nota darurat diberi tanda MODE DARURAT', () => {
@@ -122,18 +122,18 @@ async function t(name, fn) {
     assert.strictEqual(rows[0].created_at, '2026-10-15 09:00:00'); // waktu jual asli
     assert.strictEqual(gudang.getProduct('A-1').floor_stock, 7);
     const b = gudang.getProduct('B-2');
-    assert.strictEqual(b.floor_stock, -3); // barang sudah keluar fisik → stok toko minus
+    assert.strictEqual(b.floor_stock, -3); // barang sudah keluar fisik → display toko minus
     assert.strictEqual(b.damaged_stock, 9); // Gudang BS tidak tersentuh
     assert.deepStrictEqual(r.checks.map((c) => c.receipt_no), [second.receipt_no]);
     const checks = gudang.offlineChecks();
     assert.strictEqual(checks.length, 1);
-    assert.match(checks[0].notes[0], /stok toko 2, terjual 5 → stok toko -3/);
+    assert.match(checks[0].notes[0], /display toko 2, terjual 5 → display toko -3/);
     const sum = gudang.shiftSummary();
     assert.strictEqual(sum.offline.receipts, 2);
     assert.strictEqual(sum.totals.revenue, 25000);
   });
 
-  await t('penjualan online tetap boleh walau stok toko sudah minus', async () => {
+  await t('penjualan online tetap boleh walau display toko sudah minus', async () => {
     const r = await svc.checkout({ items: [{ sku: 'B-2', qty: 1 }], payment_method: 'QRIS' });
     assert.deepStrictEqual(r.short.map((s) => [s.sku, s.floor_stock]), [['B-2', -4]]);
     assert.strictEqual(gudang.lowStock({})[0].sku, 'B-2'); // paling atas di Saran Restock

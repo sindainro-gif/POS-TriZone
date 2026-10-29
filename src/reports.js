@@ -65,7 +65,7 @@ ${byMethod.map((m) => `<tr><td>${esc(m.method)}</td><td class="r">${num(m.receip
 <table><tr><th>SKU</th><th>Nama Barang</th><th class="r">Jumlah (Biji)</th><th class="r">Total</th></tr>
 ${byItem.map((i) => `<tr><td>${esc(i.sku)}</td><td>${esc(i.name)}</td><td class="r">${num(i.qty)}</td><td class="r">${rp(i.total)}</td></tr>`).join('') || '<tr><td colspan="4">Tidak ada penjualan.</td></tr>'}
 </table>
-${lowStock.length ? `<h2>Peringatan Stok Toko Menipis</h2>
+${lowStock.length ? `<h2>Peringatan Display Toko Menipis</h2>
 <table><tr><th>SKU</th><th>Nama Barang</th><th class="r">Toko</th><th class="r">Min</th><th class="r">Gudang Utama</th><th class="r">Gudang BS</th></tr>
 ${lowStock.map((p) => `<tr><td>${esc(p.sku)}</td><td>${esc(p.name)}</td><td class="r">${num(p.floor_stock)}</td><td class="r">${num(p.min_floor_alert)}</td><td class="r">${num(p.warehouse_stock)}</td><td class="r">${num(p.damaged_stock)}</td></tr>`).join('')}
 </table>` : ''}
@@ -96,7 +96,7 @@ function summaryText({ store, summary, closedAt }) {
     `Penjualan tunai : ${rp(summary.cashSales)}`,
     '',
     ...offlineText(summary.offline),
-    'Lampiran: Rekap PDF, detail penjualan (CSV), dan snapshot stok Toko / Gudang Utama / Gudang BS (CSV).',
+    'Lampiran: Rekap PDF, detail penjualan (CSV), dan snapshot stok Display Toko / Gudang Utama / Gudang BS (CSV).',
     '',
     '— Dikirim otomatis oleh POS Tri-Zone',
   ].join('\n');
@@ -106,7 +106,7 @@ function offlineText(off) {
   if (!off || (!off.receipts && !off.checks.length)) return [];
   return [
     `Transaksi MODE DARURAT (OFF-...) : ${num(off.receipts)} struk`,
-    ...(off.checks.length ? ['PERLU DICEK (stok toko tidak cukup saat dikirim ke gudang):', ...off.checks.map((c) => `  - ${c.receipt_no}: ${c.notes.join(' ')}`)] : []),
+    ...(off.checks.length ? ['PERLU DICEK (display toko tidak cukup saat dikirim ke gudang):', ...off.checks.map((c) => `  - ${c.receipt_no}: ${c.notes.join(' ')}`)] : []),
     '',
   ];
 }

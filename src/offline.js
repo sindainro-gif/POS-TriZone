@@ -118,7 +118,7 @@ function createOfflineStore(dir, { now = localNow } = {}) {
     const lines = [...merged].map(([sku, qty]) => {
       const p = getProduct(sku);
       if (!p) fail(`Barang dengan SKU ${sku} tidak ada di data darurat.`);
-      if (p.floor_stock < qty) warnings.push(`${p.name}: stok toko terakhir ${p.floor_stock}, dijual ${qty}.`);
+      if (p.floor_stock < qty) warnings.push(`${p.name}: display toko terakhir ${p.floor_stock}, dijual ${qty}.`);
       return { sku, name: p.name, qty, unit_price: p.unit_price, line_total: p.unit_price * qty };
     });
     const total = lines.reduce((s, l) => s + l.line_total, 0);

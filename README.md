@@ -1,6 +1,6 @@
 # POS Tri-Zone — POS Desktop Offline
 
-Aplikasi kasir offline (Electron + SQLite lokal) dengan inventaris tiga zona: **Stok Toko**, **Gudang Utama**, dan **Gudang BS / Retur**.
+Aplikasi kasir offline (Electron + SQLite lokal) dengan inventaris tiga zona: **Display Toko**, **Gudang Utama**, dan **Gudang BS / Retur**.
 
 ## Menjalankan
 
@@ -74,7 +74,7 @@ Di layar Kasir, kursor selalu kembali ke kolom **scan barcode**. Kolom **Jumlah*
 
 **Draft penjualan:** bila pelanggan belum siap bayar, klik **Tahan (Draft)** (boleh diberi nama pelanggan / catatan). Keranjang tersimpan di komputer kasir itu dan layar kosong untuk pelanggan berikutnya. **Daftar Draft** menampilkan semua draft; **Lanjutkan** memasukkan isinya kembali ke keranjang (keranjang yang sedang berisi bisa ditahan otomatis dulu). Stok tidak dipesan: harga & stok dicek ulang saat dilanjutkan dan saat bayar. Draft tetap ada walau aplikasi ditutup, juga saat MODE DARURAT.
 
-**Menjual melebihi stok toko:** kasir selalu boleh menjual walaupun stok toko di sistem kurang (barangnya ada di tangan pelanggan). Keranjang hanya menampilkan peringatan kuning, dan stok toko menjadi 0 atau minus. Stok Gudang Utama dan Gudang BS tidak pernah dipotong. Barang yang stok tokonya habis/minus muncul **merah dan paling atas** di **Mutasi → Saran Restock Rak Toko** (label HABIS / MINUS −N), dan menu Mutasi menampilkan angka merah berisi jumlah barang tersebut untuk akun Gudang & Admin. Klik **Isi Rak** untuk mencatat mutasi Gudang Utama → Toko.
+**Menjual melebihi display toko:** kasir selalu boleh menjual walaupun display toko di sistem kurang (barangnya ada di tangan pelanggan). Keranjang hanya menampilkan peringatan kuning, dan display toko menjadi 0 atau minus. Stok Gudang Utama dan Gudang BS tidak pernah dipotong. Barang yang display tokonya habis/minus muncul **merah dan paling atas** di **Mutasi → Saran Restock Rak Toko** (label HABIS / MINUS −N), dan menu Mutasi menampilkan angka merah berisi jumlah barang tersebut untuk akun Gudang & Admin. Klik **Isi Rak** untuk mencatat mutasi Gudang Utama → Toko.
 
 Kolom scan / cari barang (Kasir, Mutasi, Penerimaan, Cetak Barcode) menampilkan dropdown barang yang mirip setelah 2 huruf diketik. Bagian yang cocok diberi warna.
 - Urutan kata bebas: `lidi sima` menemukan "Penebah Lidi @50 PCS Sima". Merk dan kategori ikut dicari.
@@ -153,7 +153,7 @@ Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data lang
 - Syarat: PC Kasir pernah terhubung, dan shift sudah dibuka saat terakhir terhubung. Buka shift, tutup shift, laporan shift, dan menu gudang tetap memerlukan PC Gudang.
 - Stok yang tampil adalah stok terakhir yang diketahui, dikurangi transaksi darurat yang belum terkirim. Jika stok itu kurang, kasir hanya diberi peringatan dan tetap boleh menjual, karena barangnya sudah ada di tangan pelanggan.
 - Saat koneksi kembali (dicek tiap 15 detik), antrian dikirim **berurutan**, dimulai dari yang paling lama, dengan harga dan waktu jual aslinya. Jika jaringan putus di tengah pengiriman, sisa antrian dicoba lagi nanti. Transaksi yang ditolak PC Gudang (data rusak) tetap disimpan di antrian beserta pesan errornya, lalu antrian berikutnya tetap dikirim.
-- **Jika stok toko di PC Gudang tidak cukup**, transaksi **tetap dicatat** dan **stok toko dibiarkan minus**, lalu transaksi ditandai **Perlu Dicek**. Alasannya, barang sudah keluar secara fisik dan uang sudah diterima. Jika ditolak, omset dan laci kasir tidak akan cocok. Jika stok dipaksa 0, selisihnya hilang tanpa jejak. Dengan stok minus, selisihnya terlihat jelas, dan barang itu muncul merah paling atas di **Saran Restock Rak Toko** sampai stok dibereskan (Mutasi Gudang → Toko atau Penerimaan). Stok Gudang Utama dan Gudang BS tidak pernah disentuh.
+- **Jika display toko di PC Gudang tidak cukup**, transaksi **tetap dicatat** dan **display toko dibiarkan minus**, lalu transaksi ditandai **Perlu Dicek**. Alasannya, barang sudah keluar secara fisik dan uang sudah diterima. Jika ditolak, omset dan laci kasir tidak akan cocok. Jika stok dipaksa 0, selisihnya hilang tanpa jejak. Dengan stok minus, selisihnya terlihat jelas, dan barang itu muncul merah paling atas di **Saran Restock Rak Toko** sampai stok dibereskan (Mutasi Gudang → Toko atau Penerimaan). Stok Gudang Utama dan Gudang BS tidak pernah disentuh.
 - Daftar **Perlu Dicek** tampil di **Laporan Shift** (tombol *Sudah Dicek*) dan di PDF/email rekap tutup shift. Daftar ini juga mencakup barang yang sudah dihapus dari gudang dan transaksi yang masuk saat tidak ada shift aktif (dicatat ke shift berikutnya).
 - Anti dobel: transaksi darurat tercatat di tabel `offline_sales` yang tidak ikut dihapus saat tutup shift, sehingga pengiriman ulang diabaikan. Setiap pembayaran juga membawa penanda unik. Jika koneksi putus tepat setelah PC Gudang menyimpan transaksi online, salinan daruratnya tidak dihitung dua kali.
 - Tutup shift di PC Kasir ditolak selama masih ada transaksi darurat yang belum terkirim.
@@ -183,5 +183,5 @@ Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data lang
     - Import ulang hanya memperbarui nama, kategori, dan harga. Stok dan barcode yang sudah diganti tidak berubah.
 - Stok awal di file import boleh minus.
 - Mutasi: satu form = satu arah + satu alasan, berisi banyak barang. Scan barang → isi Jumlah → Enter = masuk list; Simpan Mutasi menyimpan semuanya sekaligus dengan nomor `MT-YYYYMMDD-NNN` (kalau satu barang stoknya kurang, seluruh form batal). Riwayat tampil per nomor mutasi dengan tombol Detail. Mutasi dari versi lama otomatis diberi nomor `MT-LAMA-<id>`.
-- Saran Restock: barang yang stok tokonya 0 karena belum pernah dipajang (mis. hasil import) tampil biasa. Merah hanya untuk barang yang habis/minus karena terjual di kasir, dan hilang setelah rak diisi lagi (Mutasi / Penerimaan ke Toko).
+- Saran Restock: barang yang display tokonya 0 karena belum pernah dipajang (mis. hasil import) tampil biasa. Merah hanya untuk barang yang habis/minus karena terjual di kasir, dan hilang setelah rak diisi lagi (Mutasi / Penerimaan ke Toko).
 - Shortcut: F1 Kasir, F2 fokus scan, F3 Mutasi, F4 Penerimaan, F5 Daftar Barang, F6 Shift, F8 kosongkan keranjang, F9 bayar, F10 Cetak Barcode, F12 isi Uang Diterima (F12 lagi = Uang Pas, lalu Enter = bayar). Pengaturan dibuka lewat tombol di sidebar. Di layar Kasir, tombol `*` di kolom barcode yang kosong memindahkan fokus ke kolom Jumlah.

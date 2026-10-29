@@ -102,7 +102,7 @@ const setMoney = (input, n) => { input.value = n ? Number(n).toLocaleString('id-
 
 function floorBadge(p) {
   const cls = p.floor_stock <= 0 ? 'zero' : p.floor_stock <= p.min_floor_alert ? 'low' : 'ok';
-  return `<span class="badge floor ${cls}" title="Stok Toko (siap jual)">${num(p.floor_stock)}</span>`;
+  return `<span class="badge floor ${cls}" title="Display Toko (siap jual)">${num(p.floor_stock)}</span>`;
 }
 const whBadge = (p) => `<span class="badge wh" title="Gudang Utama (cadangan)">${num(p.warehouse_stock)}</span>`;
 const bsBadge = (p) => `<span class="badge bs ${p.damaged_stock ? '' : 'none'}" title="Gudang BS / Retur (tidak bisa dijual)">${num(p.damaged_stock)}</span>`;
@@ -313,11 +313,11 @@ views.checkout = (() => {
   }
   const hideAlert = () => $('#stockAlert').classList.add('hidden');
 
-  const shortMsg = (p) => `<b>${esc(p.name)}</b>: Stok toko tidak cukup. Tersedia <b>${num(p.floor_stock)}</b> di toko, <b>${num(p.warehouse_stock)}</b> di gudang utama, dan <b>${num(p.damaged_stock)}</b> di gudang BS.`;
+  const shortMsg = (p) => `<b>${esc(p.name)}</b>: Display toko tidak cukup. Tersedia <b>${num(p.floor_stock)}</b> di toko, <b>${num(p.warehouse_stock)}</b> di gudang utama, dan <b>${num(p.damaged_stock)}</b> di gudang BS.`;
 
-  // Barang sudah dibawa pelanggan ke kasir: stok toko kurang hanya peringatan, tetap boleh dijual.
-  // Stok toko jadi 0/minus dan barangnya muncul merah paling atas di "Saran Restock Rak Toko" gudang.
-  const oversellMsg = (p, qty) => `${emergencyMode() ? '<b>MODE DARURAT:</b> ' : ''}<b>${esc(p.name)}</b>: stok toko ${emergencyMode() ? 'terakhir diketahui ' : ''}<b>${num(p.floor_stock)}</b>, di keranjang <b>${num(qty)}</b>.
+  // Barang sudah dibawa pelanggan ke kasir: display toko kurang hanya peringatan, tetap boleh dijual.
+  // Display toko jadi 0/minus dan barangnya muncul merah paling atas di "Saran Restock Rak Toko" gudang.
+  const oversellMsg = (p, qty) => `${emergencyMode() ? '<b>MODE DARURAT:</b> ' : ''}<b>${esc(p.name)}</b>: display toko ${emergencyMode() ? 'terakhir diketahui ' : ''}<b>${num(p.floor_stock)}</b>, di keranjang <b>${num(qty)}</b>.
     Tetap dijual — gudang akan melihatnya (merah) di <b>Saran Restock Rak Toko</b>.`;
 
   function addToCart(p, qty) {
@@ -349,7 +349,7 @@ views.checkout = (() => {
     const body = $('#cartBody');
     body.innerHTML = cart.map((l, i) => `<tr data-sku="${esc(l.sku)}" class="${l.sku === flashSku ? 'flash' : ''}">
       <td class="muted">${cart.length - i}</td>
-      <td><div class="pname">${esc(l.name)}</div><div class="psub mono">${esc(l.barcode)} · stok toko ${num(l.floor_stock)}</div></td>
+      <td><div class="pname">${esc(l.name)}</div><div class="psub mono">${esc(l.barcode)} · display toko ${num(l.floor_stock)}</div></td>
       <td class="r">${rp(l.unit_price)}</td>
       <td class="c"><div class="qty-ctl"><button data-act="dec">−</button><input data-act="qty" type="number" min="1" value="${l.qty}"><button data-act="inc">+</button></div></td>
       <td class="r"><b>${rp(l.unit_price * l.qty)}</b></td>
@@ -467,7 +467,7 @@ views.checkout = (() => {
       showReceipt(res);
       if (state.settings.auto_print !== '0') printReceipt(res);
       if (res.short && res.short.length) {
-        toast(`${res.short.length} barang stok tokonya habis (${res.short.map((s) => `${s.name}: ${s.floor_stock}`).join(', ')}) — sudah masuk Saran Restock gudang.`, 'warn', 9000);
+        toast(`${res.short.length} barang display tokonya habis (${res.short.map((s) => `${s.name}: ${s.floor_stock}`).join(', ')}) — sudah masuk Saran Restock gudang.`, 'warn', 9000);
       }
       if (res.offline) refreshConnection();
     } catch (e) {
@@ -792,15 +792,15 @@ views.transfers = (() => {
 
   async function loadLow() {
     const rows = await api('stock:low', { limit: 60 });
-    // Stok toko habis/minus (mis. kasir menjual melebihi stok): merah & paling atas (urutan dari server)
+    // Display toko habis/minus (mis. kasir menjual melebihi stok): merah & paling atas (urutan dari server)
     $('#trLowList').innerHTML = rows.length ? rows.map((p) => {
       const out = !!p.sold_out; // habis/minus karena terjual di kasir (bukan barang yang belum pernah dipajang)
       return `<div class="low-item ${out ? 'out' : ''}">
         <div><div class="pname">${out ? `<span class="out-tag">${p.floor_stock < 0 ? `MINUS ${num(p.floor_stock)}` : 'HABIS'}</span>` : ''}${esc(p.name)}</div>
-        <div class="psub">Toko ${num(p.floor_stock)} / min ${num(p.min_floor_alert)} · Gudang ${num(p.warehouse_stock)} · BS ${num(p.damaged_stock)}${out ? ' · <b>Kosong di sistem / terjual melebihi stok — segera isi rak</b>' : ''}</div></div>
+        <div class="psub">Display Toko ${num(p.floor_stock)} / min ${num(p.min_floor_alert)} · Gudang ${num(p.warehouse_stock)} · BS ${num(p.damaged_stock)}${out ? ' · <b>Kosong di sistem / terjual melebihi stok — segera isi rak</b>' : ''}</div></div>
         ${p.warehouse_stock > 0 ? `<button class="btn sm" data-sku="${esc(p.sku)}">Isi Rak</button>` : '<span class="badge bs">Gudang kosong</span>'}</div>`;
     }).join('')
-      : '<div class="muted">Semua stok toko di atas batas minimum. 👍</div>';
+      : '<div class="muted">Semua display toko di atas batas minimum. 👍</div>';
     refreshOutBadge(rows);
     $('#trLowList').onclick = (e) => {
       const b = e.target.closest('[data-sku]');
@@ -1011,7 +1011,7 @@ views.products = (() => {
       : '<tr><td colspan="10" class="empty-row">Tidak ada barang. Tambah barang baru atau import dari Excel.</td></tr>';
     const tot = rows.reduce((a, p) => ({ f: a.f + p.floor_stock, w: a.w + p.warehouse_stock, d: a.d + p.damaged_stock }), { f: 0, w: 0, d: 0 });
     $('#pdCount').style.marginTop = '10px';
-    $('#pdCount').textContent = `${num(rows.length)} barang · Total stok toko ${num(tot.f)} · gudang utama ${num(tot.w)} · gudang BS ${num(tot.d)} Biji`;
+    $('#pdCount').textContent = `${num(rows.length)} barang · Total display toko ${num(tot.f)} · gudang utama ${num(tot.w)} · gudang BS ${num(tot.d)} Biji`;
   }
 
   $('#pdBody').addEventListener('click', async (e) => {
@@ -1022,7 +1022,7 @@ views.products = (() => {
     if (edit) openForm(rows.find((r) => r.sku === edit.dataset.edit));
     if (del) {
       const p = rows.find((r) => r.sku === del.dataset.del);
-      const stockNote = p.floor_stock + p.warehouse_stock + p.damaged_stock > 0 ? `<br><br><span class="badge bs">Perhatian</span> Barang ini masih memiliki stok (Toko ${p.floor_stock}, Gudang ${p.warehouse_stock}, BS ${p.damaged_stock}).` : '';
+      const stockNote = p.floor_stock + p.warehouse_stock + p.damaged_stock > 0 ? `<br><br><span class="badge bs">Perhatian</span> Barang ini masih memiliki stok (Display Toko ${p.floor_stock}, Gudang ${p.warehouse_stock}, BS ${p.damaged_stock}).` : '';
       if (!(await confirmDialog('Hapus Barang', `Hapus <b>${esc(p.name)}</b> (${esc(p.sku)}) dari master barang?${stockNote}`, { okLabel: 'Hapus', danger: true }))) return;
       try { await api('products:delete', { sku: p.sku }); toast('Barang dihapus.', 'ok'); load(); } catch (err) { toast(err.message, 'err', 6000); }
     }
@@ -1046,7 +1046,7 @@ views.products = (() => {
           <div class="field"><label>Merk</label><input id="fBrand" maxlength="80" value="${esc(p.brand === '-' ? '' : p.brand)}" placeholder="-"></div>
           <div class="field"><label>Kategori</label><input id="fCat" maxlength="80" list="fCatList" value="${esc(p.category)}" placeholder="Umum">
             <datalist id="fCatList">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
-          <div class="field"><label>Min. Stok Toko (peringatan)</label><input id="fMin" type="number" min="0" value="${p.min_floor_alert}"></div>
+          <div class="field"><label>Min. Display Toko (peringatan)</label><input id="fMin" type="number" min="0" value="${p.min_floor_alert}"></div>
         </div>
         <div class="row-3">
           <div class="field"><label>Satuan Jual Kasir</label><input value="Biji" readonly></div>
@@ -1054,8 +1054,8 @@ views.products = (() => {
           <div class="field"><label>Isi per Satuan Masuk (Biji)</label><input id="fRatio" type="number" min="1" value="${p.pack_ratio}"></div>
         </div>
         ${isNew ? `<h2 class="mt">Stok Awal (Biji)</h2><div class="row-3">
-          <div class="field"><label><span class="badge floor ok">Stok Toko</span></label><input id="fFloor" type="number" min="0" value="0"></div>
-          <div class="field"><label><span class="badge wh">Stok Gudang Utama</span></label><input id="fWh" type="number" min="0" value="0"></div>
+          <div class="field"><label><span class="badge floor ok">Display Toko</span></label><input id="fFloor" type="number" min="0" value="0"></div>
+          <div class="field"><label><span class="badge wh">Gudang Utama</span></label><input id="fWh" type="number" min="0" value="0"></div>
           <div class="field"><label><span class="badge bs">Gudang BS</span></label><input id="fBs" type="number" min="0" value="0"></div></div>`
           : `<div class="muted small">Stok diubah melalui menu Penerimaan Barang dan Mutasi agar riwayatnya tercatat.</div>${zoneBadges(p)}`}`,
       actions: [
@@ -1594,7 +1594,7 @@ views.shift = (() => {
     if (!checks || !checks.length) return '';
     return `<div class="card">
         <h2>Transaksi Mode Darurat — Perlu Dicek</h2>
-        <p class="muted small">Saat transaksi darurat dikirim, stok toko di PC Gudang tidak cukup. Transaksi tetap dicatat dan stok toko dibiarkan minus.
+        <p class="muted small">Saat transaksi darurat dikirim, display toko di PC Gudang tidak cukup. Transaksi tetap dicatat dan display toko dibiarkan minus.
           Cek fisik rak, catat Mutasi / Penerimaan bila perlu, lalu tandai sudah dicek.</p>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>No. Struk</th><th>Waktu</th><th class="r">Total</th><th>Catatan</th><th></th></tr></thead><tbody id="shChecks">
           ${checks.map((c) => `<tr><td class="mono">${esc(c.receipt_no)}</td><td class="muted">${fmtTime(c.created_at)}</td><td class="r">${rp(c.total)}</td>
@@ -1640,7 +1640,7 @@ views.shift = (() => {
           <div class="kv"><span>Penjualan tunai</span><b>${rp(s.cashSales)}</b></div>
           <div class="field"><label>Catatan Kasir <span class="muted">(opsional)</span></label><input id="shNotes" maxlength="300" placeholder="Contoh: ada uang palsu Rp 50.000"></div>
           <button class="btn primary xl" id="shClose">Tutup Shift &amp; Kirim Laporan</button>
-          <p class="muted small" style="margin-top:10px">Laporan (PDF rekap, CSV penjualan, CSV snapshot stok Toko / Gudang Utama / Gudang BS) dikirim ke <b>${esc(state.settings.owner_email || '(email owner belum diatur)')}</b>.
+          <p class="muted small" style="margin-top:10px">Laporan (PDF rekap, CSV penjualan, CSV snapshot stok Display Toko / Gudang Utama / Gudang BS) dikirim ke <b>${esc(state.settings.owner_email || '(email owner belum diatur)')}</b>.
           Data penjualan shift dihapus hanya setelah server email membalas <b>250 OK</b>.</p>
         </div>
       </div>
@@ -1844,7 +1844,7 @@ const usersCard = (() => {
   return { load };
 })();
 
-// Angka merah di menu Mutasi: jumlah barang yang stok tokonya habis/minus (untuk Gudang & Admin)
+// Angka merah di menu Mutasi: jumlah barang yang display tokonya habis/minus (untuk Gudang & Admin)
 async function refreshOutBadge(rows) {
   const btn = $('#nav [data-view="transfers"]');
   if (!btn || !canView('transfers')) return;
@@ -1854,7 +1854,7 @@ async function refreshOutBadge(rows) {
   let b = $('.nav-badge', btn);
   if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; btn.querySelector('kbd').before(b); }
   b.textContent = n;
-  b.title = `${n} barang stok tokonya habis/minus — lihat Saran Restock`;
+  b.title = `${n} barang display tokonya habis/minus — lihat Saran Restock`;
   b.classList.toggle('hidden', !n);
 }
 

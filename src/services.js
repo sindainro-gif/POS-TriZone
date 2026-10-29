@@ -9,7 +9,7 @@ const PAYMENT_METHODS = ['Tunai', 'QRIS', 'Kartu Debit'];
 const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock' };
 
 const ZONE_LABEL = {
-  floor: 'Stok Toko',
+  floor: 'Display Toko',
   warehouse: 'Gudang Utama',
   damaged: 'Gudang BS',
   customer: 'Retur Pelanggan',
@@ -199,7 +199,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       unit_price: toInt(d.unit_price, 'Harga jual', { min: 0 }),
       pack_unit: toStr(d.pack_unit, 'Satuan masuk', { def: 'Dus', max: 30 }),
       pack_ratio: toInt(d.pack_ratio, 'Rasio isi dus', { min: 1, def: 1 }),
-      min_floor_alert: toInt(d.min_floor_alert, 'Batas minimum stok toko', { min: 0, def: 5 }),
+      min_floor_alert: toInt(d.min_floor_alert, 'Batas minimum display toko', { min: 0, def: 5 }),
     };
   }
 
@@ -342,8 +342,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return db.all(`${PRODUCT_SELECT} ORDER BY p.category COLLATE NOCASE, p.name COLLATE NOCASE`);
   }
 
-  // Tandai barang yang stok tokonya habis/minus karena terjual (merah di Saran Restock);
-  // tanda hilang begitu stok toko diisi lagi (> 0). Barang yang memang belum pernah dipajang tidak merah.
+  // Tandai barang yang display tokonya habis/minus karena terjual (merah di Saran Restock);
+  // tanda hilang begitu display toko diisi lagi (> 0). Barang yang memang belum pernah dipajang tidak merah.
   function markSoldOut(sku, at) {
     db.run('UPDATE inventory SET sold_out_at = ? WHERE sku = ? AND floor_stock <= 0', [at || localNow(), sku]);
   }
@@ -403,7 +403,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       for (const [sku, qty] of merged) {
         const p = getProduct(sku);
         if (!p) fail(`Barang dengan SKU ${sku} tidak ditemukan.`);
-        // Stok toko kurang tetap boleh dijual (barang fisik ada di rak); stok toko jadi 0/minus
+        // Display toko kurang tetap boleh dijual (barang fisik ada di rak); display toko jadi 0/minus
         // dan barang muncul merah paling atas di "Saran Restock Rak Toko" untuk gudang.
         lines.push({ sku, name: p.name, qty, unit_price: p.unit_price, line_total: p.unit_price * qty });
       }
@@ -503,7 +503,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   // ---------------------------------------------------------------- Transaksi mode darurat (dari PC kasir)
   // Barang sudah keluar fisik dan nota sudah dicetak, jadi transaksi SELALU dicatat dengan harga & waktu
-  // saat dijual. Bila stok toko tidak cukup, stok toko dibiarkan minus dan transaksi ditandai "perlu dicek"
+  // saat dijual. Bila display toko tidak cukup, display toko dibiarkan minus dan transaksi ditandai "perlu dicek"
   // (bukan ditolak), supaya omset & laci kasir tetap cocok dan selisih stok terlihat jelas oleh owner.
   function importOfflineSale({ receipt_no, client_ref, created_at, payment_method, cashier, lines = [] } = {}) {
     const no = toStr(receipt_no, 'No. struk darurat', { required: true, max: 60 });
@@ -545,7 +545,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
           db.run('UPDATE inventory SET floor_stock = floor_stock - ? WHERE sku = ?', [l.qty, l.sku]);
           if (p.floor_stock - l.qty <= 0) markSoldOut(l.sku, when);
           if (p.floor_stock < l.qty) {
-            notes.push(`${p.name}: stok toko ${p.floor_stock}, terjual ${l.qty} → stok toko ${p.floor_stock - l.qty}. Cek fisik rak / catat mutasi.`);
+            notes.push(`${p.name}: display toko ${p.floor_stock}, terjual ${l.qty} → display toko ${p.floor_stock - l.qty}. Cek fisik rak / catat mutasi.`);
           }
         }
         db.run(

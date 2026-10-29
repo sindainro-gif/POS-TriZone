@@ -371,7 +371,7 @@ body.demo main { box-shadow: inset 0 0 0 3px #f97316; }
 .dz-seg button { padding: 5px 0; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-3); cursor: pointer; }
 .dz-seg button.active { border-color: var(--accent); background: var(--blue-bg); }
 
-/* Saran Restock: stok toko habis/minus (merah, paling atas) */
+/* Saran Restock: display toko habis/minus (merah, paling atas) */
 .low-item.out { background: var(--red-bg); border-left: 4px solid var(--red); }
 .low-item.out .psub { color: #fca5a5; }
 .out-tag { display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 999px; background: var(--red); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .3px; vertical-align: 1px; }

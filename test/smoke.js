@@ -84,7 +84,7 @@ app.on('browser-window-created', (_e, win) => {
       const afterScan = await focusNow();
       if (afterScan !== 'scanInput') throw new Error(`setelah scan kursor seharusnya tetap di kolom scan (${afterScan})`);
       await scan('8997654321098');
-      await scan('8997654321098', 10); // melebihi stok toko → peringatan tiga zona
+      await scan('8997654321098', 10); // melebihi display toko → peringatan tiga zona
       // F12 dari metode QRIS → pindah ke Tunai & fokus Uang Diterima; ketik uang lalu Enter = bayar
       await run(`document.querySelector('#payMethods [data-m="QRIS"]').click()`);
       const f12 = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true }));
@@ -100,7 +100,7 @@ app.on('browser-window-created', (_e, win) => {
       await shot('02-kasir-keranjang');
       const alertText = await run(`document.querySelector('#stockAlert').className + ' | ' + document.querySelector('#stockAlert').innerText`);
       console.log('peringatan stok:', alertText);
-      // Keripik: stok toko 4, di keranjang 11 → tetap masuk keranjang dengan peringatan kuning
+      // Keripik: display toko 4, di keranjang 11 → tetap masuk keranjang dengan peringatan kuning
       const keripikQty = await run(`document.querySelector('#cartBody tr[data-sku="SNK-010"] [data-act=qty]').value`);
       if (keripikQty !== '11' || !/warn/.test(alertText) || !/Tetap dijual/.test(alertText)) throw new Error(`kasir seharusnya boleh menjual melebihi stok (qty ${keripikQty})`);
       await run(`document.querySelector('#cashInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
@@ -111,7 +111,7 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
 
       svc.createTransfer({ sku: 'MNM-001', from_zone: 'floor', to_zone: 'damaged', qty: 1, reason: 'Pecah terinjak' });
-      if (svc.getProduct('SNK-010').floor_stock !== -7) throw new Error(`stok toko Keripik seharusnya -7: ${svc.getProduct('SNK-010').floor_stock}`);
+      if (svc.getProduct('SNK-010').floor_stock !== -7) throw new Error(`display toko Keripik seharusnya -7: ${svc.getProduct('SNK-010').floor_stock}`);
       await run(`document.querySelector('[data-view=transfers]').click()`);
       await wait(600);
       const restock = await run(`({ first: document.querySelector('#trLowList .low-item').className + ' | ' + document.querySelector('#trLowList .low-item').innerText.replace(/\\s+/g, ' '),

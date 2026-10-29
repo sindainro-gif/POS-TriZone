@@ -47,7 +47,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     throwsMsg(() => svc.checkout({ items: [{ sku: 'MNM-001', qty: 1 }], payment_method: 'Tunai', cash_received: 5000 }), /Shift belum dibuka/);
   });
 
-  await t('buka shift & jual memotong hanya stok toko', () => {
+  await t('buka shift & jual memotong hanya display toko', () => {
     svc.openShift({ cashier_name: 'Rina', initial_cash: '200.000' });
     const r = svc.checkout({ items: [{ sku: 'MNM-001', qty: 3 }, { sku: 'MNM-001', qty: 2 }], payment_method: 'Tunai', cash_received: 50000 });
     assert.strictEqual(r.total, 20000);
@@ -58,7 +58,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.deepStrictEqual([p.floor_stock, p.warehouse_stock, p.damaged_stock], [5, 48, 1]);
   });
 
-  await t('stok toko kurang tetap boleh dijual: stok toko minus, Gudang & BS tidak tersentuh', () => {
+  await t('display toko kurang tetap boleh dijual: display toko minus, Gudang & BS tidak tersentuh', () => {
     svc.importRows([{ Barcode: '555', SKU: 'BS-ONLY', Nama_Barang: 'Gelas Kaca', Harga_Jual: 1000, Stok_Awal_Gudang: 6, Stok_Awal_BS: 10 }]);
     const r = svc.checkout({ items: [{ sku: 'BS-ONLY', qty: 1 }], payment_method: 'QRIS' });
     assert.deepStrictEqual(r.short, [{ sku: 'BS-ONLY', name: 'Gelas Kaca', floor_stock: -1 }]);
@@ -71,7 +71,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     const low = svc.lowStock({});
     assert.deepStrictEqual([low[0].sku, low[0].floor_stock, low[0].sold_out], ['BS-ONLY', -1, true]);
     const zero = low.find((p) => p.sku === 'ZERO');
-    assert.strictEqual(zero.sold_out, false); // stok toko 0 dari import, belum pernah terjual → tidak merah
+    assert.strictEqual(zero.sold_out, false); // display toko 0 dari import, belum pernah terjual → tidak merah
     assert.strictEqual(low.filter((p) => p.sold_out).length, 1);
     // Isi rak → tanda habis hilang
     svc.createTransfer({ sku: 'BS-ONLY', from_zone: 'warehouse', to_zone: 'floor', qty: 3 });
