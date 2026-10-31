@@ -39,6 +39,15 @@ const TEMPLATE_SAMPLE = [
   ['8997654321098', 'SNK-010', 'Keripik Kentang 68g', 'Renyah', 'Makanan Ringan', 11500, 'Karton', 40, 20, 80, 0, 10],
 ];
 
+// Template import penerimaan: satu file boleh berisi beberapa surat jalan (dikelompokkan per No_Surat_Jalan)
+const RECEPTION_TEMPLATE_HEADERS = ['No_Surat_Jalan', 'Supplier', 'Catatan', 'Kode', 'Nama_Barang', 'Jumlah', 'Satuan', 'Tujuan'];
+
+const RECEPTION_TEMPLATE_SAMPLE = [
+  ['SJ-0001', 'PT Sumber Makmur', '', 'MNM-001', 'Air Mineral 600ml', 5, 'Dus', 'Gudang Utama'],
+  ['SJ-0001', '', '', '8997654321098', 'Keripik Kentang 68g', 12, 'Biji', 'Display Toko'],
+  ['SJ-0002', 'CV Jaya Abadi', 'Kiriman sore', 'SNK-010', 'Keripik Kentang 68g', 2, 'Dus', ''],
+];
+
 const SETTING_KEYS = [
   'store_name', 'store_address', 'smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'smtp_from', 'owner_email',
   'receipt_header', 'receipt_footer', 'printer_name', 'paper_width', 'auto_print', 'label_printer_name',
@@ -701,6 +710,80 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     );
   }
 
+  function planReceptionImport(rows = []) {
+    const norm = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const data = (Array.isArray(rows) ? rows : []).map((r) => {
+      const o = {};
+      for (const [k, v] of Object.entries(r || {})) o[norm(k)] = v;
+      return o;
+    });
+    const filled = (r) => Object.values(r).some((v) => String(v ?? '').trim() !== '');
+    if (!data.some(filled)) fail('File tidak berisi data penerimaan.');
+    for (const req of ['nosuratjalan', 'kode', 'jumlah']) {
+      if (!(req in data[0])) {
+        fail(`Kolom wajib "${RECEPTION_TEMPLATE_HEADERS.find((h) => norm(h) === req)}" tidak ditemukan. Gunakan template import penerimaan.`);
+      }
+    }
+    const errors = [];
+    const groups = new Map(); // No SJ (huruf kecil) -> dokumen
+    data.forEach((r, i) => {
+      const line = i + 2; // baris 1 = header
+      if (!filled(r)) return;
+      try {
+        const ref = toStr(codeStr(r.nosuratjalan), 'No_Surat_Jalan', { required: true, max: 60 });
+        const code = codeStr(r.kode);
+        if (!code) fail('Kode barang wajib diisi.');
+        const p = db.get(`${PRODUCT_SELECT} WHERE p.sku = ? OR p.barcode = ? ORDER BY p.sku = ? DESC LIMIT 1`, [code, code, code]);
+        if (!p) fail(`Kode "${code}" tidak ditemukan di Daftar Barang.`);
+        const qty = toInt(r.jumlah, `Jumlah "${p.name}"`, { min: 1 });
+        const unit = String(r.satuan ?? '').trim().toLowerCase();
+        let pack_type;
+        if (!unit || unit === 'dus' || unit === String(p.pack_unit || '').toLowerCase()) pack_type = 'Dus';
+        else if (['biji', 'pcs', 'pc'].includes(unit)) pack_type = 'Biji';
+        else fail(`Satuan "${r.satuan}" tidak dikenal (pakai Dus / ${p.pack_unit} atau Biji).`);
+        const dest = String(r.tujuan ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+        const destination = { '': 'warehouse', 'gudang utama': 'warehouse', gudang: 'warehouse', 'display toko': 'floor', toko: 'floor', 'gudang bs': 'damaged', bs: 'damaged' }[dest];
+        if (!destination) fail(`Tujuan "${r.tujuan}" tidak dikenal (pakai Gudang Utama, Display Toko, atau Gudang BS).`);
+        const key = ref.toLowerCase();
+        if (!groups.has(key)) groups.set(key, { reference_no: ref, supplier_name: '', notes: '', line, items: [] });
+        const g = groups.get(key);
+        if (!g.supplier_name) g.supplier_name = String(r.supplier ?? '').trim();
+        if (!g.notes) g.notes = String(r.catatan ?? '').trim();
+        g.items.push({ sku: p.sku, name: p.name, qty, pack_type, destination, pieces: pack_type === 'Dus' ? qty * p.pack_ratio : qty });
+      } catch (e) {
+        if (!e.userFacing) throw e;
+        errors.push(`Baris ${line}: ${e.message}`);
+      }
+    });
+    const docs = [];
+    for (const g of groups.values()) {
+      if (db.get('SELECT 1 FROM stock_receptions WHERE reference_no = ?', [g.reference_no])) {
+        errors.push(`No. Surat Jalan "${g.reference_no}" sudah pernah dicatat — ${g.items.length} baris dilewati.`);
+      } else {
+        docs.push(g);
+      }
+    }
+    return { docs, errors };
+  }
+
+  // rows = baris dari file Excel/CSV. dry_run = hanya ringkasan, stok belum berubah.
+  function importReceptions({ rows, dry_run = false } = {}) {
+    const { docs, errors } = planReceptionImport(rows);
+    const summary = (g) => ({ reference_no: g.reference_no, supplier_name: g.supplier_name, lines: g.items.length, total: g.items.reduce((s, i) => s + i.pieces, 0) });
+    if (dry_run) return { docs: docs.map(summary), errors };
+    const created = [];
+    for (const g of docs) {
+      try {
+        const r = createReception({ reference_no: g.reference_no, supplier_name: g.supplier_name, notes: g.notes, items: g.items });
+        created.push({ id: r.id, reference_no: r.reference_no, total_items_count: r.total_items_count, lines: r.items.length });
+      } catch (e) {
+        if (!e.userFacing) throw e;
+        errors.push(`${g.reference_no}: ${e.message}`);
+      }
+    }
+    return { created, errors };
+  }
+
   function getReception({ id } = {}) {
     const r = db.get('SELECT * FROM stock_receptions WHERE id = ?', [id]);
     if (!r) fail('Dokumen penerimaan tidak ditemukan.');
@@ -841,10 +924,10 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, shiftSalesRows, purgeShift,
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
-    createReception, listReceptions, getReception,
+    createReception, listReceptions, getReception, importReceptions,
   };
 }
 
 module.exports = {
-  createServices, PAYMENT_METHODS, ZONE_LABEL, DIRECTIONS, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, localNow,
+  createServices, PAYMENT_METHODS, ZONE_LABEL, DIRECTIONS, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, localNow,
 };

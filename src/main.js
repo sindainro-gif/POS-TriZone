@@ -6,7 +6,7 @@ const os = require('os');
 const XLSX = require('xlsx');
 const nodemailer = require('nodemailer');
 const { Database } = require('./db');
-const { createServices, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, localNow } = require('./services');
+const { createServices, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, localNow } = require('./services');
 const reports = require('./reports');
 const { buildReceiptLines, receiptPage } = require('./receipt');
 const { labelPages, labelPreview } = require('./labels');
@@ -351,37 +351,43 @@ async function closeShiftClient(a) {
 }
 
 // ---------------------------------------------------------------- Import / template Excel
-async function importProducts() {
+// Dialog buka file Excel/CSV → baris sheet pertama (null bila dibatalkan)
+async function pickSheetRows(title) {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Pilih file import barang',
+    title,
     filters: [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
     properties: ['openFile'],
   });
   if (r.canceled || !r.filePaths.length) return null;
   const wb = XLSX.readFile(r.filePaths[0], { raw: false, cellText: false });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(sheet, { raw: true, defval: '' });
-  return { file: path.basename(r.filePaths[0]), ...(await svc.importRows(rows)) };
+  return { file: path.basename(r.filePaths[0]), rows: XLSX.utils.sheet_to_json(sheet, { raw: true, defval: '' }) };
 }
 
-async function saveTemplate() {
+async function importProducts() {
+  const f = await pickSheetRows('Pilih file import barang');
+  if (!f) return null;
+  return { file: f.file, ...(await svc.importRows(f.rows)) };
+}
+
+async function saveTemplate({ title, fileName, sheet, headers, sample, textCols }) {
   const r = await dialog.showSaveDialog(win, {
-    title: 'Simpan template import',
-    defaultPath: path.join(app.getPath('documents'), 'Template_Import_Barang.xlsx'),
+    title,
+    defaultPath: path.join(app.getPath('documents'), fileName),
     filters: [{ name: 'Excel', extensions: ['xlsx'] }, { name: 'CSV', extensions: ['csv'] }],
   });
   if (r.canceled || !r.filePath) return null;
-  const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...TEMPLATE_SAMPLE]);
-  // Kolom Barcode & SKU sebagai teks agar angka panjang tidak berubah jadi notasi ilmiah
-  for (let row = 1; row <= TEMPLATE_SAMPLE.length; row++) {
-    for (const col of ['A', 'B']) {
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...sample]);
+  // Kolom kode (barcode, SKU, no. surat jalan) sebagai teks agar angka panjang tidak berubah jadi notasi ilmiah
+  for (let row = 1; row <= sample.length; row++) {
+    for (const col of textCols) {
       const c = ws[`${col}${row + 1}`];
       if (c) { c.t = 's'; c.z = '@'; }
     }
   }
-  ws['!cols'] = TEMPLATE_HEADERS.map((h) => ({ wch: Math.max(14, h.length + 2) }));
+  ws['!cols'] = headers.map((h) => ({ wch: Math.max(14, h.length + 2) }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Barang');
+  XLSX.utils.book_append_sheet(wb, ws, sheet);
   XLSX.writeFile(wb, r.filePath, r.filePath.toLowerCase().endsWith('.csv') ? { bookType: 'csv', FS: ';' } : undefined);
   return r.filePath;
 }
@@ -563,6 +569,7 @@ const ACCESS = {
   'products:save': GUDANG, 'products:delete': GUDANG, 'products:import': GUDANG, 'products:template': GUDANG,
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
+  'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
   'labels:designs': GUDANG, 'labels:saveDesign': GUDANG, 'labels:deleteDesign': GUDANG, 'labels:setDefault': GUDANG,
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
@@ -631,7 +638,16 @@ const handlers = {
   'products:save': (a) => svc.saveProduct(a),
   'products:delete': (a) => svc.deleteProduct(a),
   'products:import': () => importProducts(),
-  'products:template': () => saveTemplate(),
+  'products:template': () => saveTemplate({
+    title: 'Simpan template import', fileName: 'Template_Import_Barang.xlsx', sheet: 'Barang',
+    headers: TEMPLATE_HEADERS, sample: TEMPLATE_SAMPLE, textCols: ['A', 'B'],
+  }),
+  'receptions:template': () => saveTemplate({
+    title: 'Simpan template import penerimaan', fileName: 'Template_Import_Penerimaan.xlsx', sheet: 'Penerimaan',
+    headers: RECEPTION_TEMPLATE_HEADERS, sample: RECEPTION_TEMPLATE_SAMPLE, textCols: ['A', 'D'],
+  }),
+  'receptions:importFile': () => pickSheetRows('Pilih file import penerimaan'),
+  'receptions:import': (a) => svc.importReceptions(a),
   'stock:low': (a) => svc.lowStock(a),
 
   'shift:get': async () => {

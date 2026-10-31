@@ -952,6 +952,60 @@ views.receiving = (() => {
     } catch (e) { toast(e.message, 'err', 6000); }
   });
 
+  $('#rcTemplate').addEventListener('click', async () => {
+    try { const f = await api('receptions:template'); if (f) toast(`Template disimpan: ${f}`, 'ok', 6000); } catch (e) { toast(e.message, 'err'); }
+  });
+
+  const errorList = (errors) => (errors.length
+    ? `<div class="tbl-wrap" style="max-height:220px;margin-top:10px"><table class="tbl"><tbody>${errors.map((e) => `<tr><td>${esc(e)}</td></tr>`).join('')}</tbody></table></div>`
+    : '');
+
+  // Import Excel: baca file → ringkasan (dry run) → konfirmasi → simpan semua surat jalan
+  $('#rcImport').addEventListener('click', async () => {
+    let f;
+    let plan;
+    try {
+      f = await api('receptions:importFile');
+      if (!f) return;
+      plan = await api('receptions:import', { rows: f.rows, dry_run: true });
+    } catch (e) { toast(e.message, 'err', 7000); return; }
+    const n = plan.docs.length;
+    const total = plan.docs.reduce((s, d) => s + d.total, 0);
+    modal({
+      title: `Import Penerimaan — ${f.file}`,
+      wide: true,
+      body: `<div class="alert ${plan.errors.length ? 'warn' : 'ok'}">${n ? `${num(n)} penerimaan siap disimpan (${num(total)} Biji)` : 'Tidak ada penerimaan yang bisa disimpan'}${plan.errors.length ? `, <b>${plan.errors.length} baris/dokumen dilewati</b>` : ''}.</div>
+        ${n ? `<div class="tbl-wrap" style="max-height:260px;margin-top:10px"><table class="tbl"><thead><tr><th>No. Surat Jalan</th><th>Supplier</th><th class="r">Baris</th><th class="r">Total Biji</th></tr></thead><tbody>
+          ${plan.docs.map((d) => `<tr><td class="mono"><b>${esc(d.reference_no)}</b></td><td>${esc(d.supplier_name || '-')}</td><td class="r">${num(d.lines)}</td><td class="r">${num(d.total)}</td></tr>`).join('')}
+        </tbody></table></div><p class="muted small">Stok langsung bertambah setelah disimpan.</p>` : ''}
+        ${errorList(plan.errors)}`,
+      actions: [
+        { label: n ? 'Batal' : 'Tutup', kind: 'ghost' },
+        ...(n ? [{
+          label: `Simpan ${num(n)} Penerimaan`,
+          kind: 'primary',
+          onClick: async ({ close, btn }) => {
+            btn.disabled = true;
+            try {
+              const r = await api('receptions:import', { rows: f.rows });
+              close();
+              loadHistory();
+              if (r.created.length) toast(`${num(r.created.length)} penerimaan tersimpan (${num(r.created.reduce((s, c) => s + c.total_items_count, 0))} Biji).`, 'ok');
+              if (r.errors.length) {
+                modal({ title: 'Sebagian Tidak Tersimpan', body: `<div class="alert warn">${num(r.errors.length)} baris/dokumen dilewati.</div>${errorList(r.errors)}`, actions: [{ label: 'Tutup', kind: 'primary' }] });
+              } else if (r.created.length === 1) {
+                const c = r.created[0];
+                if (await confirmDialog('Cetak Barcode', `Cetak label barcode untuk barang yang baru masuk (<b>${esc(c.reference_no)}</b>)?<br><span class="muted small">Jumlah label otomatis = jumlah Biji diterima, bisa diubah sebelum mencetak.</span>`, { okLabel: 'Ya, Siapkan Label' })) {
+                  views.barcode.openWith({ receptionId: c.id });
+                }
+              }
+            } catch (e) { btn.disabled = false; toast(e.message, 'err', 7000); }
+          },
+        }] : []),
+      ],
+    });
+  });
+
   let t;
   $('#rcSearch').addEventListener('input', () => { clearTimeout(t); t = setTimeout(loadHistory, 200); });
 

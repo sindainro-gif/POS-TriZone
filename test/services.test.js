@@ -174,6 +174,38 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     throwsMsg(() => svc.createReception({ reference_no: 'SJ-001', items: [{ sku: 'MNM-001', qty: 1, destination: 'floor' }] }), /sudah pernah dicatat/);
   });
 
+  await t('import penerimaan Excel: per surat jalan, kode tidak dikenal dilewati', () => {
+    svc.importRows([
+      { Barcode: '7770000000035', SKU: 'RC-A', Nama_Barang: 'Terima Uji A', Harga_Jual: 1000, Satuan_Masuk: 'Karton', Rasio_Isi_Dus: 12 },
+      { Barcode: '7770000000042', SKU: 'RC-B', Nama_Barang: 'Terima Uji B', Harga_Jual: 1000, Rasio_Isi_Dus: 6 },
+    ]);
+    const rows = [
+      { 'No Surat Jalan': 'IMP-1', Supplier: 'PT Uji', Kode: 'RC-A', Jumlah: 2, Satuan: 'Karton', Tujuan: '' },
+      { 'No Surat Jalan': 'IMP-1', Supplier: '', Kode: 7770000000042, Jumlah: '5', Satuan: 'pcs', Tujuan: 'display toko' },
+      { 'No Surat Jalan': 'IMP-1', Kode: 'TIDAK-ADA', Jumlah: 1 },
+      { 'No Surat Jalan': 'IMP-2', Catatan: 'sore', Kode: 'RC-B', Jumlah: 1, Satuan: '', Tujuan: 'BS' },
+      { 'No Surat Jalan': 'IMP-2', Kode: 'RC-B', Jumlah: 0 },
+      { 'No Surat Jalan': 'SJ-001', Kode: 'RC-B', Jumlah: 1 },
+      { 'No Surat Jalan': '', Kode: '', Jumlah: '' },
+    ];
+    const plan = svc.importReceptions({ rows, dry_run: true });
+    assert.deepStrictEqual(plan.docs.map((d) => [d.reference_no, d.supplier_name, d.lines, d.total]), [['IMP-1', 'PT Uji', 2, 29], ['IMP-2', '', 1, 6]]);
+    assert.strictEqual(plan.errors.length, 3);
+    assert.match(plan.errors.join('\n'), /Baris 4: Kode "TIDAK-ADA" tidak ditemukan/);
+    assert.match(plan.errors.join('\n'), /Baris 6: Jumlah/);
+    assert.match(plan.errors.join('\n'), /SJ-001.*sudah pernah dicatat/);
+    assert.strictEqual(svc.getProduct('RC-A').warehouse_stock, 0); // dry run tidak mengubah stok
+
+    const r = svc.importReceptions({ rows });
+    assert.deepStrictEqual(r.created.map((c) => [c.reference_no, c.lines, c.total_items_count]), [['IMP-1', 2, 29], ['IMP-2', 1, 6]]);
+    const [a, b] = [svc.getProduct('RC-A'), svc.getProduct('RC-B')];
+    assert.deepStrictEqual([a.warehouse_stock, b.floor_stock, b.damaged_stock], [24, 5, 6]);
+    assert.strictEqual(svc.getReception({ id: r.created[1].id }).notes, 'sore');
+    // Import ulang file yang sama: semua surat jalan sudah tercatat
+    assert.deepStrictEqual(svc.importReceptions({ rows }).created, []);
+    throwsMsg(() => svc.importReceptions({ rows: [{ Kode: 'RC-A', Jumlah: 1 }] }), /No_Surat_Jalan/);
+  });
+
   await t('ringkasan shift & uang laci seharusnya', () => {
     svc.checkout({ items: [{ sku: 'SNK-010', qty: 2 }], payment_method: 'QRIS' });
     const s = svc.shiftSummary();
@@ -204,7 +236,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     const db2 = await Database.open(file);
     const svc2 = createServices(db2);
     assert.strictEqual(svc2.getProduct('MNM-001').warehouse_stock, 72);
-    assert.strictEqual(svc2.listReceptions().length, 1);
+    assert.strictEqual(svc2.listReceptions().length, 3); // SJ-001 + IMP-1 + IMP-2
   });
 
   await t('pengaturan: password terenkripsi tidak bocor ke renderer', () => {

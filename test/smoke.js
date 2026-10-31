@@ -159,6 +159,21 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('[data-view=receiving]').click()`);
       await shot('05-penerimaan');
 
+      // Import penerimaan via Excel: tombol tampil, baris file → penerimaan baru di riwayat
+      const rcBtns = await run(`['#rcTemplate', '#rcImport'].every((s) => document.querySelector(s).offsetParent !== null)`);
+      if (!rcBtns) throw new Error('Tombol Unduh Template / Import Excel di Penerimaan tidak tampil');
+      svc.importRows([{ Barcode: '7770000000059', SKU: 'IMP-SMK', Nama_Barang: 'Barang Import Smoke', Harga_Jual: 2000, Rasio_Isi_Dus: 10 }]);
+      const rcImp = await run(`window.posBridge.call('receptions:import', { rows: [
+        { No_Surat_Jalan: 'SJ-IMPORT', Supplier: 'PT Excel', Kode: 'IMP-SMK', Jumlah: 2, Satuan: 'Dus', Tujuan: 'Gudang Utama' },
+        { No_Surat_Jalan: 'SJ-IMPORT', Kode: 'BELUM-ADA', Jumlah: 1 },
+      ] }).then((r) => r.data)`);
+      console.log('import penerimaan:', JSON.stringify(rcImp));
+      if (rcImp.created.length !== 1 || rcImp.created[0].total_items_count !== 20 || rcImp.errors.length !== 1) throw new Error('hasil import penerimaan salah');
+      await run(`document.querySelector('#rcSearch').dispatchEvent(new Event('input'))`);
+      await wait(500);
+      const rcHist = await run(`document.querySelector('#rcHistory').innerText`);
+      if (!/SJ-IMPORT/.test(rcHist)) throw new Error('SJ-IMPORT tidak tampil di Riwayat Penerimaan');
+
       // Barang masuk → antrian label → cetak (PDF ukuran 106×20 mm)
       svc.importRows([{ Barcode: '4006381333931', SKU: 'BRS-001', Nama_Barang: 'Penebah Lidi @50 PCS Sima', Merk: 'Sima', Harga_Jual: 6000, Rasio_Isi_Dus: 50 }]);
       const rec = svc.createReception({ reference_no: 'SJ-SMOKE', supplier_name: 'PT Sima', items: [

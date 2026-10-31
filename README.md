@@ -182,6 +182,11 @@ Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data lang
     - Rak dan Satuan diabaikan.
     - Import ulang hanya memperbarui nama, kategori, dan harga. Stok dan barcode yang sudah diganti tidak berubah.
 - Stok awal di file import boleh minus.
+- **Penerimaan Barang → Import Excel / CSV** (template dari tombol Unduh Template di layar Penerimaan):
+  - Kolom: `No_Surat_Jalan`*, `Supplier`, `Catatan`, `Kode`*, `Nama_Barang` (info saja), `Jumlah`*, `Satuan`, `Tujuan`.
+  - Satu file boleh berisi beberapa surat jalan; baris dikelompokkan per No_Surat_Jalan dan tiap kelompok menjadi satu penerimaan.
+  - Kode = SKU atau barcode. Satuan kosong = Dus (boleh juga nama satuan masuk barang, mis. Karton), `Biji`/`pcs` = Biji. Tujuan kosong = Gudang Utama; lainnya `Display Toko` atau `Gudang BS`.
+  - Sebelum disimpan tampil ringkasan. Kode yang belum terdaftar dan baris tidak valid dilewati dan dilaporkan; surat jalan yang sudah pernah dicatat dilewati seluruhnya.
 - Mutasi: satu form = satu arah + satu alasan, berisi banyak barang. Scan barang → isi Jumlah → Enter = masuk list; Simpan Mutasi menyimpan semuanya sekaligus dengan nomor `MT-YYYYMMDD-NNN` (kalau satu barang stoknya kurang, seluruh form batal). Riwayat tampil per nomor mutasi dengan tombol Detail. Mutasi dari versi lama otomatis diberi nomor `MT-LAMA-<id>`.
 - Saran Restock: barang yang display tokonya 0 karena belum pernah dipajang (mis. hasil import) tampil biasa. Merah hanya untuk barang yang habis/minus karena terjual di kasir, dan hilang setelah rak diisi lagi (Mutasi / Penerimaan ke Toko).
 - Shortcut: F1 Kasir, F2 fokus scan, F3 Mutasi, F4 Penerimaan, F5 Daftar Barang, F6 Shift, F8 kosongkan keranjang, F9 bayar, F10 Cetak Barcode, F12 isi Uang Diterima (F12 lagi = Uang Pas, lalu Enter = bayar). Pengaturan dibuka lewat tombol di sidebar. Di layar Kasir, tombol `*` di kolom barcode yang kosong memindahkan fokus ke kolom Jumlah.
