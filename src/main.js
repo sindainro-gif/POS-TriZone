@@ -570,6 +570,7 @@ const ACCESS = {
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
+  'rcDrafts:list': GUDANG, 'rcDrafts:count': GUDANG, 'rcDrafts:create': GUDANG, 'rcDrafts:process': GUDANG, 'rcDrafts:delete': GUDANG,
   'labels:designs': GUDANG, 'labels:saveDesign': GUDANG, 'labels:deleteDesign': GUDANG, 'labels:setDefault': GUDANG,
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
@@ -648,6 +649,11 @@ const handlers = {
   }),
   'receptions:importFile': () => pickSheetRows('Pilih file import penerimaan'),
   'receptions:import': (a) => svc.importReceptions(a),
+  'rcDrafts:list': () => svc.listReceptionDrafts(),
+  'rcDrafts:count': () => svc.countReceptionDrafts(),
+  'rcDrafts:create': (a) => svc.createReceptionDraft(a),
+  'rcDrafts:process': (a) => svc.processReceptionDraft(a),
+  'rcDrafts:delete': (a) => svc.deleteReceptionDraft(a),
   'stock:low': (a) => svc.lowStock(a),
 
   'shift:get': async () => {

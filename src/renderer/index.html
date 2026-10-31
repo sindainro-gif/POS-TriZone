@@ -180,6 +180,14 @@
           <div class="btn-row"><button class="btn ghost" id="rcReset">Batal</button><button class="btn primary" id="rcSave">Simpan Penerimaan</button></div>
         </div>
       </div>
+      <div class="card hidden" id="rcDraftCard">
+        <h2>Draft Barang Belum Terdaftar</h2>
+        <p class="muted small">Barang dari surat jalan yang kodenya belum ada di Daftar Barang — stoknya <b>belum</b> masuk. Daftarkan barangnya di Daftar Barang, lalu klik <b>Proses</b>.</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Tanggal</th><th>No. Surat Jalan</th><th>Supplier</th><th>Kode</th><th>Nama Barang</th><th class="r">Jumlah</th><th>Satuan</th><th>Tujuan</th><th>Status</th><th class="w-act2"></th></tr></thead>
+          <tbody id="rcDrafts"></tbody>
+        </table></div>
+      </div>
       <div class="card">
         <div class="card-head">
           <h2>Riwayat Penerimaan</h2>

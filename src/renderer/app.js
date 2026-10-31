@@ -124,7 +124,7 @@ function highlight(text, q) {
 }
 
 // Komponen pencarian barang (scan barcode / ketik nama) dengan daftar saran
-function makePicker(input, { onPick, onEnter, queryOf = (v) => v, limit = 8 }) {
+function makePicker(input, { onPick, onEnter, onNotFound, queryOf = (v) => v, limit = 8 }) {
   const box = document.createElement('div');
   box.className = 'picker-list hidden';
   input.after(box);
@@ -175,7 +175,10 @@ function makePicker(input, { onPick, onEnter, queryOf = (v) => v, limit = 8 }) {
       if (onEnter) { hide(); onEnter(raw); return; }
       await load();
       if (items.length === 1) pick(items[0]);
-      else if (!items.length) { sound('err'); toast(`Barang "${raw}" tidak ditemukan.`, 'err'); }
+      else if (!items.length) {
+        sound('err');
+        if (onNotFound) { hide(); onNotFound(queryOf(raw).trim()); } else toast(`Barang "${raw}" tidak ditemukan.`, 'err');
+      }
     }
   });
   box.addEventListener('mousedown', (e) => {
@@ -874,6 +877,91 @@ views.receiving = (() => {
       $('#rcQty').focus();
       $('#rcQty').select();
     },
+    onNotFound: (code) => openDraftForm(code),
+  });
+
+  // Kode tidak dikenal → catat sebagai draft (pengingat admin untuk mendaftarkan barangnya)
+  function openDraftForm(code) {
+    if (!$('#rcRef').value.trim()) {
+      toast(`Barang "${code}" tidak ditemukan. Isi No. Surat Jalan dulu untuk mencatatnya sebagai draft.`, 'err', 6000);
+      $('#rcRef').focus();
+      return;
+    }
+    modal({
+      title: 'Barang Belum Terdaftar',
+      body: `<div class="alert warn">Kode <b class="mono">${esc(code)}</b> belum ada di Daftar Barang. Catat sebagai draft agar admin ingat mendaftarkannya — stok baru masuk setelah draft diproses.</div>
+        <div class="field"><label>Nama Barang (sesuai surat jalan)</label><input id="dfName" maxlength="120" placeholder="Opsional"></div>
+        <div class="row-3">
+          <div class="field"><label>Jumlah</label><input id="dfQty" type="number" min="1" step="1" value="${Number($('#rcQty').value) || 1}"></div>
+          <div class="field"><label>Satuan</label><select id="dfUnit"><option value="Dus">Dus</option><option value="Biji">Biji</option></select></div>
+          <div class="field"><label>Tujuan</label><select id="dfDest">${Object.entries(DEST).map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+        </div>`,
+      onOpen: (el) => {
+        $('#dfUnit', el).value = $('#rcUnit').value;
+        $('#dfDest', el).value = $('#rcDest').value;
+        $('#dfName', el).focus();
+      },
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        {
+          label: 'Catat sebagai Draft',
+          kind: 'primary',
+          onClick: async ({ close, el }) => {
+            try {
+              await api('rcDrafts:create', {
+                reference_no: $('#rcRef').value, supplier_name: $('#rcSupplier').value, code,
+                name: $('#dfName', el).value, qty: $('#dfQty', el).value, pack_type: $('#dfUnit', el).value, destination: $('#dfDest', el).value,
+              });
+              close();
+              toast(`"${code}" dicatat di Draft Barang Belum Terdaftar.`, 'ok');
+              $('#rcPicker').value = '';
+              $('#rcQty').value = 1;
+              loadDrafts();
+              $('#rcPicker').focus();
+            } catch (e) { toast(e.message, 'err', 6000); }
+          },
+        },
+      ],
+    });
+  }
+
+  async function loadDrafts() {
+    const rows = await api('rcDrafts:list').catch(() => []);
+    $('#rcDraftCard').classList.toggle('hidden', !rows.length);
+    $('#rcDrafts').innerHTML = rows.map((d) => `<tr data-id="${d.id}">
+        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.reference_no)}</b></td><td>${esc(d.supplier_name || '-')}</td>
+        <td class="mono">${esc(d.code)}</td><td>${esc(d.name || '-')}</td><td class="r">${num(d.qty)}</td><td>${d.pack_type}</td>
+        <td><span class="badge ${DEST_CLASS[d.destination]}">${DEST[d.destination]}</span></td>
+        <td>${d.product ? `<span class="badge floor ok">Sudah terdaftar</span> <span class="small">${esc(d.product.name)}</span>` : '<span class="badge bs">Belum terdaftar</span>'}</td>
+        <td class="c"><div class="btn-row">${d.product ? '<button class="btn sm primary" data-act="process">Proses</button>' : ''}<button class="icon-btn" data-act="del" title="Hapus draft">✕</button></div></td></tr>`).join('');
+    refreshDraftBadge(rows.length);
+    return rows;
+  }
+
+  $('#rcDrafts').addEventListener('click', async (e) => {
+    const act = e.target.dataset.act;
+    if (!act) return;
+    const id = Number(e.target.closest('tr').dataset.id);
+    const rows = await api('rcDrafts:list');
+    const d = rows.find((x) => x.id === id);
+    if (!d) { loadDrafts(); return; }
+    if (act === 'del') {
+      if (!(await confirmDialog('Hapus Draft', `Hapus draft <b>${esc(d.code)}</b> (${esc(d.reference_no)})? Stoknya tidak akan dicatat.`, { okLabel: 'Hapus', danger: true }))) return;
+      try { await api('rcDrafts:delete', { id }); toast('Draft dihapus.', 'ok'); loadDrafts(); } catch (err) { toast(err.message, 'err', 6000); }
+      return;
+    }
+    if (!d.product) { toast('Barang belum terdaftar di Daftar Barang.', 'err'); return; }
+    const unit = d.pack_type === 'Dus' ? `${esc(d.product.pack_unit)} (isi ${num(d.product.pack_ratio)})` : 'Biji';
+    if (!(await confirmDialog('Proses Draft', `Masukkan <b>${num(d.qty)} ${unit}</b> <b>${esc(d.product.name)}</b> ke ${DEST[d.destination]} sebagai penerimaan <b>${esc(d.reference_no)}</b>? Stok akan langsung bertambah.`, { okLabel: 'Proses' }))) return;
+    try {
+      const r = await api('rcDrafts:process', { id });
+      toast(`Penerimaan ${r.reference_no} tersimpan (${num(r.total_items_count)} Biji).`, 'ok');
+      loadDrafts();
+      loadHistory();
+      if (await confirmDialog('Cetak Barcode', `Cetak label barcode untuk barang yang baru masuk (<b>${esc(r.reference_no)}</b>)?`, { okLabel: 'Ya, Siapkan Label' })) {
+        views.barcode.openWith({ receptionId: r.id });
+      }
+    } catch (err) { toast(err.message, 'err', 6000); }
   });
   $('#rcPicker').addEventListener('input', () => { picked = null; $('#rcPicked').textContent = ''; });
 
@@ -975,14 +1063,15 @@ views.receiving = (() => {
       title: `Import Penerimaan — ${f.file}`,
       wide: true,
       body: `<div class="alert ${plan.errors.length ? 'warn' : 'ok'}">${n ? `${num(n)} penerimaan siap disimpan (${num(total)} Biji)` : 'Tidak ada penerimaan yang bisa disimpan'}${plan.errors.length ? `, <b>${plan.errors.length} baris/dokumen dilewati</b>` : ''}.</div>
+        ${plan.drafts ? `<p class="small" style="margin-top:8px"><span class="badge bs">Draft</span> ${num(plan.drafts)} barang belum terdaftar akan dicatat di <b>Draft Barang Belum Terdaftar</b> (stoknya belum masuk).</p>` : ''}
         ${n ? `<div class="tbl-wrap" style="max-height:260px;margin-top:10px"><table class="tbl"><thead><tr><th>No. Surat Jalan</th><th>Supplier</th><th class="r">Baris</th><th class="r">Total Biji</th></tr></thead><tbody>
           ${plan.docs.map((d) => `<tr><td class="mono"><b>${esc(d.reference_no)}</b></td><td>${esc(d.supplier_name || '-')}</td><td class="r">${num(d.lines)}</td><td class="r">${num(d.total)}</td></tr>`).join('')}
         </tbody></table></div><p class="muted small">Stok langsung bertambah setelah disimpan.</p>` : ''}
         ${errorList(plan.errors)}`,
       actions: [
-        { label: n ? 'Batal' : 'Tutup', kind: 'ghost' },
-        ...(n ? [{
-          label: `Simpan ${num(n)} Penerimaan`,
+        { label: n || plan.drafts ? 'Batal' : 'Tutup', kind: 'ghost' },
+        ...(n || plan.drafts ? [{
+          label: n ? `Simpan ${num(n)} Penerimaan` : `Catat ${num(plan.drafts)} Draft`,
           kind: 'primary',
           onClick: async ({ close, btn }) => {
             btn.disabled = true;
@@ -990,6 +1079,8 @@ views.receiving = (() => {
               const r = await api('receptions:import', { rows: f.rows });
               close();
               loadHistory();
+              loadDrafts();
+              if (r.drafts) toast(`${num(r.drafts)} barang belum terdaftar dicatat di Draft.`, 'warn', 6000);
               if (r.created.length) toast(`${num(r.created.length)} penerimaan tersimpan (${num(r.created.reduce((s, c) => s + c.total_items_count, 0))} Biji).`, 'ok');
               if (r.errors.length) {
                 modal({ title: 'Sebagian Tidak Tersimpan', body: `<div class="alert warn">${num(r.errors.length)} baris/dokumen dilewati.</div>${errorList(r.errors)}`, actions: [{ label: 'Tutup', kind: 'primary' }] });
@@ -1042,6 +1133,7 @@ views.receiving = (() => {
   function show() {
     render();
     loadHistory();
+    loadDrafts();
     setTimeout(() => (items.length ? $('#rcPicker') : $('#rcRef')).focus(), 30);
   }
   return { show };
@@ -1898,6 +1990,19 @@ const usersCard = (() => {
   return { load };
 })();
 
+// Angka merah di menu Penerimaan: jumlah draft barang yang belum terdaftar di Daftar Barang
+async function refreshDraftBadge(n) {
+  const btn = $('#nav [data-view="receiving"]');
+  if (!btn || !canView('receiving')) return;
+  if (n === undefined) n = await api('rcDrafts:count').catch(() => null);
+  if (n === null) return;
+  let b = $('.nav-badge', btn);
+  if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; btn.querySelector('kbd').before(b); }
+  b.textContent = n;
+  b.title = `${n} barang penerimaan belum terdaftar di Daftar Barang — lihat Draft di Penerimaan`;
+  b.classList.toggle('hidden', !n);
+}
+
 // Angka merah di menu Mutasi: jumlah barang yang display tokonya habis/minus (untuk Gudang & Admin)
 async function refreshOutBadge(rows) {
   const btn = $('#nav [data-view="transfers"]');
@@ -2189,6 +2294,7 @@ function tick() {
   refreshConnection();
   setInterval(refreshConnection, 10000);
   refreshOutBadge();
-  setInterval(() => refreshOutBadge(), 30000);
+  refreshDraftBadge();
+  setInterval(() => { refreshOutBadge(); refreshDraftBadge(); }, 30000);
   go(ROLE_VIEWS[role()][0]);
 }());

@@ -66,6 +66,23 @@ CREATE TABLE IF NOT EXISTS stock_transfers (
 );
 
 -- Satu form mutasi (1 arah + 1 alasan) berisi beberapa baris stock_transfers (doc_id)
+-- Barang penerimaan yang kodenya belum ada di Daftar Barang (pengingat untuk admin)
+CREATE TABLE IF NOT EXISTS reception_drafts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reference_no TEXT NOT NULL,
+    supplier_name TEXT,
+    notes TEXT,
+    code TEXT NOT NULL,
+    name TEXT,
+    qty INTEGER NOT NULL,
+    pack_type TEXT NOT NULL DEFAULT 'Dus',
+    destination TEXT NOT NULL DEFAULT 'warehouse',
+    source TEXT NOT NULL DEFAULT 'manual',
+    created_at DATETIME DEFAULT (datetime('now','localtime')),
+    resolved_at DATETIME,
+    reception_id INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS stock_transfer_docs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     doc_no TEXT UNIQUE NOT NULL,
@@ -151,6 +168,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
 CREATE INDEX IF NOT EXISTS idx_transfers_created ON stock_transfers(created_at);
 CREATE INDEX IF NOT EXISTS idx_transfer_docs_created ON stock_transfer_docs(created_at);
+CREATE INDEX IF NOT EXISTS idx_reception_drafts_open ON reception_drafts(resolved_at);
 CREATE INDEX IF NOT EXISTS idx_sales_receipt ON shift_sales(receipt_no);
 `;
 

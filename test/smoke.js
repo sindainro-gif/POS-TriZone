@@ -174,6 +174,44 @@ app.on('browser-window-created', (_e, win) => {
       const rcHist = await run(`document.querySelector('#rcHistory').innerText`);
       if (!/SJ-IMPORT/.test(rcHist)) throw new Error('SJ-IMPORT tidak tampil di Riwayat Penerimaan');
 
+      // Kode BELUM-ADA masuk Draft Barang Belum Terdaftar + angka merah di menu Penerimaan
+      await run(`document.querySelector('[data-view=checkout]').click()`);
+      await run(`document.querySelector('[data-view=receiving]').click()`);
+      await wait(600);
+      const dr1 = await run(`({ card: !document.querySelector('#rcDraftCard').classList.contains('hidden'), rows: document.querySelectorAll('#rcDrafts tr').length,
+        badge: document.querySelector('#nav [data-view=receiving] .nav-badge')?.textContent, text: document.querySelector('#rcDrafts').innerText })`);
+      console.log('draft penerimaan:', JSON.stringify(dr1));
+      if (!dr1.card || dr1.rows !== 1 || dr1.badge !== '1' || !/Belum terdaftar/.test(dr1.text)) throw new Error('Draft barang belum terdaftar tidak tampil');
+      await shot('05a-draft-belum-terdaftar');
+
+      // Scan kode tidak dikenal di form manual → modal Catat sebagai Draft
+      await run(`(() => { document.querySelector('#rcRef').value = 'SJ-MANUAL'; const p = document.querySelector('#rcPicker'); p.value = 'KODE-ASING-9'; p.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await wait(800);
+      const dfTitle = await run(`document.querySelector('#modalRoot .modal-head')?.textContent`);
+      if (dfTitle !== 'Barang Belum Terdaftar') throw new Error(`modal draft tidak muncul untuk kode tidak dikenal (${dfTitle})`);
+      await run(`document.querySelector('#dfName').value = 'Barang Asing'; document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(600);
+      const badge2 = await run(`document.querySelector('#nav [data-view=receiving] .nav-badge').textContent`);
+      if (badge2 !== '2') throw new Error(`badge draft seharusnya 2 (${badge2})`);
+      await run(`document.querySelector('#rcRef').value = ''`);
+
+      // Barang didaftarkan → Proses → stok masuk, draft hilang
+      svc.importRows([{ Barcode: '7770000000080', SKU: 'BELUM-ADA', Nama_Barang: 'Barang Susulan', Harga_Jual: 2500, Rasio_Isi_Dus: 6 }]);
+      await run(`document.querySelector('[data-view=checkout]').click()`);
+      await run(`document.querySelector('[data-view=receiving]').click()`);
+      await wait(600);
+      await run(`[...document.querySelectorAll('#rcDrafts tr')].find((r) => /BELUM-ADA/.test(r.innerText)).querySelector('[data-act=process]').click()`);
+      await wait(600);
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`); // konfirmasi Proses
+      await wait(800);
+      await run(`document.querySelector('#modalRoot .btn.ghost')?.click()`); // tawaran cetak barcode → Batal
+      await wait(400);
+      const dr2 = await run(`({ rows: document.querySelectorAll('#rcDrafts tr').length, badge: document.querySelector('#nav [data-view=receiving] .nav-badge').textContent, hist: document.querySelector('#rcHistory').innerText })`);
+      if (dr2.rows !== 1 || dr2.badge !== '1' || !/SJ-IMPORT-S\d+/.test(dr2.hist)) throw new Error(`proses draft gagal: ${JSON.stringify(dr2)}`);
+      if (svc.getProduct('BELUM-ADA').warehouse_stock !== 6) throw new Error('stok draft yang diproses tidak masuk');
+      const asing = svc.listReceptionDrafts()[0];
+      svc.deleteReceptionDraft({ id: asing.id });
+
       // Barang masuk → antrian label → cetak (PDF ukuran 106×20 mm)
       svc.importRows([{ Barcode: '4006381333931', SKU: 'BRS-001', Nama_Barang: 'Penebah Lidi @50 PCS Sima', Merk: 'Sima', Harga_Jual: 6000, Rasio_Isi_Dus: 50 }]);
       const rec = svc.createReception({ reference_no: 'SJ-SMOKE', supplier_name: 'PT Sima', items: [

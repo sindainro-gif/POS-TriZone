@@ -726,51 +726,122 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     }
     const errors = [];
     const groups = new Map(); // No SJ (huruf kecil) -> dokumen
+    const heads = new Map(); // No SJ (huruf kecil) -> supplier & catatan pertama yang terisi
+    const unknown = []; // kode belum terdaftar → jadi draft
     data.forEach((r, i) => {
       const line = i + 2; // baris 1 = header
       if (!filled(r)) return;
       try {
         const ref = toStr(codeStr(r.nosuratjalan), 'No_Surat_Jalan', { required: true, max: 60 });
+        const key = ref.toLowerCase();
+        if (!heads.has(key)) heads.set(key, { supplier_name: '', notes: '' });
+        const h = heads.get(key);
+        if (!h.supplier_name) h.supplier_name = String(r.supplier ?? '').trim();
+        if (!h.notes) h.notes = String(r.catatan ?? '').trim();
         const code = codeStr(r.kode);
         if (!code) fail('Kode barang wajib diisi.');
-        const p = db.get(`${PRODUCT_SELECT} WHERE p.sku = ? OR p.barcode = ? ORDER BY p.sku = ? DESC LIMIT 1`, [code, code, code]);
-        if (!p) fail(`Kode "${code}" tidak ditemukan di Daftar Barang.`);
-        const qty = toInt(r.jumlah, `Jumlah "${p.name}"`, { min: 1 });
+        const p = findByCode({ code });
+        const label = p ? p.name : code;
+        const qty = toInt(r.jumlah, `Jumlah "${label}"`, { min: 1 });
         const unit = String(r.satuan ?? '').trim().toLowerCase();
         let pack_type;
-        if (!unit || unit === 'dus' || unit === String(p.pack_unit || '').toLowerCase()) pack_type = 'Dus';
-        else if (['biji', 'pcs', 'pc'].includes(unit)) pack_type = 'Biji';
+        if (['biji', 'pcs', 'pc'].includes(unit)) pack_type = 'Biji';
+        else if (!p || !unit || unit === 'dus' || unit === String(p.pack_unit || '').toLowerCase()) pack_type = 'Dus';
         else fail(`Satuan "${r.satuan}" tidak dikenal (pakai Dus / ${p.pack_unit} atau Biji).`);
         const dest = String(r.tujuan ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
         const destination = { '': 'warehouse', 'gudang utama': 'warehouse', gudang: 'warehouse', 'display toko': 'floor', toko: 'floor', 'gudang bs': 'damaged', bs: 'damaged' }[dest];
         if (!destination) fail(`Tujuan "${r.tujuan}" tidak dikenal (pakai Gudang Utama, Display Toko, atau Gudang BS).`);
-        const key = ref.toLowerCase();
+        if (!p) {
+          unknown.push({ key, reference_no: ref, code, name: String(r.namabarang ?? '').trim(), qty, pack_type, destination });
+          fail(`Kode "${code}" tidak ditemukan di Daftar Barang — dicatat ke Draft Barang Belum Terdaftar.`);
+        }
         if (!groups.has(key)) groups.set(key, { reference_no: ref, supplier_name: '', notes: '', line, items: [] });
-        const g = groups.get(key);
-        if (!g.supplier_name) g.supplier_name = String(r.supplier ?? '').trim();
-        if (!g.notes) g.notes = String(r.catatan ?? '').trim();
-        g.items.push({ sku: p.sku, name: p.name, qty, pack_type, destination, pieces: pack_type === 'Dus' ? qty * p.pack_ratio : qty });
+        groups.get(key).items.push({ sku: p.sku, name: p.name, qty, pack_type, destination, pieces: pack_type === 'Dus' ? qty * p.pack_ratio : qty });
       } catch (e) {
         if (!e.userFacing) throw e;
         errors.push(`Baris ${line}: ${e.message}`);
       }
     });
     const docs = [];
-    for (const g of groups.values()) {
+    for (const [key, g] of groups) {
+      Object.assign(g, heads.get(key));
       if (db.get('SELECT 1 FROM stock_receptions WHERE reference_no = ?', [g.reference_no])) {
         errors.push(`No. Surat Jalan "${g.reference_no}" sudah pernah dicatat — ${g.items.length} baris dilewati.`);
       } else {
         docs.push(g);
       }
     }
-    return { docs, errors };
+    // Draft yang sama (No SJ + kode) dari import sebelumnya tidak dicatat dua kali
+    const drafts = unknown
+      .map(({ key, ...u }) => ({ ...u, ...heads.get(key) }))
+      .filter((u) => !db.get('SELECT 1 FROM reception_drafts WHERE reference_no = ? AND code = ?', [u.reference_no, u.code]));
+    return { docs, errors, drafts };
+  }
+
+  function insertReceptionDraft(d, source) {
+    db.run(
+      `INSERT INTO reception_drafts(reference_no, supplier_name, notes, code, name, qty, pack_type, destination, source, created_at)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [d.reference_no, d.supplier_name || '', d.notes || '', d.code, d.name || '', d.qty, d.pack_type, d.destination, source, localNow()],
+    );
+    return db.lastId();
+  }
+
+  function createReceptionDraft({ reference_no, supplier_name, notes, code, name, qty, pack_type, destination } = {}) {
+    const d = {
+      reference_no: toStr(reference_no, 'No. Surat Jalan / Nota', { required: true, max: 60 }),
+      supplier_name: toStr(supplier_name, 'Nama supplier', { max: 100 }),
+      notes: toStr(notes, 'Catatan', { max: 500 }),
+      code: toStr(codeStr(code), 'Kode barang', { required: true, max: 60 }),
+      name: toStr(name, 'Nama barang', { max: 120 }),
+      qty: toInt(qty, 'Jumlah', { min: 1 }),
+      pack_type: pack_type === 'Biji' ? 'Biji' : 'Dus',
+      destination: DESTINATIONS.includes(destination) ? destination : fail('Tujuan tidak valid.'),
+    };
+    const p = findByCode({ code: d.code });
+    if (p) fail(`Barang "${p.name}" sudah terdaftar — tambahkan langsung ke form penerimaan.`);
+    const id = db.tx(() => insertReceptionDraft(d, 'manual'));
+    return db.get('SELECT * FROM reception_drafts WHERE id = ?', [id]);
+  }
+
+  function listReceptionDrafts() {
+    return db.all('SELECT * FROM reception_drafts WHERE resolved_at IS NULL ORDER BY id DESC').map((d) => {
+      const p = findByCode({ code: d.code });
+      return { ...d, product: p ? { sku: p.sku, name: p.name, pack_unit: p.pack_unit, pack_ratio: p.pack_ratio } : null };
+    });
+  }
+
+  function countReceptionDrafts() {
+    return db.get('SELECT COUNT(*) AS n FROM reception_drafts WHERE resolved_at IS NULL').n;
+  }
+
+  // Barang draft sudah didaftarkan → stok masuk sebagai penerimaan (No SJ asli, atau <No SJ>-S<id> bila sudah dipakai)
+  function processReceptionDraft({ id } = {}) {
+    const d = db.get('SELECT * FROM reception_drafts WHERE id = ? AND resolved_at IS NULL', [id]);
+    if (!d) fail('Draft tidak ditemukan atau sudah diproses.');
+    const p = findByCode({ code: d.code });
+    if (!p) fail(`Kode "${d.code}" belum terdaftar di Daftar Barang. Daftarkan barangnya dulu.`);
+    const ref = db.get('SELECT 1 FROM stock_receptions WHERE reference_no = ?', [d.reference_no]) ? `${d.reference_no}-S${d.id}`.slice(-60) : d.reference_no;
+    const r = createReception({
+      reference_no: ref, supplier_name: d.supplier_name,
+      notes: [d.notes, `Dari draft barang belum terdaftar (${d.code})`].filter(Boolean).join(' · ').slice(0, 500),
+      items: [{ sku: p.sku, qty: d.qty, pack_type: d.pack_type, destination: d.destination }],
+    });
+    db.tx(() => db.run('UPDATE reception_drafts SET resolved_at = ?, reception_id = ? WHERE id = ?', [localNow(), r.id, d.id]));
+    return r;
+  }
+
+  function deleteReceptionDraft({ id } = {}) {
+    db.tx(() => db.run('DELETE FROM reception_drafts WHERE id = ? AND resolved_at IS NULL', [id]));
+    return true;
   }
 
   // rows = baris dari file Excel/CSV. dry_run = hanya ringkasan, stok belum berubah.
   function importReceptions({ rows, dry_run = false } = {}) {
-    const { docs, errors } = planReceptionImport(rows);
+    const { docs, errors, drafts } = planReceptionImport(rows);
     const summary = (g) => ({ reference_no: g.reference_no, supplier_name: g.supplier_name, lines: g.items.length, total: g.items.reduce((s, i) => s + i.pieces, 0) });
-    if (dry_run) return { docs: docs.map(summary), errors };
+    if (dry_run) return { docs: docs.map(summary), errors, drafts: drafts.length };
+    if (drafts.length) db.tx(() => drafts.forEach((d) => insertReceptionDraft(d, 'import')));
     const created = [];
     for (const g of docs) {
       try {
@@ -781,7 +852,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         errors.push(`${g.reference_no}: ${e.message}`);
       }
     }
-    return { created, errors };
+    return { created, errors, drafts: drafts.length };
   }
 
   function getReception({ id } = {}) {
@@ -925,6 +996,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
     createReception, listReceptions, getReception, importReceptions,
+    createReceptionDraft, listReceptionDrafts, countReceptionDrafts, processReceptionDraft, deleteReceptionDraft,
   };
 }
 

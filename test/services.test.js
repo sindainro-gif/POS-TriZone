@@ -206,6 +206,40 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     throwsMsg(() => svc.importReceptions({ rows: [{ Kode: 'RC-A', Jumlah: 1 }] }), /No_Surat_Jalan/);
   });
 
+  await t('draft barang belum terdaftar: dari import & manual, proses setelah didaftarkan', () => {
+    // Import sebelumnya mencatat TIDAK-ADA (IMP-1) sebagai draft; import ulang tidak membuat draft ganda
+    let drafts = svc.listReceptionDrafts();
+    assert.deepStrictEqual(drafts.map((d) => [d.reference_no, d.supplier_name, d.code, d.qty, d.pack_type, d.source, d.product]), [['IMP-1', 'PT Uji', 'TIDAK-ADA', 1, 'Dus', 'import', null]]);
+    assert.strictEqual(svc.importReceptions({ rows: [{ No_Surat_Jalan: 'IMP-1', Kode: 'TIDAK-ADA', Jumlah: 1 }], dry_run: true }).drafts, 0);
+
+    const m = svc.createReceptionDraft({ reference_no: 'SJ-BARU', supplier_name: 'CV Baru', code: 'BARU-1', name: 'Sabun Baru', qty: 4, pack_type: 'Biji', destination: 'floor' });
+    assert.strictEqual(m.source, 'manual');
+    throwsMsg(() => svc.createReceptionDraft({ reference_no: 'SJ-X', code: 'RC-A', qty: 1, destination: 'warehouse' }), /sudah terdaftar/);
+    assert.strictEqual(svc.countReceptionDrafts(), 2);
+    throwsMsg(() => svc.processReceptionDraft({ id: m.id }), /belum terdaftar/);
+
+    // Barang didaftarkan → status berubah, Proses menambah stok
+    svc.importRows([
+      { Barcode: '7770000000066', SKU: 'BARU-1', Nama_Barang: 'Sabun Baru', Harga_Jual: 3000, Rasio_Isi_Dus: 24 },
+      { Barcode: '7770000000073', SKU: 'TIDAK-ADA', Nama_Barang: 'Sudah Ada Sekarang', Harga_Jual: 3000, Rasio_Isi_Dus: 10 },
+    ]);
+    drafts = svc.listReceptionDrafts();
+    assert.ok(drafts.every((d) => d.product));
+    const r1 = svc.processReceptionDraft({ id: m.id });
+    assert.deepStrictEqual([r1.reference_no, r1.total_items_count], ['SJ-BARU', 4]);
+    assert.strictEqual(svc.getProduct('BARU-1').floor_stock, 4);
+    const old = drafts.find((d) => d.code === 'TIDAK-ADA');
+    const r2 = svc.processReceptionDraft({ id: old.id }); // IMP-1 sudah ada → No SJ diberi akhiran -S<id>
+    assert.strictEqual(r2.reference_no, `IMP-1-S${old.id}`);
+    assert.strictEqual(svc.getProduct('TIDAK-ADA').warehouse_stock, 10);
+    assert.strictEqual(svc.countReceptionDrafts(), 0);
+    throwsMsg(() => svc.processReceptionDraft({ id: m.id }), /sudah diproses/);
+
+    const d3 = svc.createReceptionDraft({ reference_no: 'SJ-HAPUS', code: 'HAPUS-1', qty: 1, destination: 'warehouse' });
+    svc.deleteReceptionDraft({ id: d3.id });
+    assert.strictEqual(svc.countReceptionDrafts(), 0);
+  });
+
   await t('ringkasan shift & uang laci seharusnya', () => {
     svc.checkout({ items: [{ sku: 'SNK-010', qty: 2 }], payment_method: 'QRIS' });
     const s = svc.shiftSummary();
@@ -236,7 +270,8 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     const db2 = await Database.open(file);
     const svc2 = createServices(db2);
     assert.strictEqual(svc2.getProduct('MNM-001').warehouse_stock, 72);
-    assert.strictEqual(svc2.listReceptions().length, 3); // SJ-001 + IMP-1 + IMP-2
+    assert.strictEqual(svc2.listReceptions().length, 5); // SJ-001 + IMP-1 + IMP-2 + 2 dari draft
+    assert.strictEqual(svc2.countReceptionDrafts(), 0);
   });
 
   await t('pengaturan: password terenkripsi tidak bocor ke renderer', () => {
