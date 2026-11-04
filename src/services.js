@@ -48,7 +48,9 @@ const RECEPTION_TEMPLATE_SAMPLE = [
   ['SJ-0002', 'CV Jaya Abadi', 'Kiriman sore', 'SNK-010', 'Keripik Kentang 68g', 2, 'Dus', ''],
 ];
 
-const OPNAME_TEMPLATE_HEADERS = ['Kode', 'Nama_Barang', 'Stok_Sistem', 'Fisik'];
+const OPNAME_TEMPLATE_HEADERS = ['Kode', 'Nama_Barang', 'Display Toko', 'Fisik Display Toko', 'Gudang Utama', 'Fisik Gudang Utama', 'Gudang BS', 'Fisik Gudang BS'];
+// Nama kolom Fisik per zona setelah dinormalisasi (huruf kecil, tanpa spasi / garis bawah)
+const OPNAME_FISIK = { floor: 'fisikdisplaytoko', warehouse: 'fisikgudangutama', damaged: 'fisikgudangbs' };
 
 const SETTING_KEYS = [
   'store_name', 'store_address', 'smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'smtp_from', 'owner_email',
@@ -738,16 +740,15 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return d;
   }
 
-  // Baris template opname: semua barang + stok sistem zona, kolom Fisik dikosongkan untuk diisi
-  function opnameSheet({ zone } = {}) {
-    const col = ZONE_COL[zone];
-    if (!col) fail('Zona opname tidak valid.');
+  // Baris template opname: semua barang + stok sistem 3 zona, kolom Fisik tiap zona dikosongkan untuk diisi
+  function opnameSheet() {
     return db.all(
-      `SELECT p.sku, p.name, COALESCE(i.${col}, 0) AS q FROM products p LEFT JOIN inventory i ON i.sku = p.sku ORDER BY p.name COLLATE NOCASE`,
-    ).map((r) => [r.sku, r.name, r.q, '']);
+      `SELECT p.sku, p.name, COALESCE(i.floor_stock, 0) AS f, COALESCE(i.warehouse_stock, 0) AS w, COALESCE(i.damaged_stock, 0) AS d
+       FROM products p LEFT JOIN inventory i ON i.sku = p.sku ORDER BY p.name COLLATE NOCASE`,
+    ).map((r) => [r.sku, r.name, r.f, '', r.w, '', r.d, '']);
   }
 
-  // Hasil hitung dari Excel → isi form (belum disimpan). Baris dengan Fisik kosong dilewati.
+  // Hasil hitung dari Excel per zona. Kolom Fisik yang kosong = zona itu tidak dihitung untuk barang tersebut.
   function planOpnameImport(rows = []) {
     const norm = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
     const data = (Array.isArray(rows) ? rows : []).map((r) => {
@@ -756,27 +757,60 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       return o;
     });
     if (!data.length) fail('File tidak berisi data opname.');
-    for (const req of ['kode', 'fisik']) {
-      if (!(req in data[0])) fail(`Kolom wajib "${OPNAME_TEMPLATE_HEADERS.find((h) => norm(h) === req)}" tidak ditemukan. Gunakan template opname.`);
+    if (!('kode' in data[0]) || !Object.values(OPNAME_FISIK).some((c) => c in data[0])) {
+      fail('Kolom "Kode" dan "Fisik Display Toko / Fisik Gudang Utama / Fisik Gudang BS" tidak ditemukan. Gunakan template opname terbaru.');
     }
     const errors = [];
-    const items = [];
+    const zones = {};
     data.forEach((r, i) => {
-      if (String(r.fisik ?? '').trim() === '') return;
+      const filled = Object.entries(OPNAME_FISIK).filter(([, c]) => String(r[c] ?? '').trim() !== '');
+      if (!filled.length) return;
+      let p;
       try {
         const code = codeStr(r.kode);
         if (!code) fail('Kode barang wajib diisi.');
-        const p = findByCode({ code });
+        p = findByCode({ code });
         if (!p) fail(`Kode "${code}" tidak ditemukan di Daftar Barang.`);
-        const counted = toInt(r.fisik, `Fisik "${p.name}"`, { min: 0 });
-        const same = items.find((it) => it.product.sku === p.sku);
-        if (same) same.counted += counted;
-        else items.push({ product: p, counted });
       } catch (e) {
         errors.push(`Baris ${i + 2}: ${e.message}`);
+        return;
+      }
+      for (const [zone, c] of filled) {
+        try {
+          const counted = toInt(r[c], `Fisik ${ZONE_LABEL[zone]} "${p.name}"`, { min: 0 });
+          const list = zones[zone] || (zones[zone] = []);
+          const same = list.find((it) => it.sku === p.sku);
+          if (same) same.counted += counted;
+          else list.push({ sku: p.sku, name: p.name, counted });
+        } catch (e) {
+          errors.push(`Baris ${i + 2}: ${e.message}`);
+        }
       }
     });
-    return { items, errors };
+    return { zones, errors };
+  }
+
+  // Import hasil opname: dry run = ringkasan selisih per zona; simpan = satu dokumen OP per zona
+  function importOpname({ rows, notes, dry_run = false } = {}) {
+    const { zones, errors } = planOpnameImport(rows);
+    const order = Object.keys(ZONE_COL).filter((z) => zones[z]);
+    if (dry_run) {
+      return {
+        zones: order.map((zone) => {
+          let plus = 0;
+          let minus = 0;
+          for (const it of zones[zone]) {
+            const d = it.counted - (Number(getProduct(it.sku)[ZONE_COL[zone]]) || 0);
+            if (d > 0) plus += d;
+            else minus -= d;
+          }
+          return { zone, line_count: zones[zone].length, plus_qty: plus, minus_qty: minus };
+        }),
+        errors,
+      };
+    }
+    const created = order.map((zone) => createOpname({ zone, notes, items: zones[zone] }));
+    return { created, errors };
   }
 
   // ---------------------------------------------------------------- Penerimaan
@@ -1108,7 +1142,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
     createReception, listReceptions, getReception, importReceptions,
-    createOpname, listOpnames, getOpname, opnameSheet, planOpnameImport,
+    createOpname, listOpnames, getOpname, opnameSheet, planOpnameImport, importOpname,
     createReceptionDraft, listReceptionDrafts, countReceptionDrafts, processReceptionDraft, deleteReceptionDraft,
   };
 }

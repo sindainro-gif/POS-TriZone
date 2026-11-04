@@ -114,6 +114,10 @@ function zoneBadges(p) {
 }
 const ZONE_CLASS = { floor: 'floor', warehouse: 'wh', damaged: 'bs', customer: 'ext', supplier: 'ext', disposed: 'ext' };
 const zoneTag = (z) => `<span class="badge ${ZONE_CLASS[z]}">${esc(state.meta.zones[z] || z)}</span>`;
+// Daftar baris yang dilewati di modal hasil import
+const errorList = (errors) => (errors.length
+  ? `<div class="tbl-wrap" style="max-height:220px;margin-top:10px"><table class="tbl"><tbody>${errors.map((e) => `<tr><td>${esc(e)}</td></tr>`).join('')}</tbody></table></div>`
+  : '');
 
 // Tebalkan bagian teks yang sama dengan kata yang diketik (aman: setiap potongan di-escape)
 function highlight(text, q) {
@@ -1044,9 +1048,6 @@ views.receiving = (() => {
     try { const f = await api('receptions:template'); if (f) toast(`Template disimpan: ${f}`, 'ok', 6000); } catch (e) { toast(e.message, 'err'); }
   });
 
-  const errorList = (errors) => (errors.length
-    ? `<div class="tbl-wrap" style="max-height:220px;margin-top:10px"><table class="tbl"><tbody>${errors.map((e) => `<tr><td>${esc(e)}</td></tr>`).join('')}</tbody></table></div>`
-    : '');
 
   // Import Excel: baca file → ringkasan (dry run) → konfirmasi → simpan semua surat jalan
   $('#rcImport').addEventListener('click', async () => {
@@ -1265,30 +1266,49 @@ views.opname = (() => {
 
   $('#opTemplate').addEventListener('click', async () => {
     try {
-      const file = await api('opname:template', { zone: curZone });
-      if (file) toast(`Template ${state.meta.zones[curZone]} disimpan: ${file}`, 'ok', 5000);
+      const file = await api('opname:template');
+      if (file) toast(`Template opname (3 zona) disimpan: ${file}`, 'ok', 5000);
     } catch (e) { toast(e.message, 'err', 6000); }
   });
 
-  // Hasil import masuk ke list (belum disimpan). Fisik dari file menggantikan angka di list untuk barang yang sama.
+  // Import hasil hitung 3 zona: ringkasan selisih per zona → Simpan = satu dokumen OP per zona. List form tidak tersentuh.
   $('#opImport').addEventListener('click', async () => {
-    let r;
-    try { r = await api('opname:importFile'); } catch (e) { toast(e.message, 'err', 6000); return; }
-    if (!r) return;
-    for (const it of r.items) {
-      const same = items.find((i) => i.product.sku === it.product.sku);
-      if (same) { same.product = it.product; same.counted = it.counted; } else items.push(it);
-    }
-    render();
-    if (r.items.length) toast(`${num(r.items.length)} barang dari ${r.file} masuk ke list ${state.meta.zones[curZone]}. Cek lalu Simpan Opname.`, 'ok', 6000);
-    else if (!r.errors.length) toast('Tidak ada baris dengan kolom Fisik terisi.', 'warn', 5000);
-    if (r.errors.length) {
-      modal({
-        title: `${num(r.errors.length)} baris dilewati`,
-        body: `<div class="tbl-wrap" style="max-height:260px"><table class="tbl"><tbody>${r.errors.map((m) => `<tr><td>${esc(m)}</td></tr>`).join('')}</tbody></table></div>`,
-        actions: [{ label: 'Tutup', kind: 'primary' }],
-      });
-    }
+    let f;
+    let plan;
+    try {
+      f = await api('opname:importFile');
+      if (!f) return;
+      plan = await api('opname:import', { rows: f.rows, dry_run: true });
+    } catch (e) { toast(e.message, 'err', 7000); return; }
+    const n = plan.zones.length;
+    if (!n && !plan.errors.length) { toast('Tidak ada kolom Fisik yang terisi.', 'warn', 5000); return; }
+    modal({
+      title: `Import Stok Opname — ${f.file}`,
+      wide: true,
+      body: `<div class="alert ${plan.errors.length ? 'warn' : 'ok'}">${n ? `${num(n)} zona siap disimpan` : 'Tidak ada opname yang bisa disimpan'}${plan.errors.length ? `, <b>${plan.errors.length} isian dilewati</b>` : ''}.</div>
+        ${n ? `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Zona</th><th class="r">Barang</th><th class="r">Selisih +</th><th class="r">Selisih −</th></tr></thead><tbody>
+          ${plan.zones.map((z) => `<tr><td>${zoneTag(z.zone)}</td><td class="r">${num(z.line_count)}</td><td class="r">${signed(z.plus_qty)}</td><td class="r">${signed(-z.minus_qty)}</td></tr>`).join('')}
+        </tbody></table></div><p class="muted small">Stok tiap zona langsung di-set ke angka Fisik setelah disimpan. Barang dengan kolom Fisik kosong tidak diubah.</p>` : ''}
+        ${errorList(plan.errors)}`,
+      actions: [
+        { label: n ? 'Batal' : 'Tutup', kind: 'ghost' },
+        ...(n ? [{
+          label: `Simpan ${num(n)} Opname`,
+          kind: 'primary',
+          onClick: async ({ close, btn }) => {
+            btn.disabled = true;
+            try {
+              const r = await api('opname:import', { rows: f.rows, notes: `Import ${f.file}` });
+              close();
+              loadHistory();
+              refreshOutBadge();
+              Promise.all(items.map((i) => api('products:get', { sku: i.product.sku }).then((p) => { if (p) i.product = p; }))).then(render);
+              toast(`Opname tersimpan: ${r.created.map((d) => d.doc_no).join(', ')}.`, 'ok', 6000);
+            } catch (e) { btn.disabled = false; toast(e.message, 'err', 7000); }
+          },
+        }] : []),
+      ],
+    });
   });
 
   let searchTimer;

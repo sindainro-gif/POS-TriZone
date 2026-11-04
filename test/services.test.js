@@ -301,20 +301,34 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     throwsMsg(() => svc.deleteProduct({ sku: 'OP-A' }), /opname/);
   });
 
-  await t('stok opname: template & import hasil hitung', () => {
-    const sheet = svc.opnameSheet({ zone: 'floor' });
-    assert.deepStrictEqual(sheet.find((r) => r[0] === 'OP-A'), ['OP-A', 'Opname A', 8, '']);
-    const r = svc.planOpnameImport([
-      { Kode: 'OP-A', Nama_Barang: 'Opname A', Stok_Sistem: 8, Fisik: 9 },
-      { Kode: '7002', Nama_Barang: 'Opname B', Stok_Sistem: 3, Fisik: '' },
-      { Kode: 'KODE-ASING-OP', Fisik: 1 },
-      { Kode: 'op-a', Fisik: 1 },
-      { Kode: 'OP-C', Fisik: 'x' },
+  await t('stok opname: template & import hasil hitung 3 zona', () => {
+    const sheet = svc.opnameSheet();
+    assert.deepStrictEqual(sheet.find((r) => r[0] === 'OP-A'), ['OP-A', 'Opname A', 8, '', 0, '', 0, '']);
+    // Seperti sheet_to_json(defval ''): semua kolom ada di tiap baris
+    const row = (Kode, fd, fg, fb) => ({ Kode, Nama_Barang: '', 'Display Toko': 0, 'Fisik Display Toko': fd, 'Gudang Utama': 0, 'Fisik Gudang Utama': fg, 'Gudang BS': 0, 'Fisik Gudang BS': fb });
+    const rows = [
+      row('OP-A', 9, '', 2),
+      row('7002', '', '', ''), // tidak dihitung → dilewati
+      row('KODE-ASING-OP', 1, '', ''),
+      row('op-a', 1, '', ''), // kode sama di zona sama → dijumlahkan
+      row('OP-C', 'x', '', 1),
+    ];
+    const plan = svc.importOpname({ rows, dry_run: true });
+    assert.deepStrictEqual(plan.zones, [
+      { zone: 'floor', line_count: 1, plus_qty: 2, minus_qty: 0 },
+      { zone: 'damaged', line_count: 2, plus_qty: 3, minus_qty: 0 },
     ]);
-    assert.deepStrictEqual(r.items.map((i) => [i.product.sku, i.counted]), [['OP-A', 10]]);
-    assert.strictEqual(r.errors.length, 2);
-    assert.match(r.errors[0], /Baris 4: .*KODE-ASING-OP/);
-    throwsMsg(() => svc.planOpnameImport([{ Kode: 'OP-A', Jumlah: 1 }]), /Kolom wajib "Fisik"/);
+    assert.strictEqual(plan.errors.length, 2);
+    assert.match(plan.errors[0], /Baris 4: .*KODE-ASING-OP/);
+    assert.match(plan.errors[1], /Baris 6: Fisik Display Toko "Opname C"/);
+    assert.strictEqual(svc.getProduct('OP-A').floor_stock, 8); // dry run tidak mengubah stok
+    const r = svc.importOpname({ rows, notes: 'Import tes.xlsx' });
+    assert.deepStrictEqual(r.created.map((d) => [d.zone, d.line_count, d.notes]), [['floor', 1, 'Import tes.xlsx'], ['damaged', 2, 'Import tes.xlsx']]);
+    const a = svc.getProduct('OP-A');
+    assert.deepStrictEqual([a.floor_stock, a.warehouse_stock, a.damaged_stock], [10, 0, 2]);
+    const c = svc.getProduct('OP-C');
+    assert.deepStrictEqual([c.floor_stock, c.damaged_stock], [7, 1]);
+    throwsMsg(() => svc.planOpnameImport([{ Kode: 'OP-A', Stok_Sistem: 8, Fisik: 1 }]), /template opname terbaru/);
   });
 
   await t('pengaturan: password terenkripsi tidak bocor ke renderer', () => {

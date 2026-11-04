@@ -240,6 +240,13 @@ app.on('browser-window-created', (_e, win) => {
       console.log('riwayat Opname teratas:', JSON.stringify(opDoc));
       if (!/OP-\d{8}-001/.test(opDoc.first) || !/Gudang Utama/.test(opDoc.first) || opDoc.left !== 0) throw new Error('Stok Opname tidak tersimpan');
       if (svc.getProduct('IMP-SMK').warehouse_stock !== 7 || svc.getProduct('BELUM-ADA').warehouse_stock !== 0) throw new Error('stok Gudang Utama tidak sesuai hitungan fisik');
+      // Import Excel 3 zona: Fisik Display Toko & Gudang BS terisi → dua dokumen OP
+      const opImp = await run(`window.posBridge.call('opname:import', { notes: 'Import smoke', rows: [
+        { Kode: 'IMP-SMK', 'Fisik Display Toko': 4, 'Fisik Gudang Utama': '', 'Fisik Gudang BS': 1 },
+      ] }).then((r) => r.data.created.map((d) => d.zone + ':' + d.doc_no))`);
+      console.log('import Opname:', JSON.stringify(opImp));
+      const imp = svc.getProduct('IMP-SMK');
+      if (opImp.length !== 2 || imp.floor_stock !== 4 || imp.warehouse_stock !== 7 || imp.damaged_stock !== 1) throw new Error('import opname 3 zona salah');
 
       // Barang masuk → antrian label → cetak (PDF ukuran 106×20 mm)
       svc.importRows([{ Barcode: '4006381333931', SKU: 'BRS-001', Nama_Barang: 'Penebah Lidi @50 PCS Sima', Merk: 'Sima', Harga_Jual: 6000, Rasio_Isi_Dus: 50 }]);
