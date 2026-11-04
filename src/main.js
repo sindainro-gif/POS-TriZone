@@ -108,8 +108,11 @@ function explainSmtpError(err) {
 }
 
 async function sendMail(s, message) {
-  // Demo: email tidak dikirim sungguhan; balasan "250" agar alur tutup shift bisa dilatih sampai selesai
-  if (DEMO) return { response: '250 OK (DEMO: email tidak benar-benar dikirim)' };
+  // Demo: selama SMTP masih contoh (demo.local / tanpa akun), email tidak dikirim sungguhan; balasan "250" agar alur
+  // tutup shift bisa dilatih sampai selesai. Bila akun SMTP asli diisi di Pengaturan demo, email dikirim sungguhan.
+  if (DEMO && (!s.smtp_user || /(^|\.)local$/i.test(String(s.smtp_host || '').trim()))) {
+    return { response: '250 OK (DEMO: email tidak benar-benar dikirim)' };
+  }
   const transport = makeTransport(s);
   const from = s.smtp_from || s.smtp_user;
   if (!from) throw userError('Email pengirim belum diatur. Buka menu Pengaturan.');

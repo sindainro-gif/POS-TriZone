@@ -27,7 +27,7 @@ Klik dua kali **`Jalankan DEMO.bat`**. Versi ini untuk latihan kasir dan mencoba
   | Kasir | Kasir | 333333 |
 
 - **Tanda DEMO:** kotak DEMO oranye di sidebar dan bingkai oranye di layar. Nota bertuliskan `** DEMO - BUKAN NOTA ASLI **`.
-- **Printer sungguhan, email tidak dikirim:** nota dan label dicetak ke printer yang dipilih (printer nota di Pengaturan, printer label di kanan bawah layar Cetak Barcode). Nota bertanda DEMO. Pengaturan printer demo terpisah dari aplikasi asli, jadi pilih printernya sekali di demo. Tutup shift membuat laporan di `Laporan-Demo` dan tidak mengirim email.
+- **Printer sungguhan, email tidak dikirim:** nota dan label dicetak ke printer yang dipilih (printer nota di Pengaturan, printer label di kanan bawah layar Cetak Barcode). Nota bertanda DEMO. Pengaturan printer demo terpisah dari aplikasi asli, jadi pilih printernya sekali di demo. Tutup shift membuat laporan di `Laporan-Demo` dan tidak mengirim email selama SMTP masih contoh (`demo.local`). Untuk mencoba email sungguhan, isi akun SMTP asli (mis. `smtp.gmail.com`, port 587, email Gmail + App Password) dan email owner di Pengaturan demo; tutup shift lalu benar-benar mengirim laporan.
 - **Reset Data** mengembalikan semua data latihan ke kondisi awal.
 - Versi demo selalu berjalan **Mandiri**; mode Server/Kasir hanya di aplikasi asli.
 - Uji otomatis: `npm run smoke:demo`.
