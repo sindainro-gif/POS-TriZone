@@ -1286,9 +1286,11 @@ views.opname = (() => {
       title: `Import Stok Opname — ${f.file}`,
       wide: true,
       body: `<div class="alert ${plan.errors.length ? 'warn' : 'ok'}">${n ? `${num(n)} zona siap disimpan` : 'Tidak ada opname yang bisa disimpan'}${plan.errors.length ? `, <b>${plan.errors.length} isian dilewati</b>` : ''}.</div>
-        ${n ? `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Zona</th><th class="r">Barang</th><th class="r">Selisih +</th><th class="r">Selisih −</th></tr></thead><tbody>
-          ${plan.zones.map((z) => `<tr><td>${zoneTag(z.zone)}</td><td class="r">${num(z.line_count)}</td><td class="r">${signed(z.plus_qty)}</td><td class="r">${signed(-z.minus_qty)}</td></tr>`).join('')}
-        </tbody></table></div><p class="muted small">Stok tiap zona langsung di-set ke angka Fisik setelah disimpan. Barang dengan kolom Fisik kosong tidak diubah.</p>` : ''}
+        ${n ? `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Zona</th>${plan.dated ? '<th>Stok per</th>' : ''}<th class="r">Barang</th><th class="r">Selisih +</th><th class="r">Selisih −</th></tr></thead><tbody>
+          ${plan.zones.map((z) => `<tr><td>${zoneTag(z.zone)}</td>${plan.dated ? `<td>${fmtTime(z.count_at)}</td>` : ''}<td class="r">${num(z.line_count)}</td><td class="r">${signed(z.plus_qty)}</td><td class="r">${signed(-z.minus_qty)}</td></tr>`).join('')}
+        </tbody></table></div><p class="muted small">${plan.dated
+          ? 'Selisih = Fisik − stok di file (per Tanggal_Stok). Selisih itu saja yang ditambahkan ke stok sekarang, jadi penjualan, mutasi, dan penerimaan setelah tanggal tersebut tetap terhitung.'
+          : 'File tanpa kolom Tanggal_Stok: selisih dibandingkan dengan stok sekarang, dan stok tiap zona di-set ke angka Fisik.'} Barang dengan kolom Fisik kosong tidak diubah.</p>` : ''}
         ${errorList(plan.errors)}`,
       actions: [
         { label: n ? 'Batal' : 'Tutup', kind: 'ghost' },
@@ -1317,7 +1319,7 @@ views.opname = (() => {
   async function loadHistory() {
     const rows = await api('opname:list', { q: $('#opSearch').value, limit: 300 });
     $('#opHistory').innerHTML = rows.length ? rows.map((d) => `<tr>
-        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b></td><td>${zoneTag(d.zone)}</td>
+        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b>${d.count_at ? `<div class="muted small">stok per ${fmtTime(d.count_at)}</div>` : ''}</td><td>${zoneTag(d.zone)}</td>
         <td class="r">${num(d.line_count)}</td><td class="r">${signed(d.plus_qty)}</td><td class="r">${signed(-d.minus_qty)}</td>
         <td>${esc(d.notes || '-')}</td><td><button class="btn sm ghost" data-id="${d.id}">Detail</button></td></tr>`).join('')
       : '<tr><td colspan="8" class="empty-row">Belum ada riwayat opname.</td></tr>';
@@ -1331,10 +1333,12 @@ views.opname = (() => {
       wide: true,
       body: `<div class="kv"><span>Tanggal</span><b>${fmtTime(d.created_at)}</b></div>
         <div class="kv"><span>Zona</span><b>${zoneTag(d.zone)}</b></div>
+        <div class="kv"><span>Stok per</span><b>${d.count_at ? `${fmtTime(d.count_at)} <span class="muted small">(selisih ditambahkan ke stok saat simpan)</span>` : 'Saat simpan'}</b></div>
         <div class="kv"><span>Catatan</span><b>${esc(d.notes || '-')}</b></div>
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Sistem</th><th class="r">Fisik</th><th class="r">Selisih</th></tr></thead><tbody>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Sistem</th><th class="r">Fisik</th><th class="r">Selisih</th><th class="r">Stok Akhir</th></tr></thead><tbody>
         ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td>
-          <td class="r muted">${num(i.system_qty)}</td><td class="r"><b>${num(i.counted_qty)}</b></td><td class="r"><b>${signed(i.diff)}</b></td></tr>`).join('')}
+          <td class="r muted">${num(i.system_qty)}</td><td class="r"><b>${num(i.counted_qty)}</b></td><td class="r"><b>${signed(i.diff)}</b></td>
+          <td class="r">${num(i.before_qty === null || i.before_qty === undefined ? i.counted_qty : i.before_qty + i.diff)}</td></tr>`).join('')}
         </tbody></table></div>`,
       actions: [{ label: 'Tutup', kind: 'primary' }],
     });

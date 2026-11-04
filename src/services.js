@@ -48,9 +48,10 @@ const RECEPTION_TEMPLATE_SAMPLE = [
   ['SJ-0002', 'CV Jaya Abadi', 'Kiriman sore', 'SNK-010', 'Keripik Kentang 68g', 2, 'Dus', ''],
 ];
 
-const OPNAME_TEMPLATE_HEADERS = ['Kode', 'Nama_Barang', 'Display Toko', 'Fisik Display Toko', 'Gudang Utama', 'Fisik Gudang Utama', 'Gudang BS', 'Fisik Gudang BS'];
-// Nama kolom Fisik per zona setelah dinormalisasi (huruf kecil, tanpa spasi / garis bawah)
+const OPNAME_TEMPLATE_HEADERS = ['Kode', 'Nama_Barang', 'Display Toko', 'Fisik Display Toko', 'Gudang Utama', 'Fisik Gudang Utama', 'Gudang BS', 'Fisik Gudang BS', 'Tanggal_Stok'];
+// Nama kolom per zona setelah dinormalisasi (huruf kecil, tanpa spasi / garis bawah)
 const OPNAME_FISIK = { floor: 'fisikdisplaytoko', warehouse: 'fisikgudangutama', damaged: 'fisikgudangbs' };
+const OPNAME_STOCK = { floor: 'displaytoko', warehouse: 'gudangutama', damaged: 'gudangbs' };
 
 const SETTING_KEYS = [
   'store_name', 'store_address', 'smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'smtp_from', 'owner_email',
@@ -102,6 +103,20 @@ function localNow() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// Tanggal dari Excel: teks "YYYY-MM-DD[ HH:MM[:SS]]" atau angka serial tanggal Excel → "YYYY-MM-DD HH:MM:SS" (null bila tidak terbaca)
+function parseStockDate(v) {
+  const p = (n) => String(n).padStart(2, '0');
+  if (typeof v === 'number' && v > 0) {
+    const d = new Date(Math.round((v - 25569) * 86400) * 1000); // serial Excel = hari sejak 1899-12-30, tanpa zona waktu
+    return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+  }
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/.exec(String(v ?? '').trim());
+  if (!m) return null;
+  const [, y, mo, da, h = 0, mi = 0, s = 0] = m;
+  if (mo < 1 || mo > 12 || da < 1 || da > 31 || h > 23 || mi > 59 || s > 59) return null;
+  return `${y}-${p(mo)}-${p(da)} ${p(h)}:${p(mi)}:${p(s)}`;
 }
 
 const PRODUCT_SELECT = `
@@ -677,8 +692,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   // ---------------------------------------------------------------- Stok Opname
-  // Stok zona di-set ke hasil hitung fisik. Barang yang tidak ada di list tidak diubah (opname boleh sebagian).
-  function createOpname({ zone, notes, items = [] } = {}) {
+  // Tanpa baseline: stok zona di-set ke hasil hitung fisik (hitungan per saat simpan).
+  // Dengan baseline (stok di file template per Tanggal_Stok): hanya selisih fisik − baseline yang ditambahkan ke stok
+  // sekarang, jadi penjualan / mutasi / penerimaan setelah tanggal itu tetap terhitung.
+  // Barang yang tidak ada di list tidak diubah (opname boleh sebagian).
+  function createOpname({ zone, notes, items = [], count_at } = {}) {
     const col = ZONE_COL[zone];
     if (!col) fail('Zona opname tidak valid.');
     const why = toStr(notes, 'Catatan', { max: 200 });
@@ -688,10 +706,12 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       const p = getProduct(it && it.sku);
       if (!p) fail(`Barang baris ${idx + 1} tidak ditemukan.`);
       const n = toInt(it.counted, `Jumlah fisik "${p.name}"`, { min: 0 });
+      const baseline = it.baseline === undefined || it.baseline === null ? null : toInt(it.baseline, `Stok patokan "${p.name}"`, { min: -1e12 });
       const same = lines.find((l) => l.sku === p.sku);
       if (same) same.counted += n;
-      else lines.push({ sku: p.sku, counted: n });
+      else lines.push({ sku: p.sku, counted: n, baseline });
     });
+    const countAt = parseStockDate(count_at);
     const now = localNow();
     const id = db.tx(() => {
       let plus = 0;
@@ -699,19 +719,21 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       for (const l of lines) {
         db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [l.sku]);
         // Stok sistem dibaca saat simpan, bukan saat barang di-scan (penjualan bisa terjadi di tengah hitungan)
-        l.system = db.get(`SELECT ${col} AS q FROM inventory WHERE sku = ?`, [l.sku]).q;
+        l.before = db.get(`SELECT ${col} AS q FROM inventory WHERE sku = ?`, [l.sku]).q;
+        l.system = l.baseline === null ? l.before : l.baseline;
         l.diff = l.counted - l.system;
+        const after = l.before + l.diff;
         if (l.diff > 0) plus += l.diff;
         else minus -= l.diff;
-        db.run(`UPDATE inventory SET ${col} = ? WHERE sku = ?`, [l.counted, l.sku]);
-        if (zone === 'floor' && l.counted > 0) clearSoldOut(l.sku);
+        db.run(`UPDATE inventory SET ${col} = ? WHERE sku = ?`, [after, l.sku]);
+        if (zone === 'floor' && after > 0) clearSoldOut(l.sku);
       }
-      db.run('INSERT INTO stock_opname_docs(doc_no, zone, notes, created_at, line_count, plus_qty, minus_qty) VALUES(?, ?, ?, ?, ?, ?, ?)', [
-        nextDocNo('OP', 'stock_opname_docs', now), zone, why, now, lines.length, plus, minus,
+      db.run('INSERT INTO stock_opname_docs(doc_no, zone, notes, created_at, line_count, plus_qty, minus_qty, count_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)', [
+        nextDocNo('OP', 'stock_opname_docs', now), zone, why, now, lines.length, plus, minus, countAt,
       ]);
       const did = db.lastId();
       for (const l of lines) {
-        db.run('INSERT INTO stock_opname_items(doc_id, sku, system_qty, counted_qty, diff) VALUES(?, ?, ?, ?, ?)', [did, l.sku, l.system, l.counted, l.diff]);
+        db.run('INSERT INTO stock_opname_items(doc_id, sku, system_qty, counted_qty, diff, before_qty) VALUES(?, ?, ?, ?, ?, ?)', [did, l.sku, l.system, l.counted, l.diff, l.before]);
       }
       return did;
     });
@@ -733,7 +755,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const d = db.get('SELECT * FROM stock_opname_docs WHERE id = ?', [id]);
     if (!d) fail('Dokumen opname tidak ditemukan.');
     d.items = db.all(
-      `SELECT t.sku, t.system_qty, t.counted_qty, t.diff, p.name, p.barcode FROM stock_opname_items t
+      `SELECT t.sku, t.system_qty, t.counted_qty, t.diff, t.before_qty, p.name, p.barcode FROM stock_opname_items t
        LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = ? ORDER BY t.id`,
       [id],
     );
@@ -742,10 +764,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   // Baris template opname: semua barang + stok sistem 3 zona, kolom Fisik tiap zona dikosongkan untuk diisi
   function opnameSheet() {
+    const stamp = localNow().slice(0, 16); // Tanggal_Stok: stok di file ini per kapan
     return db.all(
       `SELECT p.sku, p.name, COALESCE(i.floor_stock, 0) AS f, COALESCE(i.warehouse_stock, 0) AS w, COALESCE(i.damaged_stock, 0) AS d
        FROM products p LEFT JOIN inventory i ON i.sku = p.sku ORDER BY p.name COLLATE NOCASE`,
-    ).map((r) => [r.sku, r.name, r.f, '', r.w, '', r.d, '']);
+    ).map((r) => [r.sku, r.name, r.f, '', r.w, '', r.d, '', stamp]);
   }
 
   // Hasil hitung dari Excel per zona. Kolom Fisik yang kosong = zona itu tidak dihitung untuk barang tersebut.
@@ -760,17 +783,27 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     if (!('kode' in data[0]) || !Object.values(OPNAME_FISIK).some((c) => c in data[0])) {
       fail('Kolom "Kode" dan "Fisik Display Toko / Fisik Gudang Utama / Fisik Gudang BS" tidak ditemukan. Gunakan template opname terbaru.');
     }
+    // Ada Tanggal_Stok → kolom stok di file jadi patokan selisih (lihat createOpname)
+    const dated = 'tanggalstok' in data[0];
+    const now = localNow();
     const errors = [];
     const zones = {};
+    const countAt = {}; // zona → Tanggal_Stok paling awal
     data.forEach((r, i) => {
       const filled = Object.entries(OPNAME_FISIK).filter(([, c]) => String(r[c] ?? '').trim() !== '');
       if (!filled.length) return;
       let p;
+      let at = null;
       try {
         const code = codeStr(r.kode);
         if (!code) fail('Kode barang wajib diisi.');
         p = findByCode({ code });
         if (!p) fail(`Kode "${code}" tidak ditemukan di Daftar Barang.`);
+        if (dated) {
+          at = parseStockDate(r.tanggalstok);
+          if (!at) fail(`Tanggal_Stok "${r.tanggalstok}" tidak terbaca (format YYYY-MM-DD HH:MM).`);
+          if (at > now) fail(`Tanggal_Stok ${at.slice(0, 16)} belum terjadi.`);
+        }
       } catch (e) {
         errors.push(`Baris ${i + 2}: ${e.message}`);
         return;
@@ -778,38 +811,42 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       for (const [zone, c] of filled) {
         try {
           const counted = toInt(r[c], `Fisik ${ZONE_LABEL[zone]} "${p.name}"`, { min: 0 });
+          const baseline = dated ? toInt(r[OPNAME_STOCK[zone]], `Stok ${ZONE_LABEL[zone]} di file untuk "${p.name}"`, { min: -1e12 }) : null;
           const list = zones[zone] || (zones[zone] = []);
           const same = list.find((it) => it.sku === p.sku);
           if (same) same.counted += counted;
-          else list.push({ sku: p.sku, name: p.name, counted });
+          else list.push({ sku: p.sku, name: p.name, counted, baseline });
+          if (at && (!countAt[zone] || at < countAt[zone])) countAt[zone] = at;
         } catch (e) {
           errors.push(`Baris ${i + 2}: ${e.message}`);
         }
       }
     });
-    return { zones, errors };
+    return { zones, count_at: countAt, dated, errors };
   }
 
   // Import hasil opname: dry run = ringkasan selisih per zona; simpan = satu dokumen OP per zona
   function importOpname({ rows, notes, dry_run = false } = {}) {
-    const { zones, errors } = planOpnameImport(rows);
+    const { zones, count_at: countAt, dated, errors } = planOpnameImport(rows);
     const order = Object.keys(ZONE_COL).filter((z) => zones[z]);
     if (dry_run) {
       return {
+        dated,
         zones: order.map((zone) => {
           let plus = 0;
           let minus = 0;
           for (const it of zones[zone]) {
-            const d = it.counted - (Number(getProduct(it.sku)[ZONE_COL[zone]]) || 0);
+            const base = it.baseline === null ? Number(getProduct(it.sku)[ZONE_COL[zone]]) || 0 : it.baseline;
+            const d = it.counted - base;
             if (d > 0) plus += d;
             else minus -= d;
           }
-          return { zone, line_count: zones[zone].length, plus_qty: plus, minus_qty: minus };
+          return { zone, line_count: zones[zone].length, plus_qty: plus, minus_qty: minus, count_at: countAt[zone] || null };
         }),
         errors,
       };
     }
-    const created = order.map((zone) => createOpname({ zone, notes, items: zones[zone] }));
+    const created = order.map((zone) => createOpname({ zone, notes, items: zones[zone], count_at: countAt[zone] }));
     return { created, errors };
   }
 

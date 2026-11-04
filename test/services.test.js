@@ -303,7 +303,8 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
 
   await t('stok opname: template & import hasil hitung 3 zona', () => {
     const sheet = svc.opnameSheet();
-    assert.deepStrictEqual(sheet.find((r) => r[0] === 'OP-A'), ['OP-A', 'Opname A', 8, '', 0, '', 0, '']);
+    assert.deepStrictEqual(sheet.find((r) => r[0] === 'OP-A').slice(0, 8), ['OP-A', 'Opname A', 8, '', 0, '', 0, '']);
+    assert.match(sheet[0][8], /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/); // Tanggal_Stok = waktu unduh
     // Seperti sheet_to_json(defval ''): semua kolom ada di tiap baris
     const row = (Kode, fd, fg, fb) => ({ Kode, Nama_Barang: '', 'Display Toko': 0, 'Fisik Display Toko': fd, 'Gudang Utama': 0, 'Fisik Gudang Utama': fg, 'Gudang BS': 0, 'Fisik Gudang BS': fb });
     const rows = [
@@ -315,8 +316,8 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     ];
     const plan = svc.importOpname({ rows, dry_run: true });
     assert.deepStrictEqual(plan.zones, [
-      { zone: 'floor', line_count: 1, plus_qty: 2, minus_qty: 0 },
-      { zone: 'damaged', line_count: 2, plus_qty: 3, minus_qty: 0 },
+      { zone: 'floor', line_count: 1, plus_qty: 2, minus_qty: 0, count_at: null },
+      { zone: 'damaged', line_count: 2, plus_qty: 3, minus_qty: 0, count_at: null },
     ]);
     assert.strictEqual(plan.errors.length, 2);
     assert.match(plan.errors[0], /Baris 4: .*KODE-ASING-OP/);
@@ -329,6 +330,48 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     const c = svc.getProduct('OP-C');
     assert.deepStrictEqual([c.floor_stock, c.damaged_stock], [7, 1]);
     throwsMsg(() => svc.planOpnameImport([{ Kode: 'OP-A', Stok_Sistem: 8, Fisik: 1 }]), /template opname terbaru/);
+  });
+
+  await t('stok opname: Tanggal_Stok → selisih terhadap stok di file, diterapkan ke stok sekarang', () => {
+    // Template diunduh: OP-A Display Toko 10 / BS 2, OP-C Display Toko 7, OP-B Display Toko 3
+    const sheet = svc.opnameSheet();
+    const stamp = sheet[0][8];
+    const at = (sku, zoneIdx) => sheet.find((r) => r[0] === sku)[zoneIdx];
+    assert.deepStrictEqual([at('OP-A', 2), at('OP-A', 6), at('OP-C', 2), at('OP-B', 2)], [10, 2, 7, 3]);
+    // Setelah unduh: OP-A diterima 5 ke Display Toko (→ 15), OP-C pindah 3 ke BS (→ 4)
+    svc.createReception({ reference_no: 'SJ-OPNAME', items: [{ sku: 'OP-A', qty: 5, pack_type: 'Biji', destination: 'floor' }] });
+    svc.createTransfer({ sku: 'OP-C', from_zone: 'floor', to_zone: 'damaged', qty: 3 });
+    const excelSerial = Date.UTC(2026, 0, 1, 8, 30) / 86400000 + 25569; // 2026-01-01 08:30 sebagai tanggal Excel
+    const row = (Kode, stockFloor, fisikFloor, tgl, extra = {}) => ({
+      Kode, Nama_Barang: '', 'Display Toko': stockFloor, 'Fisik Display Toko': fisikFloor, 'Gudang Utama': 0, 'Fisik Gudang Utama': '', 'Gudang BS': 2, 'Fisik Gudang BS': '', Tanggal_Stok: tgl, ...extra,
+    });
+    const rows = [
+      row('OP-A', 10, 8, stamp, { 'Fisik Gudang BS': 2 }), // −2 di toko, BS cocok
+      row('OP-C', 7, 0, stamp), // −7 → hasil 4 − 7 = −3 (boleh minus)
+      row('OP-B', 3, 3, excelSerial), // tanggal Excel diterima, selisih 0
+      row('OP-A', 10, 1, '2999-01-01 00:00'), // tanggal belum terjadi
+      row('OP-A', 10, 1, 'kemarin'), // tanggal tidak terbaca
+      row('OP-C', '', 1, stamp), // stok di file kosong
+    ];
+    const plan = svc.importOpname({ rows, dry_run: true });
+    assert.strictEqual(plan.dated, true);
+    assert.deepStrictEqual(plan.zones, [
+      { zone: 'floor', line_count: 3, plus_qty: 0, minus_qty: 9, count_at: '2026-01-01 08:30:00' },
+      { zone: 'damaged', line_count: 1, plus_qty: 0, minus_qty: 0, count_at: `${stamp}:00` },
+    ]);
+    assert.strictEqual(plan.errors.length, 3);
+    assert.match(plan.errors[0], /Baris 5: .*belum terjadi/);
+    assert.match(plan.errors[1], /Baris 6: .*tidak terbaca/);
+    assert.match(plan.errors[2], /Baris 7: Stok Display Toko di file/);
+    const r = svc.importOpname({ rows, notes: 'Import tanggal' });
+    const floor = r.created.find((d) => d.zone === 'floor');
+    assert.strictEqual(floor.count_at, '2026-01-01 08:30:00');
+    assert.deepStrictEqual(floor.items.map((i) => [i.sku, i.system_qty, i.before_qty, i.counted_qty, i.diff]), [
+      ['OP-A', 10, 15, 8, -2], ['OP-C', 7, 4, 0, -7], ['OP-B', 3, 3, 3, 0],
+    ]);
+    assert.deepStrictEqual([svc.getProduct('OP-A').floor_stock, svc.getProduct('OP-A').damaged_stock], [13, 2]);
+    assert.deepStrictEqual([svc.getProduct('OP-C').floor_stock, svc.getProduct('OP-C').damaged_stock], [-3, 4]);
+    assert.strictEqual(svc.getProduct('OP-B').floor_stock, 3);
   });
 
   await t('pengaturan: password terenkripsi tidak bocor ke renderer', () => {

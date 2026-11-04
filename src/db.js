@@ -205,7 +205,8 @@ function loadSql() {
 const REQUIRED_TABLES = ['products', 'inventory', 'settings'];
 
 // Kolom yang ditambahkan setelah versi pertama: CREATE TABLE IF NOT EXISTS tidak menambah kolom ke tabel lama
-const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfers', 'doc_id', 'INTEGER']];
+const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfers', 'doc_id', 'INTEGER'],
+  ['stock_opname_docs', 'count_at', 'DATETIME'], ['stock_opname_items', 'before_qty', 'INTEGER']];
 
 function migrate(sqlDb) {
   for (const [table, col, type] of ADDED_COLUMNS) {

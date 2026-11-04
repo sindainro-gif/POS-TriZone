@@ -247,6 +247,14 @@ app.on('browser-window-created', (_e, win) => {
       console.log('import Opname:', JSON.stringify(opImp));
       const imp = svc.getProduct('IMP-SMK');
       if (opImp.length !== 2 || imp.floor_stock !== 4 || imp.warehouse_stock !== 7 || imp.damaged_stock !== 1) throw new Error('import opname 3 zona salah');
+      // Tanggal_Stok: template diunduh (Gudang Utama 7), lalu diterima 3 lagi (→ 10); fisik 5 → selisih −2 → stok 8
+      const tpl = svc.opnameSheet().find((r) => r[0] === 'IMP-SMK');
+      svc.createReception({ reference_no: 'SJ-SETELAH-OPNAME', items: [{ sku: 'IMP-SMK', qty: 3, pack_type: 'Biji', destination: 'warehouse' }] });
+      const opDated = await run(`window.posBridge.call('opname:import', { rows: [
+        { Kode: 'IMP-SMK', 'Display Toko': ${tpl[2]}, 'Fisik Display Toko': '', 'Gudang Utama': ${tpl[4]}, 'Fisik Gudang Utama': 5, 'Gudang BS': ${tpl[6]}, 'Fisik Gudang BS': '', Tanggal_Stok: '${tpl[8]}' },
+      ] }).then((r) => r.data.created[0])`);
+      console.log('import Opname bertanggal:', JSON.stringify({ doc: opDated.doc_no, count_at: opDated.count_at, items: opDated.items }));
+      if (svc.getProduct('IMP-SMK').warehouse_stock !== 8 || opDated.items[0].diff !== -2 || !opDated.count_at) throw new Error('selisih opname bertanggal tidak diterapkan ke stok sekarang');
 
       // Barang masuk → antrian label → cetak (PDF ukuran 106×20 mm)
       svc.importRows([{ Barcode: '4006381333931', SKU: 'BRS-001', Nama_Barang: 'Penebah Lidi @50 PCS Sima', Merk: 'Sima', Harga_Jual: 6000, Rasio_Isi_Dus: 50 }]);
