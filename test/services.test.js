@@ -274,6 +274,49 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(svc2.countReceptionDrafts(), 0);
   });
 
+  await t('stok opname: set stok ke hitungan fisik, catat selisih, zona & barang lain tidak berubah', () => {
+    svc.importRows([
+      { Barcode: '7001', SKU: 'OP-A', Nama_Barang: 'Opname A', Harga_Jual: 1000, Stok_Awal_Toko: 10, Stok_Awal_Gudang: 20 },
+      { Barcode: '7002', SKU: 'OP-B', Nama_Barang: 'Opname B', Harga_Jual: 1000, Stok_Awal_Toko: 5 },
+      { Barcode: '7003', SKU: 'OP-C', Nama_Barang: 'Opname C', Harga_Jual: 1000, Stok_Awal_Toko: 7 },
+    ]);
+    // Display toko minus karena terjual → ditandai habis
+    db.run("UPDATE inventory SET floor_stock = -2, sold_out_at = '2026-01-01 10:00:00' WHERE sku = 'OP-B'");
+    const d = svc.createOpname({ zone: 'floor', notes: 'Rak 1', items: [{ sku: 'OP-A', counted: 4 }, { sku: 'OP-A', counted: 4 }, { sku: 'OP-B', counted: 3 }] });
+    assert.match(d.doc_no, /^OP-\d{8}-001$/);
+    assert.deepStrictEqual([d.zone, d.line_count, d.plus_qty, d.minus_qty], ['floor', 2, 5, 2]);
+    assert.deepStrictEqual(d.items.map((i) => [i.sku, i.system_qty, i.counted_qty, i.diff]), [['OP-A', 10, 8, -2], ['OP-B', -2, 3, 5]]);
+    const a = svc.getProduct('OP-A');
+    assert.deepStrictEqual([a.floor_stock, a.warehouse_stock], [8, 20]);
+    assert.strictEqual(svc.getProduct('OP-C').floor_stock, 7);
+    assert.ok(!svc.lowStock({ limit: 500 }).some((p) => p.sku === 'OP-B' && p.sold_out));
+    // Gudang Utama, nomor berurutan, fisik 0 boleh
+    const d2 = svc.createOpname({ zone: 'warehouse', items: [{ sku: 'OP-A', counted: 0 }] });
+    assert.match(d2.doc_no, /^OP-\d{8}-002$/);
+    assert.strictEqual(svc.getProduct('OP-A').warehouse_stock, 0);
+    throwsMsg(() => svc.createOpname({ zone: 'customer', items: [{ sku: 'OP-A', counted: 1 }] }), /Zona opname tidak valid/);
+    throwsMsg(() => svc.createOpname({ zone: 'floor', items: [{ sku: 'OP-A', counted: -1 }] }), /minimal 0/);
+    throwsMsg(() => svc.createOpname({ zone: 'floor', items: [] }), /minimal satu barang/);
+    assert.deepStrictEqual(svc.listOpnames({ q: 'Opname B' }).map((x) => x.doc_no), [d.doc_no]);
+    throwsMsg(() => svc.deleteProduct({ sku: 'OP-A' }), /opname/);
+  });
+
+  await t('stok opname: template & import hasil hitung', () => {
+    const sheet = svc.opnameSheet({ zone: 'floor' });
+    assert.deepStrictEqual(sheet.find((r) => r[0] === 'OP-A'), ['OP-A', 'Opname A', 8, '']);
+    const r = svc.planOpnameImport([
+      { Kode: 'OP-A', Nama_Barang: 'Opname A', Stok_Sistem: 8, Fisik: 9 },
+      { Kode: '7002', Nama_Barang: 'Opname B', Stok_Sistem: 3, Fisik: '' },
+      { Kode: 'KODE-ASING-OP', Fisik: 1 },
+      { Kode: 'op-a', Fisik: 1 },
+      { Kode: 'OP-C', Fisik: 'x' },
+    ]);
+    assert.deepStrictEqual(r.items.map((i) => [i.product.sku, i.counted]), [['OP-A', 10]]);
+    assert.strictEqual(r.errors.length, 2);
+    assert.match(r.errors[0], /Baris 4: .*KODE-ASING-OP/);
+    throwsMsg(() => svc.planOpnameImport([{ Kode: 'OP-A', Jumlah: 1 }]), /Kolom wajib "Fisik"/);
+  });
+
   await t('pengaturan: password terenkripsi tidak bocor ke renderer', () => {
     const s2 = createServices(db, { encrypt: (s) => 'enc:' + Buffer.from(s).toString('base64'), decrypt: (s) => Buffer.from(s.slice(4), 'base64').toString() });
     const pub = s2.saveSettings({ store_name: 'Toko Maju', owner_email: 'a@b.co, c@d.id', smtp_pass: 'rahasia' });

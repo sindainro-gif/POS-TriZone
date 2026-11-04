@@ -19,6 +19,7 @@
       <button class="nav-btn" data-view="checkout"><span class="nav-ico">⌁</span><span>Kasir / Pembayaran</span><kbd>F1</kbd></button>
       <button class="nav-btn" data-view="transfers"><span class="nav-ico">⇄</span><span>Mutasi &amp; Pindah Stok</span><kbd>F3</kbd></button>
       <button class="nav-btn" data-view="receiving"><span class="nav-ico">⇩</span><span>Penerimaan Barang</span><kbd>F4</kbd></button>
+      <button class="nav-btn" data-view="opname"><span class="nav-ico">✓</span><span>Stok Opname</span><kbd>F7</kbd></button>
       <button class="nav-btn" data-view="products"><span class="nav-ico">≡</span><span>Daftar Barang</span><kbd>F5</kbd></button>
       <button class="nav-btn" data-view="barcode"><span class="nav-ico">▥</span><span>Cetak Barcode</span><kbd>F10</kbd></button>
       <button class="nav-btn" data-view="shift"><span class="nav-ico">◷</span><span>Laporan Shift &amp; Tutup Kasir</span><kbd>F6</kbd></button>
@@ -196,6 +197,54 @@
         <div class="tbl-wrap"><table class="tbl">
           <thead><tr><th>Tanggal</th><th>No. Surat Jalan</th><th>Supplier</th><th class="r">Baris</th><th class="r">Total Biji</th><th>Catatan</th><th class="w-act"></th></tr></thead>
           <tbody id="rcHistory"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= STOK OPNAME ======================= -->
+    <section class="view" id="view-opname">
+      <header class="page-head">
+        <div><h1>Stok Opname</h1><p>Samakan stok sistem dengan hasil hitung fisik. Barang yang tidak dimasukkan ke list tidak diubah.</p></div>
+        <div class="btn-row">
+          <button class="btn ghost" id="opTemplate">Unduh Template</button>
+          <button class="btn ghost" id="opImport">Import Excel / CSV</button>
+        </div>
+      </header>
+      <div class="card">
+        <h2>Form Opname</h2>
+        <div class="field">
+          <label>Zona yang Dihitung</label>
+          <select id="opZone"></select>
+        </div>
+        <div class="field">
+          <label>Barang</label>
+          <div class="scan-row compact">
+            <div class="picker-wrap grow"><input id="opPicker" autocomplete="off" placeholder="Scan barcode / ketik nama barang…"></div>
+            <label class="qty-field" for="opQty"><span>Jumlah Fisik (Biji)</span><input id="opQty" type="number" min="0" step="1" value="1" inputmode="numeric" autocomplete="off"></label>
+          </div>
+          <div id="opPicked" class="hint">Scan barang → isi Jumlah Fisik → Enter = masuk list · scan barang yang sama lagi = jumlah ditambahkan</div>
+        </div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Stok Sistem</th><th class="r">Fisik</th><th class="r">Selisih</th><th class="w-act"></th></tr></thead>
+          <tbody id="opItems"></tbody>
+        </table></div>
+        <div class="field" style="margin-top:12px">
+          <label>Catatan <span class="muted">(opsional)</span></label>
+          <input id="opNotes" maxlength="200" placeholder="Contoh: Opname rak minuman">
+        </div>
+        <div class="foot-row">
+          <div id="opTotal" class="muted">0 baris</div>
+          <div class="btn-row"><button class="btn ghost" id="opReset">Batal</button><button class="btn primary" id="opSubmit">Simpan Opname</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Riwayat Opname</h2>
+          <input id="opSearch" class="search" placeholder="Cari no. opname / barang / catatan…">
+        </div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Waktu</th><th>No. Opname</th><th>Zona</th><th class="r">Baris</th><th class="r">Selisih +</th><th class="r">Selisih −</th><th>Catatan</th><th class="w-act"></th></tr></thead>
+          <tbody id="opHistory"></tbody>
         </table></div>
       </div>
     </section>

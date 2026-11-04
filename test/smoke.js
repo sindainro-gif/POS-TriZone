@@ -212,6 +212,35 @@ app.on('browser-window-created', (_e, win) => {
       const asing = svc.listReceptionDrafts()[0];
       svc.deleteReceptionDraft({ id: asing.id });
 
+      // Stok Opname (F7): scan barang + jumlah fisik → Simpan → stok zona = hitungan fisik
+      await run(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F7', bubbles: true }))`);
+      await wait(500);
+      const opView = await run(`state.view + '/' + document.activeElement.id + (document.querySelector('#view-opname').offsetParent && document.querySelector('#nav [data-view=opname]').classList.contains('active') ? '' : '/tersembunyi')`);
+      if (opView !== 'opname/opPicker') throw new Error(`F7 seharusnya membuka Stok Opname dengan kursor di Barang (${opView})`);
+      await run(`(() => { const d = document.querySelector('#opZone'); d.value = 'warehouse'; d.dispatchEvent(new Event('change')); })()`);
+      await wait(200);
+      const opAdd = async (code, n) => {
+        await run(`(() => { const i = document.querySelector('#opPicker'); i.focus(); i.value = ${JSON.stringify(code)}; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+        await wait(400);
+        await run(`(() => { const q = document.querySelector('#opQty'); q.value = '${n}'; q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      };
+      const whBefore = svc.getProduct('IMP-SMK').warehouse_stock;
+      await opAdd('7770000000059', 5);
+      await opAdd('7770000000059', 2); // hitung dua tumpukan → dijumlahkan
+      await opAdd('7770000000080', 0);
+      const opList = await run(`({ rows: [...document.querySelectorAll('#opItems tr[data-i]')].map((r) => r.children[1].textContent + ':' + r.querySelector('[data-act=qty]').value + ':' + r.children[5].textContent), total: document.querySelector('#opTotal').textContent })`);
+      console.log('list Opname:', JSON.stringify(opList));
+      if (opList.rows.join(',') !== `IMP-SMK:7:${7 - whBefore > 0 ? '+' : '−'}${Math.abs(7 - whBefore)},BELUM-ADA:0:−6`) throw new Error('list Stok Opname salah');
+      await shot('05d-stok-opname');
+      await run(`document.querySelector('#opSubmit').click()`);
+      await wait(300);
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(700);
+      const opDoc = await run(`({ first: document.querySelector('#opHistory tr').innerText.replace(/\\s+/g, ' '), left: document.querySelectorAll('#opItems tr[data-i]').length })`);
+      console.log('riwayat Opname teratas:', JSON.stringify(opDoc));
+      if (!/OP-\d{8}-001/.test(opDoc.first) || !/Gudang Utama/.test(opDoc.first) || opDoc.left !== 0) throw new Error('Stok Opname tidak tersimpan');
+      if (svc.getProduct('IMP-SMK').warehouse_stock !== 7 || svc.getProduct('BELUM-ADA').warehouse_stock !== 0) throw new Error('stok Gudang Utama tidak sesuai hitungan fisik');
+
       // Barang masuk → antrian label → cetak (PDF ukuran 106×20 mm)
       svc.importRows([{ Barcode: '4006381333931', SKU: 'BRS-001', Nama_Barang: 'Penebah Lidi @50 PCS Sima', Merk: 'Sima', Harga_Jual: 6000, Rasio_Isi_Dus: 50 }]);
       const rec = svc.createReception({ reference_no: 'SJ-SMOKE', supplier_name: 'PT Sima', items: [
@@ -368,7 +397,7 @@ app.on('browser-window-created', (_e, win) => {
       await wait(800);
       await shot('10-pengaturan-pengguna');
       const navOf = () => run(`[...document.querySelectorAll('.nav-btn')].filter((b) => !b.classList.contains('hidden')).map((b) => b.dataset.view).join(',')`);
-      for (const [name, pin, want] of [['Rina', '222222', 'checkout,products,shift'], ['Budi', '333333', 'transfers,receiving,products,barcode']]) {
+      for (const [name, pin, want] of [['Rina', '222222', 'checkout,products,shift'], ['Budi', '333333', 'transfers,receiving,opname,products,barcode']]) {
         await run(`document.querySelector('#logoutBtn').click()`);
         await wait(1500);
         await run(`document.querySelector('#lgPin').value='999999'; document.querySelector('#lgName').value=${JSON.stringify(name)}; document.querySelector('#lgBtn').click();`);

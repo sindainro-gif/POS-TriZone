@@ -94,6 +94,30 @@ CREATE TABLE IF NOT EXISTS stock_transfer_docs (
     total_qty INTEGER NOT NULL
 );
 
+-- Stok opname: satu dokumen = satu zona, stok zona di-set ke hasil hitung fisik
+CREATE TABLE IF NOT EXISTS stock_opname_docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_no TEXT UNIQUE NOT NULL,
+    zone TEXT NOT NULL CHECK(zone IN ('floor', 'warehouse', 'damaged')),
+    notes TEXT,
+    created_at DATETIME DEFAULT (datetime('now','localtime')),
+    line_count INTEGER NOT NULL,
+    plus_qty INTEGER NOT NULL DEFAULT 0,
+    minus_qty INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS stock_opname_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_id INTEGER NOT NULL,
+    sku TEXT NOT NULL,
+    system_qty INTEGER NOT NULL,
+    counted_qty INTEGER NOT NULL,
+    diff INTEGER NOT NULL,
+    FOREIGN KEY (doc_id) REFERENCES stock_opname_docs(id) ON DELETE CASCADE,
+    FOREIGN KEY (sku) REFERENCES products(sku)
+);
+CREATE INDEX IF NOT EXISTS idx_opname_items_doc ON stock_opname_items(doc_id);
+
 -- ========================================================
 -- PARTISI B: DATA TRANSAKSI SHIFT KASIR (EPHEMERAL / PURGE VIA EMAIL)
 -- ========================================================

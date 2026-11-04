@@ -48,6 +48,8 @@ const RECEPTION_TEMPLATE_SAMPLE = [
   ['SJ-0002', 'CV Jaya Abadi', 'Kiriman sore', 'SNK-010', 'Keripik Kentang 68g', 2, 'Dus', ''],
 ];
 
+const OPNAME_TEMPLATE_HEADERS = ['Kode', 'Nama_Barang', 'Stok_Sistem', 'Fisik'];
+
 const SETTING_KEYS = [
   'store_name', 'store_address', 'smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'smtp_from', 'owner_email',
   'receipt_header', 'receipt_footer', 'printer_name', 'paper_width', 'auto_print', 'label_printer_name',
@@ -265,10 +267,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const refs = db.get(
       `SELECT (SELECT COUNT(*) FROM stock_reception_items WHERE sku = ?) +
               (SELECT COUNT(*) FROM stock_transfers WHERE sku = ?) +
-              (SELECT COUNT(*) FROM shift_sales WHERE sku = ?) AS n`,
-      [sku, sku, sku],
+              (SELECT COUNT(*) FROM shift_sales WHERE sku = ?) +
+              (SELECT COUNT(*) FROM stock_opname_items WHERE sku = ?) AS n`,
+      [sku, sku, sku, sku],
     ).n;
-    if (refs > 0) fail(`"${p.name}" tidak bisa dihapus karena sudah memiliki riwayat penerimaan, mutasi, atau penjualan.`);
+    if (refs > 0) fail(`"${p.name}" tidak bisa dihapus karena sudah memiliki riwayat penerimaan, mutasi, opname, atau penjualan.`);
     db.tx(() => {
       db.run('DELETE FROM inventory WHERE sku = ?', [sku]);
       db.run('DELETE FROM products WHERE sku = ?', [sku]);
@@ -583,6 +586,13 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   // ---------------------------------------------------------------- Mutasi
   // Satu form mutasi: satu arah + satu alasan untuk beberapa barang; gagal satu = batal semua
+  // Nomor urut per hari: MT-YYYYMMDD-001 / OP-YYYYMMDD-001
+  function nextDocNo(code, table, now) {
+    const prefix = `${code}-${now.slice(0, 10).replace(/-/g, '')}-`;
+    const last = db.get(`SELECT doc_no FROM ${table} WHERE doc_no LIKE ? ORDER BY doc_no DESC LIMIT 1`, [`${prefix}%`]);
+    return prefix + String((last ? Number(last.doc_no.slice(prefix.length)) : 0) + 1).padStart(3, '0');
+  }
+
   function createTransferDoc({ from_zone, to_zone, reason, items = [] } = {}) {
     const dir = DIRECTIONS.find((d) => d.from === from_zone && d.to === to_zone);
     if (!dir) fail('Arah mutasi tidak valid.');
@@ -612,10 +622,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
           if (to_zone === 'floor') clearSoldOut(p.sku);
         }
       }
-      // Nomor urut per hari: MT-YYYYMMDD-001
-      const prefix = `MT-${now.slice(0, 10).replace(/-/g, '')}-`;
-      const last = db.get('SELECT doc_no FROM stock_transfer_docs WHERE doc_no LIKE ? ORDER BY doc_no DESC LIMIT 1', [`${prefix}%`]);
-      const docNo = prefix + String((last ? Number(last.doc_no.slice(prefix.length)) : 0) + 1).padStart(3, '0');
+      const docNo = nextDocNo('MT', 'stock_transfer_docs', now);
       db.run('INSERT INTO stock_transfer_docs(doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty) VALUES(?, ?, ?, ?, ?, ?, ?)', [
         docNo, from_zone, to_zone, why, now, lines.length, lines.reduce((s, l) => s + l.qty, 0),
       ]);
@@ -665,6 +672,111 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
        ORDER BY t.id DESC LIMIT ?`,
       [like, like, like, like, Math.min(Number(limit) || 200, 2000)],
     );
+  }
+
+  // ---------------------------------------------------------------- Stok Opname
+  // Stok zona di-set ke hasil hitung fisik. Barang yang tidak ada di list tidak diubah (opname boleh sebagian).
+  function createOpname({ zone, notes, items = [] } = {}) {
+    const col = ZONE_COL[zone];
+    if (!col) fail('Zona opname tidak valid.');
+    const why = toStr(notes, 'Catatan', { max: 200 });
+    if (!Array.isArray(items) || !items.length) fail('Tambahkan minimal satu barang.');
+    const lines = [];
+    items.forEach((it, idx) => {
+      const p = getProduct(it && it.sku);
+      if (!p) fail(`Barang baris ${idx + 1} tidak ditemukan.`);
+      const n = toInt(it.counted, `Jumlah fisik "${p.name}"`, { min: 0 });
+      const same = lines.find((l) => l.sku === p.sku);
+      if (same) same.counted += n;
+      else lines.push({ sku: p.sku, counted: n });
+    });
+    const now = localNow();
+    const id = db.tx(() => {
+      let plus = 0;
+      let minus = 0;
+      for (const l of lines) {
+        db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [l.sku]);
+        // Stok sistem dibaca saat simpan, bukan saat barang di-scan (penjualan bisa terjadi di tengah hitungan)
+        l.system = db.get(`SELECT ${col} AS q FROM inventory WHERE sku = ?`, [l.sku]).q;
+        l.diff = l.counted - l.system;
+        if (l.diff > 0) plus += l.diff;
+        else minus -= l.diff;
+        db.run(`UPDATE inventory SET ${col} = ? WHERE sku = ?`, [l.counted, l.sku]);
+        if (zone === 'floor' && l.counted > 0) clearSoldOut(l.sku);
+      }
+      db.run('INSERT INTO stock_opname_docs(doc_no, zone, notes, created_at, line_count, plus_qty, minus_qty) VALUES(?, ?, ?, ?, ?, ?, ?)', [
+        nextDocNo('OP', 'stock_opname_docs', now), zone, why, now, lines.length, plus, minus,
+      ]);
+      const did = db.lastId();
+      for (const l of lines) {
+        db.run('INSERT INTO stock_opname_items(doc_id, sku, system_qty, counted_qty, diff) VALUES(?, ?, ?, ?, ?)', [did, l.sku, l.system, l.counted, l.diff]);
+      }
+      return did;
+    });
+    return getOpname({ id });
+  }
+
+  function listOpnames({ limit = 200, q = '' } = {}) {
+    const like = `%${String(q || '').trim()}%`;
+    return db.all(
+      `SELECT d.* FROM stock_opname_docs d
+       WHERE (? = '%%' OR d.doc_no LIKE ? OR d.notes LIKE ? OR EXISTS (
+         SELECT 1 FROM stock_opname_items t LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = d.id AND (p.name LIKE ? OR t.sku LIKE ?)))
+       ORDER BY d.id DESC LIMIT ?`,
+      [like, like, like, like, like, Math.min(Number(limit) || 200, 2000)],
+    );
+  }
+
+  function getOpname({ id } = {}) {
+    const d = db.get('SELECT * FROM stock_opname_docs WHERE id = ?', [id]);
+    if (!d) fail('Dokumen opname tidak ditemukan.');
+    d.items = db.all(
+      `SELECT t.sku, t.system_qty, t.counted_qty, t.diff, p.name, p.barcode FROM stock_opname_items t
+       LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = ? ORDER BY t.id`,
+      [id],
+    );
+    return d;
+  }
+
+  // Baris template opname: semua barang + stok sistem zona, kolom Fisik dikosongkan untuk diisi
+  function opnameSheet({ zone } = {}) {
+    const col = ZONE_COL[zone];
+    if (!col) fail('Zona opname tidak valid.');
+    return db.all(
+      `SELECT p.sku, p.name, COALESCE(i.${col}, 0) AS q FROM products p LEFT JOIN inventory i ON i.sku = p.sku ORDER BY p.name COLLATE NOCASE`,
+    ).map((r) => [r.sku, r.name, r.q, '']);
+  }
+
+  // Hasil hitung dari Excel → isi form (belum disimpan). Baris dengan Fisik kosong dilewati.
+  function planOpnameImport(rows = []) {
+    const norm = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const data = (Array.isArray(rows) ? rows : []).map((r) => {
+      const o = {};
+      for (const [k, v] of Object.entries(r || {})) o[norm(k)] = v;
+      return o;
+    });
+    if (!data.length) fail('File tidak berisi data opname.');
+    for (const req of ['kode', 'fisik']) {
+      if (!(req in data[0])) fail(`Kolom wajib "${OPNAME_TEMPLATE_HEADERS.find((h) => norm(h) === req)}" tidak ditemukan. Gunakan template opname.`);
+    }
+    const errors = [];
+    const items = [];
+    data.forEach((r, i) => {
+      if (String(r.fisik ?? '').trim() === '') return;
+      try {
+        const code = codeStr(r.kode);
+        if (!code) fail('Kode barang wajib diisi.');
+        const p = findByCode({ code });
+        if (!p) fail(`Kode "${code}" tidak ditemukan di Daftar Barang.`);
+        const counted = toInt(r.fisik, `Fisik "${p.name}"`, { min: 0 });
+        const same = items.find((it) => it.product.sku === p.sku);
+        if (same) same.counted += counted;
+        else items.push({ product: p, counted });
+      } catch (e) {
+        errors.push(`Baris ${i + 2}: ${e.message}`);
+      }
+    });
+    return { items, errors };
   }
 
   // ---------------------------------------------------------------- Penerimaan
@@ -996,10 +1108,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
     createReception, listReceptions, getReception, importReceptions,
+    createOpname, listOpnames, getOpname, opnameSheet, planOpnameImport,
     createReceptionDraft, listReceptionDrafts, countReceptionDrafts, processReceptionDraft, deleteReceptionDraft,
   };
 }
 
 module.exports = {
-  createServices, PAYMENT_METHODS, ZONE_LABEL, DIRECTIONS, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, localNow,
+  createServices, PAYMENT_METHODS, ZONE_LABEL, DIRECTIONS, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, OPNAME_TEMPLATE_HEADERS, localNow,
 };

@@ -6,7 +6,7 @@ const os = require('os');
 const XLSX = require('xlsx');
 const nodemailer = require('nodemailer');
 const { Database } = require('./db');
-const { createServices, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, localNow } = require('./services');
+const { createServices, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, OPNAME_TEMPLATE_HEADERS, ZONE_LABEL, localNow } = require('./services');
 const reports = require('./reports');
 const { buildReceiptLines, receiptPage } = require('./receipt');
 const { labelPages, labelPreview } = require('./labels');
@@ -570,6 +570,7 @@ const ACCESS = {
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
+  'opname:create': GUDANG, 'opname:list': GUDANG, 'opname:get': GUDANG, 'opname:template': GUDANG, 'opname:importFile': GUDANG,
   'rcDrafts:list': GUDANG, 'rcDrafts:count': GUDANG, 'rcDrafts:create': GUDANG, 'rcDrafts:process': GUDANG, 'rcDrafts:delete': GUDANG,
   'labels:designs': GUDANG, 'labels:saveDesign': GUDANG, 'labels:deleteDesign': GUDANG, 'labels:setDefault': GUDANG,
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
@@ -699,6 +700,19 @@ const handlers = {
   'receptions:create': (a) => svc.createReception(a),
   'receptions:list': (a) => svc.listReceptions(a),
   'receptions:get': (a) => svc.getReception(a),
+
+  'opname:create': (a) => svc.createOpname(a),
+  'opname:list': (a) => svc.listOpnames(a),
+  'opname:get': (a) => svc.getOpname(a),
+  'opname:template': async ({ zone } = {}) => saveTemplate({
+    title: 'Simpan template stok opname',
+    fileName: `Opname_${String(ZONE_LABEL[zone] || zone).replace(/\s+/g, '_')}_${localNow().slice(0, 10)}.xlsx`,
+    sheet: 'Opname', headers: OPNAME_TEMPLATE_HEADERS, sample: await svc.opnameSheet({ zone }), textCols: ['A'],
+  }),
+  'opname:importFile': async () => {
+    const f = await pickSheetRows('Pilih file hasil stok opname');
+    return f && { file: f.file, ...(await svc.planOpnameImport(f.rows)) };
+  },
 };
 
 ipcMain.handle('api', async (_e, channel, args) => {

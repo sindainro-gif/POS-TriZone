@@ -202,8 +202,8 @@ const state = {
 
 // Menu yang boleh dibuka per peran (Admin: semua)
 const ROLE_VIEWS = {
-  admin: ['checkout', 'transfers', 'receiving', 'products', 'barcode', 'shift', 'settings'],
-  gudang: ['transfers', 'receiving', 'products', 'barcode'],
+  admin: ['checkout', 'transfers', 'receiving', 'opname', 'products', 'barcode', 'shift', 'settings'],
+  gudang: ['transfers', 'receiving', 'opname', 'products', 'barcode'],
   kasir: ['checkout', 'shift', 'products'],
 };
 const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', kasir: 'Kasir' };
@@ -1135,6 +1135,203 @@ views.receiving = (() => {
     loadHistory();
     loadDrafts();
     setTimeout(() => (items.length ? $('#rcPicker') : $('#rcRef')).focus(), 30);
+  }
+  return { show };
+})();
+
+// ================================================================ 3b. STOK OPNAME
+views.opname = (() => {
+  let picked = null; // barang hasil scan yang menunggu Jumlah Fisik
+  const items = []; // {product, counted} — satu form = satu zona
+  const qty = $('#opQty');
+  const zone = $('#opZone');
+  const picker = $('#opPicker');
+  const HINT = $('#opPicked').innerHTML;
+  const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock' };
+  const signed = (n) => (n > 0 ? `<span class="diff-pos">+${num(n)}</span>` : n < 0 ? `<span class="diff-neg">−${num(-n)}</span>` : '<span class="muted">0</span>');
+  let curZone = 'floor';
+
+  // Alur sama dengan Mutasi: scan → Jumlah Fisik; Enter → masuk list, kembali ke Barang
+  qty.addEventListener('focus', () => qty.select());
+  qty.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const n = Number(qty.value);
+    if (!Number.isInteger(n) || n < 0) { sound('err'); toast('Jumlah fisik harus angka 0 atau lebih.', 'err'); return; }
+    if (picked) add(picked, n);
+    picker.focus();
+    picker.select();
+  });
+  picker.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !picker.value.trim()) { e.preventDefault(); qty.focus(); }
+  });
+
+  makePicker(picker, {
+    onPick: (p) => {
+      picked = p;
+      picker.value = '';
+      $('#opPicked').innerHTML = `Dipilih: <b>${esc(p.name)}</b> · ${esc(p.sku)} · stok sistem ${num(sysStock(p))} — isi Jumlah Fisik lalu Enter`;
+      qty.focus();
+    },
+  });
+
+  const sysStock = (p) => Number(p[ZONE_COL[curZone]]) || 0;
+
+  // Scan barang yang sama lagi = jumlah ditambahkan (hitung per rak / per tumpukan)
+  function add(p, n) {
+    const same = items.find((i) => i.product.sku === p.sku);
+    if (same) same.counted += n;
+    else items.push({ product: p, counted: n });
+    picked = null;
+    qty.value = 1;
+    $('#opPicked').innerHTML = HINT;
+    render();
+  }
+
+  function totals() {
+    let plus = 0;
+    let minus = 0;
+    for (const i of items) {
+      const d = i.counted - sysStock(i.product);
+      if (d > 0) plus += d;
+      else minus -= d;
+    }
+    return { plus, minus };
+  }
+
+  function render() {
+    $('#opItems').innerHTML = items.length ? items.map((i, idx) => `<tr data-i="${idx}">
+        <td class="r muted">${idx + 1}</td><td class="mono">${esc(i.product.sku)}</td><td>${esc(i.product.name)}</td>
+        <td class="r muted">${num(sysStock(i.product))}</td>
+        <td class="r"><input type="number" min="0" value="${i.counted}" data-act="qty" style="width:80px;text-align:right"></td>
+        <td class="r"><b>${signed(i.counted - sysStock(i.product))}</b></td>
+        <td class="c"><button class="icon-btn" data-act="del">✕</button></td></tr>`).join('')
+      : '<tr><td colspan="7" class="empty-row">Belum ada barang. Scan barang, isi Jumlah Fisik, lalu Enter — atau Import Excel.</td></tr>';
+    const t = totals();
+    $('#opTotal').innerHTML = `${items.length} baris · selisih ${signed(t.plus)} / ${signed(-t.minus)} Biji`;
+  }
+
+  zone.addEventListener('change', async () => {
+    if (items.length) {
+      const ok = await confirmDialog('Ganti Zona', 'Stok sistem tiap zona berbeda, jadi list barang akan dikosongkan.', { okLabel: 'Ganti & Kosongkan', danger: true });
+      if (!ok) { zone.value = curZone; return; }
+      items.length = 0;
+    }
+    curZone = zone.value;
+    render();
+    picker.focus();
+  });
+  $('#opItems').addEventListener('click', (e) => {
+    if (e.target.dataset.act === 'del') { items.splice(Number(e.target.closest('tr').dataset.i), 1); render(); picker.focus(); }
+  });
+  $('#opItems').addEventListener('change', (e) => {
+    if (e.target.dataset.act !== 'qty') return;
+    const q = Number(e.target.value);
+    if (Number.isInteger(q) && q >= 0) items[Number(e.target.closest('tr').dataset.i)].counted = q;
+    render();
+  });
+  $('#opItems').addEventListener('keydown', (e) => {
+    if (e.target.dataset.act === 'qty' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); picker.focus(); }
+  });
+
+  function reset() {
+    items.length = 0;
+    picked = null;
+    picker.value = '';
+    qty.value = 1;
+    $('#opNotes').value = '';
+    $('#opPicked').innerHTML = HINT;
+    render();
+    picker.focus();
+  }
+  $('#opReset').addEventListener('click', async () => {
+    if (items.length && !(await confirmDialog('Batalkan Opname', 'Semua barang di list akan dihapus dari form.', { okLabel: 'Ya, Batalkan', danger: true }))) return;
+    reset();
+  });
+
+  $('#opSubmit').addEventListener('click', async () => {
+    if (!items.length) { toast('Tambahkan minimal satu barang ke list.', 'err'); picker.focus(); return; }
+    const t = totals();
+    const ok = await confirmDialog('Simpan Opname', `Set stok <b>${esc(state.meta.zones[curZone])}</b> untuk ${items.length} barang sesuai hitungan fisik? Selisih ${signed(t.plus)} / ${signed(-t.minus)} Biji. Barang lain tidak diubah.`, { okLabel: 'Simpan' });
+    if (!ok) return;
+    try {
+      const d = await api('opname:create', { zone: curZone, notes: $('#opNotes').value, items: items.map((i) => ({ sku: i.product.sku, counted: i.counted })) });
+      toast(`Opname ${d.doc_no} tersimpan: ${num(d.line_count)} barang, selisih +${num(d.plus_qty)} / −${num(d.minus_qty)} Biji.`, 'ok', 5000);
+      reset();
+      loadHistory();
+      refreshOutBadge();
+    } catch (e) { toast(e.message, 'err', 6000); }
+  });
+
+  $('#opTemplate').addEventListener('click', async () => {
+    try {
+      const file = await api('opname:template', { zone: curZone });
+      if (file) toast(`Template ${state.meta.zones[curZone]} disimpan: ${file}`, 'ok', 5000);
+    } catch (e) { toast(e.message, 'err', 6000); }
+  });
+
+  // Hasil import masuk ke list (belum disimpan). Fisik dari file menggantikan angka di list untuk barang yang sama.
+  $('#opImport').addEventListener('click', async () => {
+    let r;
+    try { r = await api('opname:importFile'); } catch (e) { toast(e.message, 'err', 6000); return; }
+    if (!r) return;
+    for (const it of r.items) {
+      const same = items.find((i) => i.product.sku === it.product.sku);
+      if (same) { same.product = it.product; same.counted = it.counted; } else items.push(it);
+    }
+    render();
+    if (r.items.length) toast(`${num(r.items.length)} barang dari ${r.file} masuk ke list ${state.meta.zones[curZone]}. Cek lalu Simpan Opname.`, 'ok', 6000);
+    else if (!r.errors.length) toast('Tidak ada baris dengan kolom Fisik terisi.', 'warn', 5000);
+    if (r.errors.length) {
+      modal({
+        title: `${num(r.errors.length)} baris dilewati`,
+        body: `<div class="tbl-wrap" style="max-height:260px"><table class="tbl"><tbody>${r.errors.map((m) => `<tr><td>${esc(m)}</td></tr>`).join('')}</tbody></table></div>`,
+        actions: [{ label: 'Tutup', kind: 'primary' }],
+      });
+    }
+  });
+
+  let searchTimer;
+  $('#opSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadHistory, 200); });
+
+  async function loadHistory() {
+    const rows = await api('opname:list', { q: $('#opSearch').value, limit: 300 });
+    $('#opHistory').innerHTML = rows.length ? rows.map((d) => `<tr>
+        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b></td><td>${zoneTag(d.zone)}</td>
+        <td class="r">${num(d.line_count)}</td><td class="r">${signed(d.plus_qty)}</td><td class="r">${signed(-d.minus_qty)}</td>
+        <td>${esc(d.notes || '-')}</td><td><button class="btn sm ghost" data-id="${d.id}">Detail</button></td></tr>`).join('')
+      : '<tr><td colspan="8" class="empty-row">Belum ada riwayat opname.</td></tr>';
+  }
+  $('#opHistory').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-id]');
+    if (!b) return;
+    const d = await api('opname:get', { id: Number(b.dataset.id) });
+    modal({
+      title: `Opname ${d.doc_no}`,
+      wide: true,
+      body: `<div class="kv"><span>Tanggal</span><b>${fmtTime(d.created_at)}</b></div>
+        <div class="kv"><span>Zona</span><b>${zoneTag(d.zone)}</b></div>
+        <div class="kv"><span>Catatan</span><b>${esc(d.notes || '-')}</b></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Sistem</th><th class="r">Fisik</th><th class="r">Selisih</th></tr></thead><tbody>
+        ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td>
+          <td class="r muted">${num(i.system_qty)}</td><td class="r"><b>${num(i.counted_qty)}</b></td><td class="r"><b>${signed(i.diff)}</b></td></tr>`).join('')}
+        </tbody></table></div>`,
+      actions: [{ label: 'Tutup', kind: 'primary' }],
+    });
+  });
+
+  let inited = false;
+  function show() {
+    if (!inited) {
+      zone.innerHTML = ['floor', 'warehouse', 'damaged'].map((z) => `<option value="${z}">${esc(state.meta.zones[z])}</option>`).join('');
+      zone.value = curZone;
+      inited = true;
+    }
+    // Perbarui stok sistem barang di list (bisa berubah karena penjualan / mutasi)
+    Promise.all(items.map((i) => api('products:get', { sku: i.product.sku }).then((p) => { if (p) i.product = p; }))).then(render);
+    render();
+    loadHistory();
+    setTimeout(() => picker.focus(), 30);
   }
   return { show };
 })();
@@ -2244,7 +2441,7 @@ document.addEventListener('keydown', (e) => {
     }
     return;
   }
-  const keys = { F1: 'checkout', F3: 'transfers', F4: 'receiving', F5: 'products', F6: 'shift', F10: 'barcode' };
+  const keys = { F1: 'checkout', F3: 'transfers', F4: 'receiving', F5: 'products', F7: 'opname', F6: 'shift', F10: 'barcode' };
   if (keys[e.key]) { e.preventDefault(); go(keys[e.key]); return; }
   // F12 = isi Uang Diterima (Enter di kolom itu = Bayar). Pengaturan dibuka lewat tombol sidebar.
   if (e.key === 'F12') {
