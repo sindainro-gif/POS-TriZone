@@ -405,6 +405,18 @@ app.on('browser-window-created', (_e, win) => {
         throw new Error('alur draft → bayar tidak sesuai');
       }
 
+      // Tema Terang: tombol di sidebar, disimpan di komputer ini, lalu kembali ke Gelap
+      await run(`document.querySelector('#themeSeg [data-theme=light]').click()`);
+      const lightState = await run(`({ theme: document.documentElement.dataset.theme, saved: localStorage.getItem('pos-theme'), bg: getComputedStyle(document.body).backgroundColor })`);
+      console.log('tema terang:', JSON.stringify(lightState));
+      if (lightState.theme !== 'light' || lightState.saved !== 'light' || lightState.bg !== 'rgb(243, 245, 249)') throw new Error('tema terang tidak diterapkan');
+      for (const [view, name] of [['checkout', '13a-terang-kasir'], ['transfers', '13b-terang-mutasi'], ['products', '13c-terang-daftar-barang']]) {
+        await run(`go('${view}')`);
+        await shot(name);
+      }
+      await run(`document.querySelector('#themeSeg [data-theme=dark]').click()`);
+      if ((await run(`document.documentElement.dataset.theme + ':' + localStorage.getItem('pos-theme')`)) !== 'dark:dark') throw new Error('tema gelap tidak kembali');
+
       // Akun Gudang & Kasir: menu dibatasi sesuai peran
       svc.saveUser({ name: 'Budi', role: 'gudang', pin: '333333' });
       svc.saveUser({ name: 'Rina', role: 'kasir', pin: '222222' });

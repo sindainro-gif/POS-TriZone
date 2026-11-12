@@ -13,6 +13,22 @@ const fmtTime = (s) => {
   return isNaN(d) ? s : d.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
+// Tema tampilan Gelap / Terang: pilihan per komputer (bukan pengaturan toko yang ikut ke PC kasir lain)
+const theme = (() => {
+  const KEY = 'pos-theme';
+  let cur = 'dark';
+  try { cur = window.localStorage.getItem(KEY) === 'light' ? 'light' : 'dark'; } catch (_) { /* penyimpanan tidak tersedia */ }
+  function apply(t) {
+    cur = t === 'light' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = cur;
+    $$('#themeSeg [data-theme]').forEach((b) => b.classList.toggle('active', b.dataset.theme === cur));
+    try { window.localStorage.setItem(KEY, cur); } catch (_) { /* abaikan */ }
+  }
+  apply(cur);
+  $('#themeSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-theme]'); if (b) apply(b.dataset.theme); });
+  return { apply, get: () => cur };
+})();
+
 async function api(channel, args) {
   const r = await window.posBridge.call(channel, args);
   if (!r.ok) throw new Error(r.error);
