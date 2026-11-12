@@ -304,7 +304,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
   await t('stok opname: template & import hasil hitung 3 zona', () => {
     const sheet = svc.opnameSheet();
     assert.deepStrictEqual(sheet.find((r) => r[0] === 'OP-A').slice(0, 8), ['OP-A', 'Opname A', 8, '', 0, '', 0, '']);
-    assert.match(sheet[0][8], /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/); // Tanggal_Stok = waktu unduh
+    assert.match(sheet[0][10], /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/); // Tanggal_Stok = waktu unduh
     // Seperti sheet_to_json(defval ''): semua kolom ada di tiap baris
     const row = (Kode, fd, fg, fb) => ({ Kode, Nama_Barang: '', 'Display Toko': 0, 'Fisik Display Toko': fd, 'Gudang Utama': 0, 'Fisik Gudang Utama': fg, 'Gudang BS': 0, 'Fisik Gudang BS': fb });
     const rows = [
@@ -335,7 +335,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
   await t('stok opname: Tanggal_Stok → selisih terhadap stok di file, diterapkan ke stok sekarang', () => {
     // Template diunduh: OP-A Display Toko 10 / BS 2, OP-C Display Toko 7, OP-B Display Toko 3
     const sheet = svc.opnameSheet();
-    const stamp = sheet[0][8];
+    const stamp = sheet[0][10];
     const at = (sku, zoneIdx) => sheet.find((r) => r[0] === sku)[zoneIdx];
     assert.deepStrictEqual([at('OP-A', 2), at('OP-A', 6), at('OP-C', 2), at('OP-B', 2)], [10, 2, 7, 3]);
     // Setelah unduh: OP-A diterima 5 ke Display Toko (→ 15), OP-C pindah 3 ke BS (→ 4)
@@ -372,6 +372,55 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.deepStrictEqual([svc.getProduct('OP-A').floor_stock, svc.getProduct('OP-A').damaged_stock], [13, 2]);
     assert.deepStrictEqual([svc.getProduct('OP-C').floor_stock, svc.getProduct('OP-C').damaged_stock], [-3, 4]);
     assert.strictEqual(svc.getProduct('OP-B').floor_stock, 3);
+  });
+
+  await t('Gudang Shopee: stok terpisah, penerimaan, mutasi, terjual, opname; kasir tidak menyentuh', () => {
+    svc.saveProduct({ isNew: true, product: { sku: 'SHP-1', barcode: 'SHP-1', name: 'Barang Online', unit_price: 1000 }, initial: { floor: 5, warehouse: 20, shopee: 3 } });
+    let p = svc.getProduct('SHP-1');
+    assert.deepStrictEqual([p.floor_stock, p.warehouse_stock, p.shopee_stock], [5, 20, 3]);
+    svc.createReception({ reference_no: 'SJ-SHP', items: [{ sku: 'SHP-1', qty: 4, pack_type: 'Biji', destination: 'shopee' }] });
+    svc.createTransfer({ sku: 'SHP-1', from_zone: 'warehouse', to_zone: 'shopee', qty: 10, reason: 'isi stok online' });
+    svc.createTransfer({ sku: 'SHP-1', from_zone: 'shopee', to_zone: 'shopee_sold', qty: 6, reason: 'pesanan' });
+    throwsMsg(() => svc.createTransfer({ sku: 'SHP-1', from_zone: 'shopee', to_zone: 'shopee_sold', qty: 99 }), /Gudang Shopee untuk .* tidak cukup/);
+    if (!svc.getShift()) svc.openShift({ cashier_name: 'Rina', initial_cash: 0 });
+    svc.checkout({ items: [{ sku: 'SHP-1', qty: 2 }], payment_method: 'Tunai', cash_received: 2000 });
+    p = svc.getProduct('SHP-1');
+    assert.deepStrictEqual([p.floor_stock, p.warehouse_stock, p.shopee_stock], [3, 10, 11]);
+    svc.createOpname({ zone: 'shopee', items: [{ sku: 'SHP-1', counted: 9 }] });
+    assert.strictEqual(svc.getProduct('SHP-1').shopee_stock, 9);
+    assert.strictEqual(svc.listProducts({ filter: 'shopee' }).map((x) => x.sku).join(), 'SHP-1');
+    const row = svc.opnameSheet().find((r) => r[0] === 'SHP-1');
+    assert.deepStrictEqual(row.slice(8, 10), [9, '']);
+    const plan = svc.importOpname({ dry_run: true, rows: [{ Kode: 'SHP-1', 'Fisik Gudang Shopee': 7 }] });
+    assert.deepStrictEqual(plan.zones.map((z) => [z.zone, z.minus_qty]), [['shopee', 2]]);
+  });
+
+  await t('database versi lama (tanpa zona Shopee) dimigrasi tanpa kehilangan data', async () => {
+    const SQL = await require('sql.js')({ locateFile: (f) => path.join(path.dirname(require.resolve('sql.js')), f) });
+    const old = new SQL.Database();
+    old.exec(`CREATE TABLE products (sku TEXT PRIMARY KEY, barcode TEXT UNIQUE NOT NULL, name TEXT NOT NULL, brand TEXT DEFAULT '-', category TEXT DEFAULT 'Umum',
+        unit_price INTEGER NOT NULL, base_unit TEXT DEFAULT 'Biji', pack_unit TEXT DEFAULT 'Dus', pack_ratio INTEGER DEFAULT 1, created_at DATETIME);
+      CREATE TABLE inventory (sku TEXT PRIMARY KEY, floor_stock INTEGER DEFAULT 0, warehouse_stock INTEGER DEFAULT 0, damaged_stock INTEGER DEFAULT 0, min_floor_alert INTEGER DEFAULT 5);
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE stock_transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, sku TEXT NOT NULL,
+        from_zone TEXT NOT NULL CHECK(from_zone IN ('floor', 'warehouse', 'damaged', 'customer')),
+        to_zone TEXT NOT NULL CHECK(to_zone IN ('floor', 'warehouse', 'damaged', 'supplier', 'disposed')),
+        qty INTEGER NOT NULL, reason TEXT, created_at DATETIME DEFAULT (datetime('now','localtime')));
+      INSERT INTO products(sku, barcode, name, unit_price) VALUES('OLD-1', 'OLD-1', 'Barang Lama', 500);
+      INSERT INTO inventory(sku, floor_stock, warehouse_stock) VALUES('OLD-1', 2, 30);
+      INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason) VALUES('OLD-1', 'warehouse', 'floor', 2, 'lama');`);
+    const oldFile = path.join(dir, 'lama.db');
+    fs.writeFileSync(oldFile, Buffer.from(old.export()));
+    const db3 = await Database.open(oldFile);
+    const s3 = createServices(db3);
+    assert.strictEqual(db3.get("SELECT COUNT(*) AS n FROM stock_transfers WHERE reason = 'lama' AND doc_id IS NOT NULL").n, 1);
+    s3.createTransfer({ sku: 'OLD-1', from_zone: 'warehouse', to_zone: 'shopee', qty: 5 });
+    s3.createTransfer({ sku: 'OLD-1', from_zone: 'shopee', to_zone: 'shopee_sold', qty: 1 });
+    const p = s3.getProduct('OLD-1');
+    assert.deepStrictEqual([p.floor_stock, p.warehouse_stock, p.shopee_stock], [2, 25, 4]);
+    // Dibuka ulang: tidak dimigrasi dua kali
+    const db4 = await Database.open(oldFile);
+    assert.strictEqual(db4.get('SELECT COUNT(*) AS n FROM stock_transfers').n, 3);
   });
 
   await t('pengaturan: password terenkripsi tidak bocor ke renderer', () => {

@@ -97,7 +97,7 @@
     <!-- ======================= MUTASI ======================= -->
     <section class="view" id="view-transfers">
       <header class="page-head">
-        <div><h1>Mutasi &amp; Pindah Stok</h1><p>Pindahkan stok antar zona: Display Toko, Gudang Utama, dan Gudang BS / Retur.</p></div>
+        <div><h1>Mutasi &amp; Pindah Stok</h1><p>Pindahkan stok antar zona: Display Toko, Gudang Utama, Gudang BS / Retur, dan Gudang Shopee.</p></div>
       </header>
       <div class="grid-2">
         <div class="card">
@@ -167,7 +167,7 @@
           <div class="field w-sm"><label>Jumlah</label><input id="rcQty" type="number" min="1" step="1" value="1"></div>
           <div class="field w-md"><label>Satuan Masuk</label><select id="rcUnit"><option value="Dus">Dus</option><option value="Biji">Biji</option></select></div>
           <div class="field w-md"><label>Tujuan</label>
-            <select id="rcDest"><option value="warehouse">Gudang Utama</option><option value="floor">Display Toko</option><option value="damaged">Gudang BS</option></select>
+            <select id="rcDest"><option value="warehouse">Gudang Utama</option><option value="floor">Display Toko</option><option value="damaged">Gudang BS</option><option value="shopee">Gudang Shopee</option></select>
           </div>
           <button class="btn" id="rcAdd">Tambah</button>
         </div>
@@ -252,7 +252,7 @@
     <!-- ======================= DAFTAR BARANG ======================= -->
     <section class="view" id="view-products">
       <header class="page-head">
-        <div><h1>Daftar Barang</h1><p>Master produk dan stok tiga zona.</p></div>
+        <div><h1>Daftar Barang</h1><p>Master produk dan stok per zona.</p></div>
         <div class="btn-row">
           <button class="btn ghost" id="pdTemplate">Unduh Template</button>
           <button class="btn ghost" id="pdImport">Import Excel / CSV</button>
@@ -268,15 +268,16 @@
               <option value="low">Display toko menipis</option>
               <option value="empty">Display toko habis</option>
               <option value="damaged">Ada barang BS</option>
+              <option value="shopee">Ada stok Shopee</option>
             </select>
           </div>
           <div class="legend">
-            <span class="badge floor">Tersedia</span><span class="badge wh">Cadangan</span><span class="badge bs">Barang Rusak / BS</span>
+            <span class="badge floor">Tersedia</span><span class="badge wh">Cadangan</span><span class="badge bs">Barang Rusak / BS</span><span class="badge shp">Stok Shopee</span>
           </div>
         </div>
         <div class="tbl-wrap tall"><table class="tbl">
           <thead><tr><th>SKU</th><th>Barcode</th><th>Nama Barang</th><th>Merk</th><th>Kategori</th><th class="r">Harga Jual (Rp)</th>
-            <th class="c">Display Toko</th><th class="c">Gudang Utama</th><th class="c">Gudang BS</th><th class="w-act2">Aksi</th></tr></thead>
+            <th class="c">Display Toko</th><th class="c">Gudang Utama</th><th class="c">Gudang BS</th><th class="c">Gudang Shopee</th><th class="w-act2">Aksi</th></tr></thead>
           <tbody id="pdBody"></tbody>
         </table></div>
         <div id="pdCount" class="muted small"></div>

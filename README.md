@@ -1,6 +1,6 @@
 # POS Tri-Zone — POS Desktop Offline
 
-Aplikasi kasir offline (Electron + SQLite lokal) dengan inventaris tiga zona: **Display Toko**, **Gudang Utama**, dan **Gudang BS / Retur**.
+Aplikasi kasir offline (Electron + SQLite lokal) dengan inventaris per zona: **Display Toko**, **Gudang Utama**, **Gudang BS / Retur**, dan **Gudang Shopee** (stok online terpisah, tidak dijual di kasir; keluar lewat mutasi "Gudang Shopee → Terjual di Shopee").
 
 ## Menjalankan
 

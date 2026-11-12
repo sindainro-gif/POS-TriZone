@@ -23,10 +23,10 @@ function salesCsv(rows) {
 
 function stockCsv(rows) {
   return toCsv(
-    ['SKU', 'Barcode', 'Nama_Barang', 'Merk', 'Kategori', 'Harga_Jual', 'Stok_Toko', 'Stok_Gudang_Utama', 'Stok_Gudang_BS', 'Min_Alert_Toko', 'Status_Toko'],
+    ['SKU', 'Barcode', 'Nama_Barang', 'Merk', 'Kategori', 'Harga_Jual', 'Stok_Toko', 'Stok_Gudang_Utama', 'Stok_Gudang_BS', 'Min_Alert_Toko', 'Status_Toko', 'Stok_Gudang_Shopee'],
     rows.map((r) => [
       r.sku, r.barcode, r.name, r.brand, r.category, r.unit_price, r.floor_stock, r.warehouse_stock, r.damaged_stock, r.min_floor_alert,
-      r.floor_stock <= r.min_floor_alert ? 'MENIPIS' : 'AMAN',
+      r.floor_stock <= r.min_floor_alert ? 'MENIPIS' : 'AMAN', r.shopee_stock,
     ]),
   );
 }
@@ -74,7 +74,7 @@ ${off.checks.length ? `<h2>Transaksi Mode Darurat — Perlu Dicek</h2>
 <table><tr><th>No. Struk</th><th>Waktu</th><th class="r">Total</th><th>Catatan</th></tr>
 ${off.checks.map((c) => `<tr><td>${esc(c.receipt_no)}</td><td>${esc(c.created_at)}</td><td class="r">${rp(c.total)}</td><td>${c.notes.map(esc).join('<br>')}</td></tr>`).join('')}
 </table>` : ''}
-<p class="muted" style="margin-top:18px">Snapshot stok lengkap (Display Toko, Gudang Utama, Gudang BS) terlampir dalam file CSV terpisah.</p>
+<p class="muted" style="margin-top:18px">Snapshot stok lengkap (Display Toko, Gudang Utama, Gudang BS, Gudang Shopee) terlampir dalam file CSV terpisah.</p>
 </body></html>`;
 }
 
@@ -96,7 +96,7 @@ function summaryText({ store, summary, closedAt }) {
     `Penjualan tunai : ${rp(summary.cashSales)}`,
     '',
     ...offlineText(summary.offline),
-    'Lampiran: Rekap PDF, detail penjualan (CSV), dan snapshot stok Display Toko / Gudang Utama / Gudang BS (CSV).',
+    'Lampiran: Rekap PDF, detail penjualan (CSV), dan snapshot stok Display Toko / Gudang Utama / Gudang BS / Gudang Shopee (CSV).',
     '',
     '— Dikirim otomatis oleh POS Tri-Zone',
   ].join('\n');

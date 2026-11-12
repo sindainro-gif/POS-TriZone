@@ -251,7 +251,7 @@ app.on('browser-window-created', (_e, win) => {
       const tpl = svc.opnameSheet().find((r) => r[0] === 'IMP-SMK');
       svc.createReception({ reference_no: 'SJ-SETELAH-OPNAME', items: [{ sku: 'IMP-SMK', qty: 3, pack_type: 'Biji', destination: 'warehouse' }] });
       const opDated = await run(`window.posBridge.call('opname:import', { rows: [
-        { Kode: 'IMP-SMK', 'Display Toko': ${tpl[2]}, 'Fisik Display Toko': '', 'Gudang Utama': ${tpl[4]}, 'Fisik Gudang Utama': 5, 'Gudang BS': ${tpl[6]}, 'Fisik Gudang BS': '', Tanggal_Stok: '${tpl[8]}' },
+        { Kode: 'IMP-SMK', 'Display Toko': ${tpl[2]}, 'Fisik Display Toko': '', 'Gudang Utama': ${tpl[4]}, 'Fisik Gudang Utama': 5, 'Gudang BS': ${tpl[6]}, 'Fisik Gudang BS': '', Tanggal_Stok: '${tpl[10]}' },
       ] }).then((r) => r.data.created[0])`);
       console.log('import Opname bertanggal:', JSON.stringify({ doc: opDated.doc_no, count_at: opDated.count_at, items: opDated.items }));
       if (svc.getProduct('IMP-SMK').warehouse_stock !== 8 || opDated.items[0].diff !== -2 || !opDated.count_at) throw new Error('selisih opname bertanggal tidak diterapkan ke stok sekarang');

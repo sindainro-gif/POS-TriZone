@@ -6,15 +6,17 @@ const { rankProducts } = require('./search');
 
 const PAYMENT_METHODS = ['Tunai', 'QRIS', 'Kartu Debit'];
 
-const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock' };
+const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock', shopee: 'shopee_stock' };
 
 const ZONE_LABEL = {
   floor: 'Display Toko',
   warehouse: 'Gudang Utama',
   damaged: 'Gudang BS',
+  shopee: 'Gudang Shopee',
   customer: 'Retur Pelanggan',
   supplier: 'Supplier (Retur Keluar)',
   disposed: 'Dibuang / Dimusnahkan',
+  shopee_sold: 'Terjual di Shopee',
 };
 
 const DIRECTIONS = [
@@ -25,18 +27,23 @@ const DIRECTIONS = [
   { from: 'damaged', to: 'supplier', label: 'Gudang BS → Supplier (Retur keluar)' },
   { from: 'damaged', to: 'disposed', label: 'Gudang BS → Dibuang / Dimusnahkan' },
   { from: 'floor', to: 'warehouse', label: 'Display Toko → Gudang Utama (Tarik dari rak)' },
+  { from: 'warehouse', to: 'shopee', label: 'Gudang Utama → Gudang Shopee (Isi stok online)' },
+  { from: 'shopee', to: 'warehouse', label: 'Gudang Shopee → Gudang Utama (Tarik dari stok online)' },
+  { from: 'shopee', to: 'shopee_sold', label: 'Gudang Shopee → Terjual di Shopee (Pesanan dikirim)' },
+  { from: 'customer', to: 'shopee', label: 'Retur Pelanggan Shopee → Gudang Shopee (Kondisi baik)' },
+  { from: 'shopee', to: 'damaged', label: 'Gudang Shopee → Gudang BS (Rusak / retur rusak)' },
 ];
 
-const DESTINATIONS = ['warehouse', 'floor', 'damaged'];
+const DESTINATIONS = ['warehouse', 'floor', 'damaged', 'shopee'];
 
 const TEMPLATE_HEADERS = [
   'Barcode', 'SKU', 'Nama_Barang', 'Merk', 'Kategori', 'Harga_Jual', 'Satuan_Masuk',
-  'Rasio_Isi_Dus', 'Stok_Awal_Toko', 'Stok_Awal_Gudang', 'Stok_Awal_BS', 'Min_Alert_Toko',
+  'Rasio_Isi_Dus', 'Stok_Awal_Toko', 'Stok_Awal_Gudang', 'Stok_Awal_BS', 'Min_Alert_Toko', 'Stok_Awal_Shopee',
 ];
 
 const TEMPLATE_SAMPLE = [
-  ['8991234567890', 'MNM-001', 'Air Mineral 600ml', 'Segar', 'Minuman', 3500, 'Dus', 24, 24, 96, 0, 12],
-  ['8997654321098', 'SNK-010', 'Keripik Kentang 68g', 'Renyah', 'Makanan Ringan', 11500, 'Karton', 40, 20, 80, 0, 10],
+  ['8991234567890', 'MNM-001', 'Air Mineral 600ml', 'Segar', 'Minuman', 3500, 'Dus', 24, 24, 96, 0, 12, 48],
+  ['8997654321098', 'SNK-010', 'Keripik Kentang 68g', 'Renyah', 'Makanan Ringan', 11500, 'Karton', 40, 20, 80, 0, 10, 0],
 ];
 
 // Template import penerimaan: satu file boleh berisi beberapa surat jalan (dikelompokkan per No_Surat_Jalan)
@@ -48,10 +55,10 @@ const RECEPTION_TEMPLATE_SAMPLE = [
   ['SJ-0002', 'CV Jaya Abadi', 'Kiriman sore', 'SNK-010', 'Keripik Kentang 68g', 2, 'Dus', ''],
 ];
 
-const OPNAME_TEMPLATE_HEADERS = ['Kode', 'Nama_Barang', 'Display Toko', 'Fisik Display Toko', 'Gudang Utama', 'Fisik Gudang Utama', 'Gudang BS', 'Fisik Gudang BS', 'Tanggal_Stok'];
+const OPNAME_TEMPLATE_HEADERS = ['Kode', 'Nama_Barang', 'Display Toko', 'Fisik Display Toko', 'Gudang Utama', 'Fisik Gudang Utama', 'Gudang BS', 'Fisik Gudang BS', 'Gudang Shopee', 'Fisik Gudang Shopee', 'Tanggal_Stok'];
 // Nama kolom per zona setelah dinormalisasi (huruf kecil, tanpa spasi / garis bawah)
-const OPNAME_FISIK = { floor: 'fisikdisplaytoko', warehouse: 'fisikgudangutama', damaged: 'fisikgudangbs' };
-const OPNAME_STOCK = { floor: 'displaytoko', warehouse: 'gudangutama', damaged: 'gudangbs' };
+const OPNAME_FISIK = { floor: 'fisikdisplaytoko', warehouse: 'fisikgudangutama', damaged: 'fisikgudangbs', shopee: 'fisikgudangshopee' };
+const OPNAME_STOCK = { floor: 'displaytoko', warehouse: 'gudangutama', damaged: 'gudangbs', shopee: 'gudangshopee' };
 
 const SETTING_KEYS = [
   'store_name', 'store_address', 'smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'smtp_from', 'owner_email',
@@ -124,6 +131,7 @@ const PRODUCT_SELECT = `
          COALESCE(i.floor_stock, 0) AS floor_stock,
          COALESCE(i.warehouse_stock, 0) AS warehouse_stock,
          COALESCE(i.damaged_stock, 0) AS damaged_stock,
+         COALESCE(i.shopee_stock, 0) AS shopee_stock,
          COALESCE(i.min_floor_alert, 5) AS min_floor_alert
   FROM products p LEFT JOIN inventory i ON i.sku = p.sku`;
 
@@ -195,6 +203,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     }
     if (filter === 'low') where.push('COALESCE(i.floor_stock,0) <= COALESCE(i.min_floor_alert,5)');
     if (filter === 'damaged') where.push('COALESCE(i.damaged_stock,0) > 0');
+    if (filter === 'shopee') where.push('COALESCE(i.shopee_stock,0) > 0');
     if (filter === 'empty') where.push('COALESCE(i.floor_stock,0) = 0');
     const sql = `${PRODUCT_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY p.name COLLATE NOCASE LIMIT ?`;
     params.push(Math.min(Number(limit) || 5000, 20000));
@@ -243,8 +252,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       [p.sku, p.barcode, p.name, p.brand, p.category, p.unit_price, p.pack_unit, p.pack_ratio],
     );
     db.run(
-      'INSERT INTO inventory(sku, floor_stock, warehouse_stock, damaged_stock, min_floor_alert) VALUES(?, ?, ?, ?, ?)',
-      [p.sku, stock.floor, stock.warehouse, stock.damaged, p.min_floor_alert],
+      'INSERT INTO inventory(sku, floor_stock, warehouse_stock, damaged_stock, shopee_stock, min_floor_alert) VALUES(?, ?, ?, ?, ?, ?)',
+      [p.sku, stock.floor, stock.warehouse, stock.damaged, stock.shopee || 0, p.min_floor_alert],
     );
   }
 
@@ -270,6 +279,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
           floor: toInt(initial.floor, 'Stok awal toko', { def: 0 }),
           warehouse: toInt(initial.warehouse, 'Stok awal gudang', { def: 0 }),
           damaged: toInt(initial.damaged, 'Stok awal BS', { def: 0 }),
+          shopee: toInt(initial.shopee, 'Stok awal Shopee', { def: 0 }),
         });
       } else {
         updateProduct(p);
@@ -347,6 +357,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
             floor: toInt(r.stokawaltoko, 'Stok_Awal_Toko', { def: 0, min: -1e9 }),
             warehouse: toInt(r.stokawalgudang, 'Stok_Awal_Gudang', { def: 0, min: -1e9 }),
             damaged: toInt(r.stokawalbs, 'Stok_Awal_BS', { def: 0, min: -1e9 }),
+            shopee: toInt(r.stokawalshopee, 'Stok_Awal_Shopee', { def: 0, min: -1e9 }),
           };
           assertBarcodeFree(p.barcode, p.sku);
           seenSku.add(p.sku.toLowerCase());
@@ -762,13 +773,13 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return d;
   }
 
-  // Baris template opname: semua barang + stok sistem 3 zona, kolom Fisik tiap zona dikosongkan untuk diisi
+  // Baris template opname: semua barang + stok sistem 4 zona, kolom Fisik tiap zona dikosongkan untuk diisi
   function opnameSheet() {
     const stamp = localNow().slice(0, 16); // Tanggal_Stok: stok di file ini per kapan
     return db.all(
-      `SELECT p.sku, p.name, COALESCE(i.floor_stock, 0) AS f, COALESCE(i.warehouse_stock, 0) AS w, COALESCE(i.damaged_stock, 0) AS d
+      `SELECT p.sku, p.name, COALESCE(i.floor_stock, 0) AS f, COALESCE(i.warehouse_stock, 0) AS w, COALESCE(i.damaged_stock, 0) AS d, COALESCE(i.shopee_stock, 0) AS s
        FROM products p LEFT JOIN inventory i ON i.sku = p.sku ORDER BY p.name COLLATE NOCASE`,
-    ).map((r) => [r.sku, r.name, r.f, '', r.w, '', r.d, '', stamp]);
+    ).map((r) => [r.sku, r.name, r.f, '', r.w, '', r.d, '', r.s, '', stamp]);
   }
 
   // Hasil hitung dari Excel per zona. Kolom Fisik yang kosong = zona itu tidak dihitung untuk barang tersebut.
@@ -781,7 +792,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     });
     if (!data.length) fail('File tidak berisi data opname.');
     if (!('kode' in data[0]) || !Object.values(OPNAME_FISIK).some((c) => c in data[0])) {
-      fail('Kolom "Kode" dan "Fisik Display Toko / Fisik Gudang Utama / Fisik Gudang BS" tidak ditemukan. Gunakan template opname terbaru.');
+      fail('Kolom "Kode" dan "Fisik Display Toko / Fisik Gudang Utama / Fisik Gudang BS / Fisik Gudang Shopee" tidak ditemukan. Gunakan template opname terbaru.');
     }
     // Ada Tanggal_Stok → kolom stok di file jadi patokan selisih (lihat createOpname)
     const dated = 'tanggalstok' in data[0];
@@ -932,8 +943,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         else if (!p || !unit || unit === 'dus' || unit === String(p.pack_unit || '').toLowerCase()) pack_type = 'Dus';
         else fail(`Satuan "${r.satuan}" tidak dikenal (pakai Dus / ${p.pack_unit} atau Biji).`);
         const dest = String(r.tujuan ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-        const destination = { '': 'warehouse', 'gudang utama': 'warehouse', gudang: 'warehouse', 'display toko': 'floor', toko: 'floor', 'gudang bs': 'damaged', bs: 'damaged' }[dest];
-        if (!destination) fail(`Tujuan "${r.tujuan}" tidak dikenal (pakai Gudang Utama, Display Toko, atau Gudang BS).`);
+        const destination = { '': 'warehouse', 'gudang utama': 'warehouse', gudang: 'warehouse', 'display toko': 'floor', toko: 'floor', 'gudang bs': 'damaged', bs: 'damaged', 'gudang shopee': 'shopee', shopee: 'shopee' }[dest];
+        if (!destination) fail(`Tujuan "${r.tujuan}" tidak dikenal (pakai Gudang Utama, Display Toko, Gudang BS, atau Gudang Shopee).`);
         if (!p) {
           unknown.push({ key, reference_no: ref, code, name: String(r.namabarang ?? '').trim(), qty, pack_type, destination });
           fail(`Kode "${code}" tidak ditemukan di Daftar Barang — dicatat ke Draft Barang Belum Terdaftar.`);

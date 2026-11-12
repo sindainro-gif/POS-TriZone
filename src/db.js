@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     floor_stock INTEGER DEFAULT 0,
     warehouse_stock INTEGER DEFAULT 0,
     damaged_stock INTEGER DEFAULT 0,
+    shopee_stock INTEGER DEFAULT 0, -- Gudang Shopee: stok khusus penjualan online, terpisah dari toko
     min_floor_alert INTEGER DEFAULT 5,
     sold_out_at DATETIME, -- terisi saat display toko habis/minus karena terjual di kasir (merah di Saran Restock)
     FOREIGN KEY (sku) REFERENCES products(sku) ON DELETE CASCADE
@@ -47,18 +48,18 @@ CREATE TABLE IF NOT EXISTS stock_reception_items (
     sku TEXT NOT NULL,
     quantity_received INTEGER NOT NULL,
     pack_type TEXT DEFAULT 'Biji',
-    destination TEXT NOT NULL CHECK(destination IN ('warehouse', 'floor', 'damaged')),
+    destination TEXT NOT NULL CHECK(destination IN ('warehouse', 'floor', 'damaged', 'shopee')),
     FOREIGN KEY (reception_id) REFERENCES stock_receptions(id) ON DELETE CASCADE,
     FOREIGN KEY (sku) REFERENCES products(sku)
 );
 
 -- 'customer' = retur dari pelanggan (sumber eksternal),
--- 'supplier' = retur keluar ke pabrik, 'disposed' = dibuang/dimusnahkan (tujuan eksternal)
+-- 'supplier' = retur keluar ke pabrik, 'disposed' = dibuang/dimusnahkan, 'shopee_sold' = terjual di Shopee (tujuan eksternal)
 CREATE TABLE IF NOT EXISTS stock_transfers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sku TEXT NOT NULL,
-    from_zone TEXT NOT NULL CHECK(from_zone IN ('floor', 'warehouse', 'damaged', 'customer')),
-    to_zone TEXT NOT NULL CHECK(to_zone IN ('floor', 'warehouse', 'damaged', 'supplier', 'disposed')),
+    from_zone TEXT NOT NULL CHECK(from_zone IN ('floor', 'warehouse', 'damaged', 'shopee', 'customer')),
+    to_zone TEXT NOT NULL CHECK(to_zone IN ('floor', 'warehouse', 'damaged', 'shopee', 'supplier', 'disposed', 'shopee_sold')),
     qty INTEGER NOT NULL,
     reason TEXT,
     created_at DATETIME DEFAULT (datetime('now','localtime')),
@@ -98,7 +99,7 @@ CREATE TABLE IF NOT EXISTS stock_transfer_docs (
 CREATE TABLE IF NOT EXISTS stock_opname_docs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     doc_no TEXT UNIQUE NOT NULL,
-    zone TEXT NOT NULL CHECK(zone IN ('floor', 'warehouse', 'damaged')),
+    zone TEXT NOT NULL CHECK(zone IN ('floor', 'warehouse', 'damaged', 'shopee')),
     notes TEXT,
     created_at DATETIME DEFAULT (datetime('now','localtime')),
     line_count INTEGER NOT NULL,
@@ -206,13 +207,47 @@ const REQUIRED_TABLES = ['products', 'inventory', 'settings'];
 
 // Kolom yang ditambahkan setelah versi pertama: CREATE TABLE IF NOT EXISTS tidak menambah kolom ke tabel lama
 const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfers', 'doc_id', 'INTEGER'],
-  ['stock_opname_docs', 'count_at', 'DATETIME'], ['stock_opname_items', 'before_qty', 'INTEGER']];
+  ['stock_opname_docs', 'count_at', 'DATETIME'], ['stock_opname_items', 'before_qty', 'INTEGER'],
+  ['inventory', 'shopee_stock', 'INTEGER DEFAULT 0']];
+
+// Tabel lama punya CHECK zona tanpa Gudang Shopee. SQLite tidak bisa mengubah CHECK,
+// jadi tabelnya dibangun ulang dari definisi lamanya (kolom tambahan ikut) dengan daftar zona baru.
+const ZONE_CHECK_FIXES = {
+  stock_reception_items: [["'damaged')", "'damaged', 'shopee')"]],
+  stock_transfers: [["'damaged', 'customer')", "'damaged', 'shopee', 'customer')"], ["'damaged', 'supplier'", "'damaged', 'shopee', 'supplier'"], ["'disposed')", "'disposed', 'shopee_sold')"]],
+  stock_opname_docs: [["'damaged')", "'damaged', 'shopee')"]],
+};
+
+function widenZoneChecks(sqlDb) {
+  for (const [table, fixes] of Object.entries(ZONE_CHECK_FIXES)) {
+    const sql = sqlDb.exec(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '${table}'`)[0]?.values[0][0];
+    if (!sql || sql.includes("'shopee'")) continue;
+    let next = sql;
+    for (const [a, b] of fixes) next = next.replace(a, b);
+    next = next.replace(/^CREATE TABLE\s+(IF NOT EXISTS\s+)?"?\w+"?/i, `CREATE TABLE ${table}__baru`);
+    const cols = (sqlDb.exec(`PRAGMA table_info(${table})`)[0]?.values || []).map((r) => r[1]).join(', ');
+    sqlDb.exec('PRAGMA foreign_keys = OFF');
+    sqlDb.exec('BEGIN');
+    try {
+      sqlDb.exec(next);
+      sqlDb.exec(`INSERT INTO ${table}__baru(${cols}) SELECT ${cols} FROM ${table}`);
+      sqlDb.exec(`DROP TABLE ${table}`);
+      sqlDb.exec(`ALTER TABLE ${table}__baru RENAME TO ${table}`);
+      sqlDb.exec('COMMIT');
+    } catch (e) {
+      sqlDb.exec('ROLLBACK');
+      throw e;
+    }
+  }
+  sqlDb.exec(SCHEMA); // buat ulang indeks yang ikut terhapus
+}
 
 function migrate(sqlDb) {
   for (const [table, col, type] of ADDED_COLUMNS) {
     const cols = (sqlDb.exec(`PRAGMA table_info(${table})`)[0]?.values || []).map((r) => r[1]);
     if (!cols.includes(col)) sqlDb.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
   }
+  widenZoneChecks(sqlDb);
   sqlDb.exec('CREATE INDEX IF NOT EXISTS idx_transfers_doc ON stock_transfers(doc_id)');
   // Mutasi lama (sebelum ada form multi-item): satu baris = satu dokumen MT-LAMA-<id>
   const old = sqlDb.exec('SELECT id, from_zone, to_zone, reason, created_at, qty FROM stock_transfers WHERE doc_id IS NULL ORDER BY id')[0]?.values || [];

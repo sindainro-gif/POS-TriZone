@@ -163,6 +163,8 @@ tr.low td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .badge.wh { background: var(--gray-bg); color: #cbd5e1; border-color: rgba(148,163,184,.3); }
 .badge.bs { background: var(--red-bg); color: #fca5a5; border-color: rgba(240,82,82,.35); }
 .badge.bs.none { background: transparent; color: var(--muted); border-color: var(--border); }
+.badge.shp { background: rgba(238,77,45,.14); color: #fdba74; border-color: rgba(238,77,45,.4); }
+.badge.shp.none { background: transparent; color: var(--muted); border-color: var(--border); }
 .badge.ext { background: rgba(167,139,250,.14); color: #c4b5fd; border-color: rgba(167,139,250,.35); }
 .legend { display: flex; gap: 6px; }
 .zone-badges { display: flex; gap: 6px; flex-wrap: wrap; }

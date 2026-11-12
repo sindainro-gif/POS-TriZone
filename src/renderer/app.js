@@ -106,13 +106,15 @@ function floorBadge(p) {
 }
 const whBadge = (p) => `<span class="badge wh" title="Gudang Utama (cadangan)">${num(p.warehouse_stock)}</span>`;
 const bsBadge = (p) => `<span class="badge bs ${p.damaged_stock ? '' : 'none'}" title="Gudang BS / Retur (tidak bisa dijual)">${num(p.damaged_stock)}</span>`;
+const shpBadge = (p) => `<span class="badge shp ${p.shopee_stock ? '' : 'none'}" title="Gudang Shopee (stok online, tidak dijual di kasir)">${num(p.shopee_stock)}</span>`;
 function zoneBadges(p) {
   return `<div class="zone-badges">
     <span class="badge floor ${p.floor_stock <= 0 ? 'zero' : p.floor_stock <= p.min_floor_alert ? 'low' : 'ok'}">Display Toko: ${num(p.floor_stock)}</span>
     <span class="badge wh">Gudang: ${num(p.warehouse_stock)}</span>
-    <span class="badge bs ${p.damaged_stock ? '' : 'none'}">BS: ${num(p.damaged_stock)}</span></div>`;
+    <span class="badge bs ${p.damaged_stock ? '' : 'none'}">BS: ${num(p.damaged_stock)}</span>
+    <span class="badge shp ${p.shopee_stock ? '' : 'none'}">Shopee: ${num(p.shopee_stock)}</span></div>`;
 }
-const ZONE_CLASS = { floor: 'floor', warehouse: 'wh', damaged: 'bs', customer: 'ext', supplier: 'ext', disposed: 'ext' };
+const ZONE_CLASS = { floor: 'floor', warehouse: 'wh', damaged: 'bs', shopee: 'shp', customer: 'ext', supplier: 'ext', disposed: 'ext', shopee_sold: 'ext' };
 const zoneTag = (z) => `<span class="badge ${ZONE_CLASS[z]}">${esc(state.meta.zones[z] || z)}</span>`;
 // Daftar baris yang dilewati di modal hasil import
 const errorList = (errors) => (errors.length
@@ -697,7 +699,7 @@ views.transfers = (() => {
   const dir = $('#trDirection');
   const picker = $('#trPicker');
   const HINT = $('#trPicked').innerHTML;
-  const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock' };
+  const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock', shopee: 'shopee_stock' };
 
   // Kursor default di Barang. Scan → Jumlah; Enter di Jumlah → barang masuk list, kembali ke Barang
   qty.addEventListener('focus', () => qty.select());
@@ -869,8 +871,8 @@ views.transfers = (() => {
 views.receiving = (() => {
   let picked = null;
   const items = []; // {product, qty, pack_type, destination}
-  const DEST = { warehouse: 'Gudang Utama', floor: 'Display Toko', damaged: 'Gudang BS' };
-  const DEST_CLASS = { warehouse: 'wh', floor: 'floor', damaged: 'bs' };
+  const DEST = { warehouse: 'Gudang Utama', floor: 'Display Toko', damaged: 'Gudang BS', shopee: 'Gudang Shopee' };
+  const DEST_CLASS = { warehouse: 'wh', floor: 'floor', damaged: 'bs', shopee: 'shp' };
 
   makePicker($('#rcPicker'), {
     onPick: (p) => {
@@ -1148,7 +1150,7 @@ views.opname = (() => {
   const zone = $('#opZone');
   const picker = $('#opPicker');
   const HINT = $('#opPicked').innerHTML;
-  const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock' };
+  const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock', shopee: 'shopee_stock' };
   const signed = (n) => (n > 0 ? `<span class="diff-pos">+${num(n)}</span>` : n < 0 ? `<span class="diff-neg">−${num(-n)}</span>` : '<span class="muted">0</span>');
   let curZone = 'floor';
 
@@ -1267,11 +1269,11 @@ views.opname = (() => {
   $('#opTemplate').addEventListener('click', async () => {
     try {
       const file = await api('opname:template');
-      if (file) toast(`Template opname (3 zona) disimpan: ${file}`, 'ok', 5000);
+      if (file) toast(`Template opname (4 zona) disimpan: ${file}`, 'ok', 5000);
     } catch (e) { toast(e.message, 'err', 6000); }
   });
 
-  // Import hasil hitung 3 zona: ringkasan selisih per zona → Simpan = satu dokumen OP per zona. List form tidak tersentuh.
+  // Import hasil hitung 4 zona: ringkasan selisih per zona → Simpan = satu dokumen OP per zona. List form tidak tersentuh.
   $('#opImport').addEventListener('click', async () => {
     let f;
     let plan;
@@ -1347,7 +1349,7 @@ views.opname = (() => {
   let inited = false;
   function show() {
     if (!inited) {
-      zone.innerHTML = ['floor', 'warehouse', 'damaged'].map((z) => `<option value="${z}">${esc(state.meta.zones[z])}</option>`).join('');
+      zone.innerHTML = ['floor', 'warehouse', 'damaged', 'shopee'].map((z) => `<option value="${z}">${esc(state.meta.zones[z])}</option>`).join('');
       zone.value = curZone;
       inited = true;
     }
@@ -1373,12 +1375,12 @@ views.products = (() => {
         <td class="mono">${esc(p.sku)}</td><td class="mono">${esc(p.barcode)}</td>
         <td><div class="pname">${esc(p.name)}</div><div class="psub">1 ${esc(p.pack_unit)} = ${num(p.pack_ratio)} Biji · min toko ${num(p.min_floor_alert)}</div></td>
         <td>${esc(p.brand)}</td><td>${esc(p.category)}</td><td class="r">${num(p.unit_price)}</td>
-        <td class="c">${floorBadge(p)}</td><td class="c">${whBadge(p)}</td><td class="c">${bsBadge(p)}</td>
+        <td class="c">${floorBadge(p)}</td><td class="c">${whBadge(p)}</td><td class="c">${bsBadge(p)}</td><td class="c">${shpBadge(p)}</td>
         <td>${canEditProducts() ? `<div class="btn-row"><button class="btn sm ghost" data-label="${esc(p.sku)}" title="Tambah ke antrian cetak barcode">Barcode</button><button class="btn sm" data-edit="${esc(p.sku)}">Ubah</button><button class="btn sm danger" data-del="${esc(p.sku)}">Hapus</button></div>` : ''}</td></tr>`).join('')
-      : '<tr><td colspan="10" class="empty-row">Tidak ada barang. Tambah barang baru atau import dari Excel.</td></tr>';
-    const tot = rows.reduce((a, p) => ({ f: a.f + p.floor_stock, w: a.w + p.warehouse_stock, d: a.d + p.damaged_stock }), { f: 0, w: 0, d: 0 });
+      : '<tr><td colspan="11" class="empty-row">Tidak ada barang. Tambah barang baru atau import dari Excel.</td></tr>';
+    const tot = rows.reduce((a, p) => ({ f: a.f + p.floor_stock, w: a.w + p.warehouse_stock, d: a.d + p.damaged_stock, s: a.s + p.shopee_stock }), { f: 0, w: 0, d: 0, s: 0 });
     $('#pdCount').style.marginTop = '10px';
-    $('#pdCount').textContent = `${num(rows.length)} barang · Total display toko ${num(tot.f)} · gudang utama ${num(tot.w)} · gudang BS ${num(tot.d)} Biji`;
+    $('#pdCount').textContent = `${num(rows.length)} barang · Total display toko ${num(tot.f)} · gudang utama ${num(tot.w)} · gudang BS ${num(tot.d)} · gudang Shopee ${num(tot.s)} Biji`;
   }
 
   $('#pdBody').addEventListener('click', async (e) => {
@@ -1389,7 +1391,7 @@ views.products = (() => {
     if (edit) openForm(rows.find((r) => r.sku === edit.dataset.edit));
     if (del) {
       const p = rows.find((r) => r.sku === del.dataset.del);
-      const stockNote = p.floor_stock + p.warehouse_stock + p.damaged_stock > 0 ? `<br><br><span class="badge bs">Perhatian</span> Barang ini masih memiliki stok (Display Toko ${p.floor_stock}, Gudang ${p.warehouse_stock}, BS ${p.damaged_stock}).` : '';
+      const stockNote = p.floor_stock + p.warehouse_stock + p.damaged_stock + p.shopee_stock > 0 ? `<br><br><span class="badge bs">Perhatian</span> Barang ini masih memiliki stok (Display Toko ${p.floor_stock}, Gudang ${p.warehouse_stock}, BS ${p.damaged_stock}, Shopee ${p.shopee_stock}).` : '';
       if (!(await confirmDialog('Hapus Barang', `Hapus <b>${esc(p.name)}</b> (${esc(p.sku)}) dari master barang?${stockNote}`, { okLabel: 'Hapus', danger: true }))) return;
       try { await api('products:delete', { sku: p.sku }); toast('Barang dihapus.', 'ok'); load(); } catch (err) { toast(err.message, 'err', 6000); }
     }
@@ -1423,7 +1425,8 @@ views.products = (() => {
         ${isNew ? `<h2 class="mt">Stok Awal (Biji)</h2><div class="row-3">
           <div class="field"><label><span class="badge floor ok">Display Toko</span></label><input id="fFloor" type="number" min="0" value="0"></div>
           <div class="field"><label><span class="badge wh">Gudang Utama</span></label><input id="fWh" type="number" min="0" value="0"></div>
-          <div class="field"><label><span class="badge bs">Gudang BS</span></label><input id="fBs" type="number" min="0" value="0"></div></div>`
+          <div class="field"><label><span class="badge bs">Gudang BS</span></label><input id="fBs" type="number" min="0" value="0"></div></div>
+          <div class="row-3"><div class="field"><label><span class="badge shp">Gudang Shopee</span></label><input id="fShp" type="number" min="0" value="0"></div></div>`
           : `<div class="muted small">Stok diubah melalui menu Penerimaan Barang dan Mutasi agar riwayatnya tercatat.</div>${zoneBadges(p)}`}`,
       actions: [
         { label: 'Batal', kind: 'ghost' },
@@ -1439,7 +1442,7 @@ views.products = (() => {
                   sku: v('#fSku'), barcode: v('#fBarcode'), name: v('#fName'), brand: v('#fBrand'), category: v('#fCat'),
                   unit_price: moneyVal($('#fPrice', el)), pack_unit: v('#fPack'), pack_ratio: v('#fRatio'), min_floor_alert: v('#fMin'),
                 },
-                initial: isNew ? { floor: v('#fFloor'), warehouse: v('#fWh'), damaged: v('#fBs') } : undefined,
+                initial: isNew ? { floor: v('#fFloor'), warehouse: v('#fWh'), damaged: v('#fBs'), shopee: v('#fShp') } : undefined,
               });
               toast(`"${saved.name}" tersimpan.`, 'ok');
               close();
@@ -2007,7 +2010,7 @@ views.shift = (() => {
           <div class="kv"><span>Penjualan tunai</span><b>${rp(s.cashSales)}</b></div>
           <div class="field"><label>Catatan Kasir <span class="muted">(opsional)</span></label><input id="shNotes" maxlength="300" placeholder="Contoh: ada uang palsu Rp 50.000"></div>
           <button class="btn primary xl" id="shClose">Tutup Shift &amp; Kirim Laporan</button>
-          <p class="muted small" style="margin-top:10px">Laporan (PDF rekap, CSV penjualan, CSV snapshot stok Display Toko / Gudang Utama / Gudang BS) dikirim ke <b>${esc(state.settings.owner_email || '(email owner belum diatur)')}</b>.
+          <p class="muted small" style="margin-top:10px">Laporan (PDF rekap, CSV penjualan, CSV snapshot stok Display Toko / Gudang Utama / Gudang BS / Gudang Shopee) dikirim ke <b>${esc(state.settings.owner_email || '(email owner belum diatur)')}</b>.
           Data penjualan shift dihapus hanya setelah server email membalas <b>250 OK</b>.</p>
         </div>
       </div>
