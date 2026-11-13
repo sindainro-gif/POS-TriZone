@@ -1,6 +1,6 @@
 # Homebase — pusat data POS Tri-Zone
 
-Homebase adalah tempat pusat yang menyimpan data dari **satu atau banyak toko**: riwayat penjualan (yang di POS dihapus setiap tutup shift), stok terakhir 4 zona, barang, penerimaan, mutasi, dan stok opname. Homebase memakai aplikasi yang sama dalam mode **HOMEBASE** (`Jalankan HOMEBASE.bat`), sehingga bisa dijalankan di PC mana pun, misalnya di rumah atau kantor owner.
+Homebase adalah tempat pusat yang menyimpan data dari **satu atau banyak toko**: riwayat penjualan (yang di POS hanya disimpan sampai akhir hari berikutnya setelah tutup shift), stok terakhir 4 zona, barang, penerimaan, mutasi, dan stok opname. Homebase memakai aplikasi yang sama dalam mode **HOMEBASE** (`Jalankan HOMEBASE.bat`), sehingga bisa dijalankan di PC mana pun, misalnya di rumah atau kantor owner.
 
 ```
  PC Gudang / Mandiri (tiap toko)                    PC Homebase
@@ -42,7 +42,7 @@ Paket yang sama tidak pernah dihitung dua kali, walaupun sampai lewat Google Dri
 
 | Saat | Paket |
 |---|---|
-| Tutup shift | `shift` (penjualan shift) + `snapshot` (semua data). Keduanya ditulis **sebelum** email dikirim, jadi penjualan tetap terarsip walau email gagal. Gagal menulis paket = shift tidak dihapus. |
+| Tutup shift | `shift` (penjualan shift) + `snapshot` (semua data). Keduanya ditulis **sebelum** email dikirim, jadi penjualan tetap terarsip walau email gagal. Gagal menulis paket = shift tidak ditutup. |
 | 20 detik setelah aplikasi dibuka, lalu tiap jam | `snapshot`, hanya bila datanya berubah sejak snapshot terakhir. Termasuk penjualan shift yang masih berjalan. |
 | Tombol **Kirim Data Sekarang** | `snapshot` |
 | Tombol **Sertakan Riwayat Penjualan Lama…** | Satu `shift` (riwayat lama) per folder laporan lama |
@@ -61,7 +61,7 @@ Paket yang sama tidak pernah dihitung dua kali, walaupun sampai lewat Google Dri
 | Barang (`products`), stok 4 zona (`inventory`) | pos.db | Ya, keadaan terkini |
 | Penerimaan + item, draft barang belum terdaftar | pos.db | Ya, seluruh riwayat |
 | Mutasi (dokumen + baris), stok opname (dokumen + baris) | pos.db | Ya, seluruh riwayat |
-| Penjualan shift (`shift_sales`, `active_shift`) | pos.db, dihapus saat tutup shift | Ya: paket `shift` saat tutup, dan shift berjalan di dalam snapshot |
+| Penjualan shift (`shift_sales`, `active_shift`) | pos.db. Saat tutup shift dipindah ke Riwayat Shift (`shift_history`, `shift_history_sales`), disimpan hari ini & kemarin, lalu dihapus otomatis | Ya: paket `shift` saat tutup, dan shift berjalan di dalam snapshot |
 | Transaksi mode darurat yang diterima gudang (`offline_sales`) | pos.db | Ya |
 | Akun (`users`) | pos.db | Hanya nama, peran, aktif, dan tanggal dibuat. **Tanpa hash PIN.** |
 | Desain label, pengaturan toko (nama, alamat, header/footer nota) | pos.db | Ya |

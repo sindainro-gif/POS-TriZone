@@ -66,6 +66,23 @@ app.on('browser-window-created', (_e, win) => {
       console.log('paket homebase demo:', hbDemo.join(', '), '· shift setelah tutup:', svc.getShift());
       if (!hbDemo.some((f) => /_shift_/.test(f)) || svc.getShift()) throw new Error('tutup shift demo: paket homebase / hapus data shift tidak sesuai');
 
+      // Riwayat Shift: penjualan shift yang ditutup tetap ada sebagai cadangan (hari ini & kemarin)
+      const hist = svc.listShiftHistory();
+      if (hist.length !== 1 || hist[0].receipts !== 1 || svc.shiftSalesRows().length) throw new Error('penjualan tidak pindah ke Riwayat Shift');
+      await run(`go('shift')`);
+      await wait(900);
+      const histText = await run(`document.querySelector('#shHistoryBody').innerText`);
+      console.log('riwayat shift di layar:', histText.replace(/\s+/g, ' '));
+      if (!/Kasir/.test(histText)) throw new Error('kartu Riwayat Shift tidak tampil');
+      await run(`document.querySelector('#shHistoryBody [data-h]').click()`);
+      await wait(800);
+      const detail = await run(`document.querySelector('#modalRoot').innerText`);
+      if (!/INV-/.test(detail)) throw new Error('detail Riwayat Shift tidak menampilkan struk');
+      await shot('demo-03b-riwayat-shift');
+      const rePrint = await run(`window.posBridge.call('receipt:reprint', { shift_uid: ${JSON.stringify(hist[0].shift_uid)}, receipt_no: document.querySelector('#modalRoot [data-print-r]').dataset.printR })`);
+      if (!rePrint.ok) throw new Error(`cetak ulang dari Riwayat Shift gagal: ${rePrint.error}`);
+      await run(`document.querySelectorAll('#modalRoot .modal-foot .btn.primary').forEach((b) => b.click())`);
+
       // Reset → data contoh kembali ke awal, harus login lagi
       const reset = await run(`window.posBridge.call('demo:reset')`);
       if (!reset.ok) throw new Error(`reset gagal: ${reset.error}`);

@@ -7,6 +7,9 @@ const { rankProducts } = require('./search');
 
 const PAYMENT_METHODS = ['Tunai', 'QRIS', 'Kartu Debit'];
 
+// Riwayat shift yang sudah ditutup disimpan 2 hari kalender: hari ini + kemarin (cadangan minimal 1 hari penuh)
+const SHIFT_HISTORY_DAYS = 2;
+
 const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock', shopee: 'shopee_stock' };
 
 const ZONE_LABEL = {
@@ -516,12 +519,13 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return db.all('SELECT * FROM shift_sales WHERE receipt_no = ? ORDER BY id', [receipt_no]);
   }
 
-  // Data nota untuk cetak ulang (uang diterima tidak tersimpan, jadi tanpa kembalian)
-  function receiptForReprint({ receipt_no } = {}) {
-    const rows = receiptDetail({ receipt_no });
+  // Data nota untuk cetak ulang (uang diterima tidak tersimpan, jadi tanpa kembalian).
+  // Dengan shift_uid: struk dari Riwayat Shift (shift yang sudah ditutup).
+  function receiptForReprint({ receipt_no, shift_uid } = {}) {
+    const rows = shift_uid ? historyReceiptDetail({ shift_uid, receipt_no }) : receiptDetail({ receipt_no });
     if (!rows.length) fail('Struk tidak ditemukan.');
     const total = rows.reduce((s, r) => s + r.line_total, 0);
-    const shift = getShift();
+    const shift = shift_uid ? db.get('SELECT cashier_name FROM shift_history WHERE shift_uid = ?', [shift_uid]) : getShift();
     return {
       receipt_no, created_at: rows[0].created_at, payment_method: rows[0].payment_method,
       cashier: shift ? shift.cashier_name : '-', total, cash_received: total, change: 0,
@@ -533,13 +537,75 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return db.all('SELECT * FROM shift_sales ORDER BY id');
   }
 
-  function purgeShift() {
+  // ---------------------------------------------------------------- Riwayat shift (cadangan hari ini & kemarin)
+  // Tutup shift tidak lagi menghapus penjualan: barisnya dipindah ke riwayat. Riwayat yang ditutup sebelum
+  // kemarin 00:00 dihapus otomatis, jadi selalu ada cadangan minimal satu hari penuh.
+  function historyCutoff(today = localNow().slice(0, 10)) {
+    const d = new Date(`${today}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - (SHIFT_HISTORY_DAYS - 1));
+    return `${d.toISOString().slice(0, 10)} 00:00:00`;
+  }
+
+  function pruneShiftHistory({ today } = {}) {
+    const cutoff = historyCutoff(today);
+    const n = db.get('SELECT COUNT(*) AS n FROM shift_history WHERE closed_at < ?', [cutoff]).n;
+    if (!n) return 0;
     db.tx(() => {
+      db.run('DELETE FROM shift_history WHERE closed_at < ?', [cutoff]);
+      db.run('DELETE FROM shift_history_sales WHERE shift_uid NOT IN (SELECT shift_uid FROM shift_history)');
+    });
+    return n;
+  }
+
+  function archiveShift({ closed_at, notes = '', report_dir = '' } = {}) {
+    const shift = getShift();
+    if (!shift) fail('Tidak ada shift aktif.');
+    const uid = ensureShiftUid();
+    const sum = shiftSummary();
+    db.tx(() => {
+      db.run(
+        `INSERT OR REPLACE INTO shift_history(shift_uid, cashier_name, shift_start, closed_at, notes, receipts, qty, revenue, cash_sales, by_method, report_dir)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [uid, shift.cashier_name, shift.shift_start, closed_at || localNow(), String(notes || ''), sum.totals.receipts, sum.totals.qty,
+          sum.totals.revenue, sum.cashSales, JSON.stringify(sum.byMethod.map((m) => ({ method: m.method, receipts: m.receipts, total: m.total }))),
+          String(report_dir || '')],
+      );
+      db.run('DELETE FROM shift_history_sales WHERE shift_uid = ?', [uid]);
+      db.run(
+        `INSERT INTO shift_history_sales(shift_uid, receipt_no, sku, product_name, qty_sold, unit_price, line_total, payment_method, created_at)
+         SELECT ?, receipt_no, sku, product_name, qty_sold, unit_price, line_total, payment_method, created_at FROM shift_sales ORDER BY id`,
+        [uid],
+      );
       db.run('DELETE FROM shift_sales');
       db.run('DELETE FROM active_shift');
       db.run("DELETE FROM checkout_refs WHERE created_at < datetime('now','localtime','-60 days')");
+      pruneShiftHistory();
     });
-    return true;
+    return { shift_uid: uid };
+  }
+
+  function listShiftHistory() {
+    return db.all('SELECT * FROM shift_history ORDER BY closed_at DESC')
+      .map((r) => ({ ...r, by_method: JSON.parse(r.by_method || '[]') }));
+  }
+
+  function shiftHistoryDetail({ shift_uid } = {}) {
+    const shift = db.get('SELECT * FROM shift_history WHERE shift_uid = ?', [shift_uid]);
+    if (!shift) fail('Riwayat shift tidak ditemukan (riwayat hanya disimpan sampai akhir hari berikutnya).');
+    shift.by_method = JSON.parse(shift.by_method || '[]');
+    const receipts = db.all(
+      `SELECT receipt_no, MIN(created_at) AS created_at, payment_method, SUM(qty_sold) AS qty, SUM(line_total) AS total
+       FROM shift_history_sales WHERE shift_uid = ? GROUP BY receipt_no ORDER BY MIN(id) DESC`, [shift_uid],
+    );
+    const byItem = db.all(
+      `SELECT sku, product_name AS name, SUM(qty_sold) AS qty, SUM(line_total) AS total
+       FROM shift_history_sales WHERE shift_uid = ? GROUP BY sku, product_name ORDER BY total DESC`, [shift_uid],
+    );
+    return { shift, receipts, byItem };
+  }
+
+  function historyReceiptDetail({ shift_uid, receipt_no } = {}) {
+    return db.all('SELECT * FROM shift_history_sales WHERE shift_uid = ? AND receipt_no = ? ORDER BY id', [shift_uid, receipt_no]);
   }
 
   // ---------------------------------------------------------------- Transaksi mode darurat (dari PC kasir)
@@ -1326,7 +1392,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     meta, getSettings, getSettingsRaw, saveSettings,
     getProduct, listProducts, categories, findByCode, searchProducts, saveProduct, deleteProduct, importRows,
     stockSnapshot, lowStock,
-    getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, shiftSalesRows, purgeShift,
+    getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, shiftSalesRows,
+    archiveShift, pruneShiftHistory, listShiftHistory, shiftHistoryDetail, historyReceiptDetail,
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
     createReception, listReceptions, getReception, importReceptions,
@@ -1336,5 +1403,5 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 }
 
 module.exports = {
-  createServices, PAYMENT_METHODS, ZONE_LABEL, DIRECTIONS, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, OPNAME_TEMPLATE_HEADERS, localNow,
+  createServices, PAYMENT_METHODS, SHIFT_HISTORY_DAYS, ZONE_LABEL, DIRECTIONS, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, OPNAME_TEMPLATE_HEADERS, localNow,
 };

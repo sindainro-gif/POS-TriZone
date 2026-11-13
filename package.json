@@ -1,7 +1,7 @@
 {
   "name": "pos-trizone",
   "productName": "POS Tri-Zone",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "POS Desktop Offline dengan inventaris per zona (Toko, Gudang Utama, Gudang BS/Retur, Gudang Shopee) dan Homebase pusat data multi-toko",
   "main": "src/main.js",
   "scripts": {

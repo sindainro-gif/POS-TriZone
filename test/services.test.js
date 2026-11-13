@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Database } = require('../src/db');
-const { createServices } = require('../src/services');
+const { createServices, localNow } = require('../src/services');
 
 let passed = 0;
 async function t(name, fn) {
@@ -259,11 +259,54 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     throwsMsg(() => svc.saveProduct({ product: { ...p, barcode: '8991234567890' } }), /sudah dipakai/);
   });
 
-  await t('purge shift menghapus penjualan, stok & master tetap', () => {
-    svc.purgeShift();
+  await t('tutup shift memindahkan penjualan ke Riwayat Shift (tidak dihapus), stok & master tetap', () => {
+    const before = svc.shiftSummary();
+    const uid = svc.getShift().shift_uid;
+    assert.strictEqual(svc.archiveShift({ notes: 'tutup uji', report_dir: 'C:\\Laporan\\Shift_X' }).shift_uid, uid);
     assert.strictEqual(svc.getShift(), null);
     assert.strictEqual(svc.shiftSalesRows().length, 0);
     assert.strictEqual(svc.getProduct('MNM-001').floor_stock, 27);
+    const hist = svc.listShiftHistory();
+    assert.strictEqual(hist.length, 1);
+    assert.deepStrictEqual([hist[0].cashier_name, hist[0].receipts, hist[0].revenue, hist[0].cash_sales, hist[0].notes, hist[0].report_dir],
+      ['Rina', before.totals.receipts, before.totals.revenue, before.cashSales, 'tutup uji', 'C:\\Laporan\\Shift_X']);
+    assert.deepStrictEqual(hist[0].by_method.map((m) => m.method).sort(), before.byMethod.map((m) => m.method).sort());
+    const d = svc.shiftHistoryDetail({ shift_uid: uid });
+    assert.strictEqual(d.receipts.length, before.totals.receipts);
+    assert.strictEqual(d.byItem.reduce((s, i) => s + i.total, 0), before.totals.revenue);
+    // Struk shift yang sudah ditutup tetap bisa dilihat & dicetak ulang dari riwayat (nama kasir dari riwayat)
+    const no = d.receipts[0].receipt_no;
+    assert.ok(svc.historyReceiptDetail({ shift_uid: uid, receipt_no: no }).length > 0);
+    const nota = svc.receiptForReprint({ shift_uid: uid, receipt_no: no });
+    assert.strictEqual(nota.cashier, 'Rina');
+    assert.strictEqual(nota.total, d.receipts[0].total);
+    throwsMsg(() => svc.receiptForReprint({ receipt_no: no }), /tidak ditemukan/); // sudah bukan shift berjalan
+  });
+
+  await t('riwayat shift: hari ini & kemarin disimpan, sebelum kemarin dihapus otomatis', () => {
+    const dayOf = (n) => {
+      const d = new Date(`${localNow().slice(0, 10)}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + n);
+      return d.toISOString().slice(0, 10);
+    };
+    const add = (uid, closed) => db.tx(() => {
+      db.run(`INSERT INTO shift_history(shift_uid, cashier_name, shift_start, closed_at, receipts, qty, revenue, cash_sales, by_method)
+              VALUES(?, 'Lama', ?, ?, 1, 1, 1000, 1000, '[]')`, [uid, closed, closed]);
+      db.run(`INSERT INTO shift_history_sales(shift_uid, receipt_no, sku, product_name, qty_sold, unit_price, line_total, payment_method, created_at)
+              VALUES(?, 'INV-LAMA-1', 'MNM-001', 'Air', 1, 1000, 1000, 'Tunai', ?)`, [uid, closed]);
+    });
+    add('kemarin', `${dayOf(-1)} 00:00:00`);
+    add('dua-hari-lalu', `${dayOf(-2)} 23:59:59`);
+    assert.strictEqual(svc.pruneShiftHistory(), 1);
+    let uids = svc.listShiftHistory().map((h) => h.shift_uid);
+    assert.ok(uids.includes('kemarin') && !uids.includes('dua-hari-lalu'));
+    assert.strictEqual(db.get("SELECT COUNT(*) AS n FROM shift_history_sales WHERE shift_uid = 'dua-hari-lalu'").n, 0);
+    // Besok: riwayat kemarin (sudah 2 hari lalu) dihapus, shift yang ditutup hari ini tetap ada
+    assert.strictEqual(svc.pruneShiftHistory({ today: dayOf(1) }), 1);
+    uids = svc.listShiftHistory().map((h) => h.shift_uid);
+    assert.deepStrictEqual(uids.length, 1);
+    assert.notStrictEqual(uids[0], 'kemarin');
+    throwsMsg(() => svc.shiftHistoryDetail({ shift_uid: 'kemarin' }), /tidak ditemukan/);
   });
 
   await t('data tersimpan ke file & terbaca ulang', async () => {

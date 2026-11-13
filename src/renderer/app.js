@@ -95,6 +95,7 @@ const state = {
   settings: {},
   shift: null,
   connected: true,
+  mode: 'standalone', // mode komputer ini: standalone / server / client
   emergency: null, // ringkasan mode darurat (khusus PC kasir)
   user: null, // akun login: { id, name, role }
 };
@@ -1855,6 +1856,85 @@ views.barcode = (() => {
 views.shift = (() => {
   const root = $('#shiftContent');
 
+  // Isi satu struk + tombol cetak ulang. ref = { receipt_no } (shift berjalan) atau + shift_uid (Riwayat Shift)
+  function showReceipt(lines, ref) {
+    modal({
+      title: `Struk ${ref.receipt_no}`,
+      body: `<table class="receipt-lines">${lines.map((l) => `<tr><td>${esc(l.product_name)}</td><td class="r muted">${num(l.qty_sold)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>
+        <div class="kv total-line"><span>Total (${esc(lines[0]?.payment_method || '')})</span><span>${rp(lines.reduce((a, l) => a + l.line_total, 0))}</span></div>`,
+      actions: [
+        {
+          label: 'Cetak Ulang Nota',
+          kind: 'ghost',
+          onClick: async () => {
+            try { await api('receipt:reprint', ref); toast('Nota dicetak ulang.', 'ok'); } catch (err) { toast(err.message, 'err', 8000); }
+          },
+        },
+        { label: 'Tutup', kind: 'primary' },
+      ],
+    });
+  }
+
+  // Riwayat Shift: shift yang sudah ditutup hari ini & kemarin (cadangan; yang lebih lama dihapus otomatis)
+  async function renderHistory() {
+    const box = $('#shHistory');
+    if (!box) return;
+    let rows;
+    try { rows = await api('shift:history'); } catch (e) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="card">
+        <div class="card-head"><h2>Riwayat Shift — cadangan hari ini &amp; kemarin</h2>
+          <span class="muted small">Disimpan sampai akhir hari berikutnya, lalu dihapus otomatis. Laporan PDF / CSV tetap ada di folder laporan dan email.</span></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Kasir</th><th>Mulai</th><th>Tutup</th><th class="r">Struk</th><th class="r">Biji</th><th class="r">Omset</th><th></th></tr></thead>
+        <tbody id="shHistoryBody">${rows.length ? rows.map((h) => `<tr>
+            <td><b>${esc(h.cashier_name)}</b>${h.notes ? `<div class="psub">${esc(h.notes)}</div>` : ''}</td>
+            <td class="muted">${fmtTime(h.shift_start)}</td><td>${fmtTime(h.closed_at)}</td>
+            <td class="r">${num(h.receipts)}</td><td class="r">${num(h.qty)}</td><td class="r"><b>${rp(h.revenue)}</b></td>
+            <td><button class="btn sm ghost" data-h="${esc(h.shift_uid)}">Detail</button></td></tr>`).join('')
+          : '<tr><td colspan="7" class="empty-row">Belum ada shift yang ditutup hari ini atau kemarin.</td></tr>'}</tbody></table></div>
+      </div>`;
+    $('#shHistoryBody').addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-h]');
+      if (b) openHistory(b.dataset.h);
+    });
+  }
+
+  async function openHistory(uid) {
+    let d;
+    try { d = await api('shift:historyDetail', { shift_uid: uid }); } catch (err) { toast(err.message, 'err', 6000); renderHistory(); return; }
+    const h = d.shift;
+    const actions = [{ label: 'Tutup', kind: 'primary' }];
+    if (h.report_dir && state.mode !== 'client') actions.unshift({ label: 'Buka Folder Laporan', kind: 'ghost', onClick: () => api('app:openPath', { dir: h.report_dir }) });
+    const m = modal({
+      title: `Riwayat Shift ${h.cashier_name} — ${fmtTime(h.closed_at)}`,
+      wide: true,
+      body: `<div class="kv"><span>Mulai</span><b>${fmtTime(h.shift_start)}</b></div>
+        <div class="kv"><span>Tutup</span><b>${fmtTime(h.closed_at)}</b></div>
+        <div class="kv"><span>Transaksi</span><b>${num(h.receipts)} struk · ${num(h.qty)} Biji</b></div>
+        ${h.by_method.map((x) => `<div class="kv"><span>${esc(x.method)} <span class="muted small">(${num(x.receipts)} transaksi)</span></span><b>${rp(x.total)}</b></div>`).join('')}
+        ${h.notes ? `<div class="kv"><span>Catatan kasir</span><b>${esc(h.notes)}</b></div>` : ''}
+        <div class="kv total-line"><span>Total omset</span><b>${rp(h.revenue)}</b></div>
+        <div class="tbl-wrap" style="max-height:340px"><table class="tbl"><thead><tr><th>Waktu</th><th>No. Struk</th><th>Metode</th><th class="r">Biji</th><th class="r">Total</th><th></th></tr></thead>
+        <tbody>${d.receipts.map((r) => `<tr><td class="muted">${fmtTime(r.created_at)}</td><td class="mono">${esc(r.receipt_no)}</td><td>${esc(r.payment_method)}</td>
+          <td class="r">${num(r.qty)}</td><td class="r"><b>${rp(r.total)}</b></td>
+          <td><div class="btn-row"><button class="btn sm ghost" data-view-r="${esc(r.receipt_no)}">Lihat</button><button class="btn sm" data-print-r="${esc(r.receipt_no)}">Cetak Ulang</button></div></td></tr>`).join('')
+          || '<tr><td colspan="6" class="empty-row">Shift ini tidak memiliki transaksi.</td></tr>'}</tbody></table></div>`,
+      actions,
+    });
+    m.el.addEventListener('click', async (e) => {
+      const view = e.target.closest('[data-view-r]');
+      const print = e.target.closest('[data-print-r]');
+      try {
+        if (view) {
+          const ref = { shift_uid: uid, receipt_no: view.dataset.viewR };
+          showReceipt(await api('shift:historyReceipt', ref), ref);
+        } else if (print) {
+          await api('receipt:reprint', { shift_uid: uid, receipt_no: print.dataset.printR });
+          toast('Nota dicetak ulang.', 'ok');
+        }
+      } catch (err) { toast(err.message, 'err', 8000); }
+    });
+  }
+
   function checksCard(checks) {
     if (!checks || !checks.length) return '';
     return `<div class="card">
@@ -1878,8 +1958,9 @@ views.shift = (() => {
     }
     await refreshShift();
     if (!state.shift) {
-      root.innerHTML = '<div class="card" style="max-width:440px" id="shOpen"></div>';
+      root.innerHTML = '<div class="card" style="max-width:440px" id="shOpen"></div><div id="shHistory"></div>';
       openShiftForm($('#shOpen'), () => show());
+      renderHistory();
       return;
     }
     const s = await api('shift:summary');
@@ -1906,7 +1987,7 @@ views.shift = (() => {
           <div class="field"><label>Catatan Kasir <span class="muted">(opsional)</span></label><input id="shNotes" maxlength="300" placeholder="Contoh: ada uang palsu Rp 50.000"></div>
           <button class="btn primary xl" id="shClose">Tutup Shift &amp; Kirim Laporan</button>
           <p class="muted small" style="margin-top:10px">Laporan (PDF rekap, CSV penjualan, CSV snapshot stok Display Toko / Gudang Utama / Gudang BS / Gudang Shopee) dikirim ke <b>${esc(state.settings.owner_email || '(email owner belum diatur)')}</b>.
-          Data penjualan shift dihapus hanya setelah server email membalas <b>250 OK</b>.</p>
+          Shift baru ditutup setelah server email membalas <b>250 OK</b>. Penjualannya lalu disimpan di <b>Riwayat Shift</b> sampai akhir hari berikutnya sebagai cadangan, kemudian dihapus otomatis.</p>
         </div>
       </div>
       ${checksCard(s.offline && s.offline.checks)}
@@ -1916,7 +1997,9 @@ views.shift = (() => {
           ${s.receipts.map((r) => `<tr><td class="muted">${fmtTime(r.created_at)}</td><td class="mono">${esc(r.receipt_no)}</td><td>${esc(r.payment_method)}</td><td class="r">${num(r.qty)}</td><td class="r"><b>${rp(r.total)}</b></td>
             <td><button class="btn sm ghost" data-r="${esc(r.receipt_no)}">Detail</button></td></tr>`).join('') || '<tr><td colspan="6" class="empty-row">Belum ada transaksi.</td></tr>'}
         </tbody></table></div>
-      </div>`;
+      </div>
+      <div id="shHistory"></div>`;
+    renderHistory();
 
 
     if ($('#shChecks')) {
@@ -1930,29 +2013,15 @@ views.shift = (() => {
     $('#shReceipts').addEventListener('click', async (e) => {
       const b = e.target.closest('[data-r]');
       if (!b) return;
-      const lines = await api('shift:receipt', { receipt_no: b.dataset.r });
-      modal({
-        title: `Struk ${b.dataset.r}`,
-        body: `<table class="receipt-lines">${lines.map((l) => `<tr><td>${esc(l.product_name)}</td><td class="r muted">${num(l.qty_sold)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>
-          <div class="kv total-line"><span>Total (${esc(lines[0]?.payment_method || '')})</span><span>${rp(lines.reduce((a, l) => a + l.line_total, 0))}</span></div>`,
-        actions: [
-          {
-            label: 'Cetak Ulang Nota',
-            kind: 'ghost',
-            onClick: async () => {
-              try { await api('receipt:reprint', { receipt_no: b.dataset.r }); toast('Nota dicetak ulang.', 'ok'); } catch (err) { toast(err.message, 'err', 8000); }
-            },
-          },
-          { label: 'Tutup', kind: 'primary' },
-        ],
-      });
+      showReceipt(await api('shift:receipt', { receipt_no: b.dataset.r }), { receipt_no: b.dataset.r });
     });
 
     $('#shClose').addEventListener('click', async () => {
       if (views.checkout.hasItems()) { toast('Masih ada barang di keranjang kasir. Selesaikan atau kosongkan dulu.', 'err'); return; }
       const draftCount = (await api('drafts:list').catch(() => [])).length;
       const ok = await confirmDialog('Tutup Shift', `Tutup shift <b>${esc(sh.cashier_name)}</b> dengan omset <b>${rp(s.totals.revenue)}</b>?<br><br>
-        Laporan akan dikirim ke email owner. Setelah email terkirim (250 OK), <b>seluruh data penjualan shift ini dihapus</b> dari komputer. Master barang dan stok tetap aman.
+        Laporan akan dikirim ke email owner. Setelah email terkirim (250 OK), shift ditutup dan penjualannya dipindah ke <b>Riwayat Shift</b>.
+        Riwayat disimpan sampai akhir hari berikutnya sebagai cadangan, lalu dihapus otomatis. Master barang dan stok tidak berubah.
         ${draftCount ? `<br><br><span class="badge bs">Perhatian</span> Masih ada <b>${draftCount} draft penjualan</b> belum dibayar di komputer ini (tidak ikut dihitung di laporan).` : ''}`, { okLabel: 'Tutup Shift & Kirim' });
       if (!ok) return;
       const prog = modal({ title: 'Menutup Shift…', body: '<p>Membuat laporan PDF & CSV, lalu mengirim email ke owner. Mohon tunggu, jangan tutup aplikasi.</p>', dismissable: false });
@@ -1963,7 +2032,7 @@ views.shift = (() => {
         modal({
           title: 'Shift Berhasil Ditutup',
           body: `<div class="alert ok">Laporan terkirim ke owner. Server email membalas: <code>${esc(r.response)}</code></div>
-            <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Data penjualan shift sudah dibersihkan.</p>
+            <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Penjualan shift ini disimpan di <b>Riwayat Shift</b> (cadangan sampai akhir besok).</p>
             <p class="muted small">Salinan laporan tersimpan di${r.onServer ? ' <b>PC gudang</b>' : ''}:<br><code>${esc(r.dir)}</code></p>`,
           actions: [
             { label: 'Buka Folder', kind: 'ghost', onClick: () => api('app:openPath', { dir: r.dir }) },
@@ -1974,7 +2043,7 @@ views.shift = (() => {
         prog.close();
         modal({
           title: 'Tutup Shift Gagal',
-          body: `<div class="alert danger">${esc(e.message)}</div><p>Data penjualan shift <b>tidak dihapus</b>. Periksa koneksi internet atau menu Pengaturan, lalu coba lagi.</p>`,
+          body: `<div class="alert danger">${esc(e.message)}</div><p>Shift <b>belum ditutup</b>; semua penjualan shift masih ada. Periksa koneksi internet atau menu Pengaturan, lalu coba lagi.</p>`,
           actions: [{ label: 'Buka Pengaturan', kind: 'ghost', onClick: ({ close }) => { close(); go('settings'); } }, { label: 'Tutup', kind: 'primary' }],
         });
       }
@@ -2328,6 +2397,7 @@ function showLogin(status) {
 async function refreshConnection() {
   const s = await api('app:status').catch(() => null);
   const b = $('#connBadge');
+  if (s) state.mode = s.mode;
   if (!s || s.mode === 'standalone') { b.classList.add('hidden'); state.connected = true; return; }
   b.classList.remove('hidden');
   state.connected = s.connected;

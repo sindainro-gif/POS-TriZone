@@ -391,7 +391,7 @@
     <!-- ======================= SHIFT ======================= -->
     <section class="view" id="view-shift">
       <header class="page-head">
-        <div><h1>Laporan Shift &amp; Tutup Kasir</h1><p>Rekap omset shift berjalan dan kirim laporan ke owner.</p></div>
+        <div><h1>Laporan Shift &amp; Tutup Kasir</h1><p>Rekap omset shift berjalan, kirim laporan ke owner, dan riwayat shift hari ini &amp; kemarin.</p></div>
       </header>
       <div id="shiftContent"></div>
     </section>
@@ -444,7 +444,7 @@
           <ul class="notes">
             <li>Untuk Gmail: aktifkan Verifikasi 2 Langkah, lalu buat <b>App Password</b> dan gunakan sebagai Password SMTP.</li>
             <li>Password SMTP disimpan terenkripsi dengan akun Windows.</li>
-            <li>Saat tutup shift, data penjualan shift <b>hanya dihapus setelah server SMTP membalas 250 OK</b>. Salinan file laporan tetap tersimpan di folder laporan.</li>
+            <li>Shift <b>hanya ditutup setelah server SMTP membalas 250 OK</b>. Penjualannya lalu disimpan di <b>Riwayat Shift</b> (Laporan Shift) sampai akhir hari berikutnya sebagai cadangan, kemudian dihapus otomatis. Salinan file laporan tetap tersimpan di folder laporan.</li>
             <li>Database dicadangkan otomatis setiap hari (14 salinan terakhir).</li>
           </ul>
         </div>

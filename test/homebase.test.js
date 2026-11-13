@@ -130,7 +130,7 @@ const today = localNow().slice(0, 10);
     assert.strictEqual(r.rows[0].closed_at, `${today} 23:00:00`);
     assert.strictEqual(r.rows[0].notes, 'tutup ulang');
     assert.strictEqual(hb.shiftDetail({ store_id: A.storeInfo().id, shift_uid: shiftUid }).items.length, 2);
-    A.purgeShift();
+    A.archiveShift();
   });
 
   await t('shift berjalan di snapshot tampil di Homebase, lalu ditutup oleh paket shift; snapshot lama tidak membukanya lagi', () => {
@@ -152,7 +152,7 @@ const today = localNow().slice(0, 10);
     assert.strictEqual(hb.importBuffer(enc(pack(A, 'snapshot', '2026-11-02 10:00:00', snapOpen.data))).status, 'ok');
     assert.strictEqual(hb.shiftDetail({ store_id: sid, shift_uid: uid }).shift.closed_at, '2026-11-02 12:00:00');
     assert.strictEqual(hb.dashboard({ store_id: sid }).stores[0].open_shifts, 0);
-    A.purgeShift();
+    A.archiveShift();
   });
 
   await t('snapshot yang lebih lama tidak memundurkan stok, tetapi riwayatnya tetap ditambahkan', () => {
@@ -248,7 +248,7 @@ const today = localNow().slice(0, 10);
     B.openShift({ cashier_name: 'Sari' });
     B.checkout({ items: [{ sku: 'B-1', qty: 1 }], payment_method: 'QRIS' });
     ob.write(pack(B, 'shift', '2026-11-06 06:00:00', B.homebaseShiftData({ closed_at: '2026-11-06 06:00:00' })));
-    B.purgeShift();
+    B.archiveShift();
     assert.strictEqual(ob.files().length, 4); // 3 snapshot terakhir + 1 shift
     assert.strictEqual(ob.lastSnapshotHash(), 'h5');
     let r = await ob.syncTo(sync);

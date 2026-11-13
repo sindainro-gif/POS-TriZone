@@ -185,7 +185,7 @@ async function t(name, fn) {
   });
 
   await t('setelah tutup shift, kiriman ulang tetap terdeteksi & dicatat ke shift berikutnya', async () => {
-    gudang.purgeShift();
+    gudang.archiveShift();
     const again = await svc.importOfflineSale({ receipt_no: first.receipt_no, payment_method: 'Tunai', lines: [{ sku: 'A-1', qty: 3, unit_price: 5000 }] });
     assert.strictEqual(again.status, 'duplicate');
     const late = await svc.importOfflineSale({ receipt_no: 'OFF-20261016-AAAA-0009', payment_method: 'QRIS', created_at: '2026-10-16 08:05:00', lines: [{ sku: 'A-1', qty: 1, unit_price: 5000 }] });

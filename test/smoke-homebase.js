@@ -44,7 +44,7 @@ async function makePackages() {
   A.createTransfer({ sku: pa[4].sku, from_zone: 'warehouse', to_zone: 'shopee', qty: 2, reason: 'isi stok online' });
   const shiftA = A.homebaseShiftData({ closed_at: localNow(), notes: 'Tutup shift uji' });
   put('Toko Pusat', pack(A, 'shift', shiftA));
-  A.purgeShift();
+  A.archiveShift();
   put('Toko Pusat', pack(A, 'snapshot', A.homebaseSnapshotData({ includeOpenShift: false })));
 
   const B = createServices(await Database.open(null));

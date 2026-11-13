@@ -126,6 +126,9 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
 
 - Database: `%APPDATA%\POS Tri-Zone\pos.db` (backup harian di subfolder `backup/`, 14 terakhir). Path persisnya tampil di **Pengaturan → Informasi**.
 - Laporan tutup shift: `Dokumen\POS-Laporan\Shift_YYYYMMDD_HHMMSS\`
+- **Riwayat Shift (cadangan):** tutup shift tidak lagi menghapus penjualan. Penjualan shift yang sudah ditutup dipindah ke tabel riwayat di database dan tampil di **Laporan Shift → Riwayat Shift**, lengkap dengan detail struk dan **Cetak Ulang Nota**.
+  - Riwayat disimpan **hari ini + kemarin**. Yang ditutup sebelum kemarin 00:00 dihapus otomatis saat tutup shift, saat aplikasi dibuka, dan tiap jam. Jadi selalu ada cadangan minimal 1 hari penuh.
+  - Shift tetap hanya ditutup setelah email laporan terkirim (250 OK).
 - Paket data Homebase: `Dokumen\POS-Homebase\Paket\` (disalin ke folder Google Drive bila diatur)
 
 ## Login & hak akses

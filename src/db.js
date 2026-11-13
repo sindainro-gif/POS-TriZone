@@ -120,7 +120,9 @@ CREATE TABLE IF NOT EXISTS stock_opname_items (
 CREATE INDEX IF NOT EXISTS idx_opname_items_doc ON stock_opname_items(doc_id);
 
 -- ========================================================
--- PARTISI B: DATA TRANSAKSI SHIFT KASIR (EPHEMERAL / PURGE VIA EMAIL)
+-- PARTISI B: DATA TRANSAKSI SHIFT KASIR
+-- shift_sales = penjualan shift yang sedang berjalan. Saat tutup shift (setelah email 250 OK) barisnya
+-- dipindah ke shift_history_sales sebagai cadangan, lalu dihapus otomatis setelah hari berikutnya lewat.
 -- ========================================================
 CREATE TABLE IF NOT EXISTS shift_sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,6 +142,36 @@ CREATE TABLE IF NOT EXISTS active_shift (
     shift_start DATETIME DEFAULT (datetime('now','localtime')),
     initial_cash INTEGER DEFAULT 0
 );
+
+-- Riwayat shift yang sudah ditutup (cadangan hari ini & kemarin; yang lebih lama dihapus otomatis)
+CREATE TABLE IF NOT EXISTS shift_history (
+    shift_uid TEXT PRIMARY KEY,
+    cashier_name TEXT,
+    shift_start DATETIME,
+    closed_at DATETIME NOT NULL,
+    notes TEXT,
+    receipts INTEGER NOT NULL DEFAULT 0,
+    qty INTEGER NOT NULL DEFAULT 0,
+    revenue INTEGER NOT NULL DEFAULT 0,
+    cash_sales INTEGER NOT NULL DEFAULT 0,
+    by_method TEXT,            -- JSON [{method, receipts, total}]
+    report_dir TEXT            -- folder laporan tutup shift (PDF / CSV)
+);
+
+CREATE TABLE IF NOT EXISTS shift_history_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shift_uid TEXT NOT NULL,
+    receipt_no TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    product_name TEXT NOT NULL,
+    qty_sold INTEGER NOT NULL,
+    unit_price INTEGER NOT NULL,
+    line_total INTEGER NOT NULL,
+    payment_method TEXT NOT NULL,
+    created_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_history_sales_shift ON shift_history_sales(shift_uid);
+CREATE INDEX IF NOT EXISTS idx_history_closed ON shift_history(closed_at);
 
 -- Pengaturan aplikasi (nama toko, SMTP, nomor struk)
 CREATE TABLE IF NOT EXISTS settings (

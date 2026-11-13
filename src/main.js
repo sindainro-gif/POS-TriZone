@@ -262,9 +262,10 @@ async function closeShiftLocal({ notes } = {}) {
     });
     const response = String(info.response || '');
     if (!/^250\b/.test(response)) {
-      throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}). Data shift TIDAK dihapus.`);
+      throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}). Shift TIDAK ditutup.`);
     }
-    localSvc.purgeShift();
+    // Penjualan shift dipindah ke Riwayat Shift (cadangan hari ini & kemarin), bukan dihapus
+    localSvc.archiveShift({ closed_at: closedAt, notes: ctx.notes, report_dir: dir });
     syncHomebase(); // salin ke folder Google Drive di latar (tidak menunggu)
     return {
       dir, response, revenue: summary.totals.revenue, receipts: summary.totals.receipts, onServer: device.mode === 'server', homebase: hb.shift.name,
@@ -291,7 +292,7 @@ function writeShiftPackages({ closedAt, notes, reportDir }) {
     // Tanda di folder laporan: penjualan folder ini sudah ada di paket shift (tidak diambil lagi sebagai riwayat lama)
     fs.writeFileSync(path.join(reportDir, HOMEBASE_MARKER), JSON.stringify({ shift_uid: shiftPkg.data.shift.shift_uid, package: shift.name }, null, 2));
   } catch (err) {
-    throw userError(`Paket data Homebase gagal disimpan di ${outbox.dir} (${err.message}). Data shift TIDAK dihapus.`);
+    throw userError(`Paket data Homebase gagal disimpan di ${outbox.dir} (${err.message}). Shift TIDAK ditutup.`);
   }
   const attachments = [{ filename: shift.name, content: shift.buffer }];
   if (snapshot.size <= MAX_EMAIL_SNAPSHOT) attachments.push({ filename: snapshot.name, content: snapshot.buffer });
@@ -385,7 +386,9 @@ const SERVER_MAIN = {
   'main.closeShift': closeShiftLocal,
   'main.testEmail': testEmailLocal,
 };
-const REMOTE_BLOCKED = new Set(['getSettingsRaw', 'purgeShift', 'checkout', 'regenerateStoreId', 'homebaseSnapshotData', 'homebaseShiftData']);
+const REMOTE_BLOCKED = new Set([
+  'getSettingsRaw', 'archiveShift', 'pruneShiftHistory', 'checkout', 'regenerateStoreId', 'homebaseSnapshotData', 'homebaseShiftData',
+]);
 
 function serverCall(method, args) {
   if (SERVER_MAIN[method]) return SERVER_MAIN[method](...args);
@@ -711,6 +714,7 @@ const ACCESS = {
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR,
+  'shift:history': KASIR, 'shift:historyDetail': KASIR, 'shift:historyReceipt': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'app:openPath': KASIR,
 };
 
@@ -816,6 +820,9 @@ const handlers = {
   },
   'shift:summary': () => svc.shiftSummary(),
   'shift:receipt': (a) => svc.receiptDetail(a),
+  'shift:history': () => svc.listShiftHistory(),
+  'shift:historyDetail': (a) => svc.shiftHistoryDetail(a),
+  'shift:historyReceipt': (a) => svc.historyReceiptDetail(a),
   'shift:close': (a) => (isClient() ? closeShiftClient(a) : runMain('main.closeShift', a)),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
   'offline:markChecked': (a) => svc.markOfflineChecked(a),
@@ -937,8 +944,14 @@ async function startup() {
     return;
   }
   await openLocalDatabase();
-  // Homebase: snapshot otomatis (bila data berubah) saat start & tiap jam; salin ulang yang tertunda tiap 10 menit
+  // Riwayat shift lebih lama dari kemarin dihapus saat start & tiap jam (juga setiap tutup shift).
+  // Homebase: snapshot otomatis (bila data berubah) saat start & tiap jam; salin ulang yang tertunda tiap 10 menit.
+  const pruneHistory = () => {
+    try { localSvc.pruneShiftHistory(); } catch (err) { console.error('[riwayat shift]', err); }
+  };
+  pruneHistory();
   const homebaseTick = () => {
+    pruneHistory();
     try { writeSnapshot(); } catch (err) { console.error('[homebase]', err); }
     syncHomebase();
   };
