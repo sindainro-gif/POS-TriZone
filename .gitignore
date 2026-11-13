@@ -4,6 +4,7 @@ dist/
 
 # Data toko & cadangan database (jangan masuk repo)
 Pemulihan/
+contoh-laporan/
 *.db
 *.db.tmp
 *.db-journal
