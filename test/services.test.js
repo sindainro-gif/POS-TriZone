@@ -266,21 +266,23 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(svc.getShift(), null);
     assert.strictEqual(svc.shiftSalesRows().length, 0);
     assert.strictEqual(svc.getProduct('MNM-001').floor_stock, 27);
+    // Daftar riwayat untuk layar hanya kasir & waktu: omset, struk, dan barang tidak bisa dilihat
     const hist = svc.listShiftHistory();
     assert.strictEqual(hist.length, 1);
-    assert.deepStrictEqual([hist[0].cashier_name, hist[0].receipts, hist[0].revenue, hist[0].cash_sales, hist[0].notes, hist[0].report_dir],
-      ['Rina', before.totals.receipts, before.totals.revenue, before.cashSales, 'tutup uji', 'C:\\Laporan\\Shift_X']);
-    assert.deepStrictEqual(hist[0].by_method.map((m) => m.method).sort(), before.byMethod.map((m) => m.method).sort());
-    const d = svc.shiftHistoryDetail({ shift_uid: uid });
-    assert.strictEqual(d.receipts.length, before.totals.receipts);
-    assert.strictEqual(d.byItem.reduce((s, i) => s + i.total, 0), before.totals.revenue);
-    // Struk shift yang sudah ditutup tetap bisa dilihat & dicetak ulang dari riwayat (nama kasir dari riwayat)
-    const no = d.receipts[0].receipt_no;
-    assert.ok(svc.historyReceiptDetail({ shift_uid: uid, receipt_no: no }).length > 0);
-    const nota = svc.receiptForReprint({ shift_uid: uid, receipt_no: no });
-    assert.strictEqual(nota.cashier, 'Rina');
-    assert.strictEqual(nota.total, d.receipts[0].total);
-    throwsMsg(() => svc.receiptForReprint({ receipt_no: no }), /tidak ditemukan/); // sudah bukan shift berjalan
+    assert.deepStrictEqual(Object.keys(hist[0]).sort(), ['cashier_name', 'closed_at', 'shift_start', 'shift_uid']);
+    assert.deepStrictEqual([hist[0].shift_uid, hist[0].cashier_name], [uid, 'Rina']);
+    // Data lengkap hanya untuk mengirim ulang laporan (proses utama)
+    const rep = svc.shiftHistoryReport({ shift_uid: uid });
+    assert.deepStrictEqual([rep.shift.receipts, rep.shift.revenue, rep.shift.cash_sales, rep.shift.notes, rep.shift.report_dir],
+      [before.totals.receipts, before.totals.revenue, before.cashSales, 'tutup uji', 'C:\\Laporan\\Shift_X']);
+    assert.deepStrictEqual(rep.shift.by_method.map((m) => m.method).sort(), before.byMethod.map((m) => m.method).sort());
+    assert.strictEqual(rep.byItem.reduce((s, i) => s + i.total, 0), before.totals.revenue);
+    assert.strictEqual(rep.sales.reduce((s, l) => s + l.line_total, 0), before.totals.revenue);
+    assert.strictEqual(new Set(rep.sales.map((l) => l.receipt_no)).size, before.totals.receipts);
+    // Struk shift yang sudah ditutup tidak bisa dicetak ulang lagi
+    throwsMsg(() => svc.receiptForReprint({ receipt_no: rep.sales[0].receipt_no }), /tidak ditemukan/);
+    assert.strictEqual(svc.historyReceiptDetail, undefined);
+    assert.strictEqual(svc.shiftHistoryDetail, undefined);
   });
 
   await t('riwayat shift: hari ini & kemarin disimpan, sebelum kemarin dihapus otomatis', () => {
@@ -306,7 +308,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     uids = svc.listShiftHistory().map((h) => h.shift_uid);
     assert.deepStrictEqual(uids.length, 1);
     assert.notStrictEqual(uids[0], 'kemarin');
-    throwsMsg(() => svc.shiftHistoryDetail({ shift_uid: 'kemarin' }), /tidak ditemukan/);
+    throwsMsg(() => svc.shiftHistoryReport({ shift_uid: 'kemarin' }), /tidak ditemukan/);
   });
 
   await t('data tersimpan ke file & terbaca ulang', async () => {

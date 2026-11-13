@@ -275,6 +275,66 @@ async function closeShiftLocal({ notes } = {}) {
   }
 }
 
+// Kirim ulang laporan shift yang sudah ditutup (Riwayat Shift: hari ini & kemarin). Isi riwayat tidak pernah
+// dikembalikan ke layar: hasilnya hanya balasan server email dan nama file lampiran.
+async function resendReportLocal({ shift_uid } = {}) {
+  const settings = localSvc.getSettingsRaw();
+  makeTransport(settings); // validasi pengaturan SMTP sebelum menyiapkan lampiran
+  const { shift: h, byItem, sales } = localSvc.shiftHistoryReport({ shift_uid });
+  const dir = h.report_dir || '';
+  let attachments = [];
+  if (dir) {
+    try {
+      attachments = fs.readdirSync(dir).filter((f) => /\.(pdf|csv)$/i.test(f)).sort()
+        .map((name) => ({ filename: name, path: path.join(dir, name) }));
+    } catch (_) { /* folder laporan hilang → dibuat ulang dari cadangan riwayat */ }
+  }
+  const offlineReceipts = new Set(sales.filter((r) => /^OFF-/.test(r.receipt_no)).map((r) => r.receipt_no)).size;
+  const ctx = {
+    store: settings,
+    summary: {
+      shift: { cashier_name: h.cashier_name, shift_start: h.shift_start },
+      totals: { receipts: h.receipts, qty: h.qty, revenue: h.revenue },
+      byMethod: h.by_method, byItem, cashSales: h.cash_sales, offline: { receipts: offlineReceipts, checks: [] },
+    },
+    closedAt: h.closed_at, notes: h.notes || '', lowStock: [],
+  };
+  const regenerated = !attachments.length;
+  if (regenerated) {
+    const stamp = h.closed_at.replace(/[-:]/g, '').replace(' ', '_');
+    attachments = [
+      { filename: `Rekap_Shift_${stamp}.pdf`, content: await htmlToPdf(reports.summaryHtml(ctx)) },
+      { filename: `Penjualan_Shift_${stamp}.csv`, content: reports.salesCsv(sales) },
+    ];
+  }
+  // Paket Homebase shift ini (nama dari tanda homebase.json di folder laporan), bila masih ada di folder paket
+  const hbFiles = [];
+  if (dir && outbox && device.homebase_email !== '0') {
+    try {
+      const marker = JSON.parse(fs.readFileSync(path.join(dir, HOMEBASE_MARKER), 'utf8'));
+      const name = path.basename(String(marker.package || ''));
+      const file = path.join(outbox.dir, name);
+      if (name && fs.existsSync(file)) {
+        attachments.push({ filename: name, path: file });
+        hbFiles.push(name);
+      }
+    } catch (_) { /* tanpa paket Homebase */ }
+  }
+  const intro = [
+    `Laporan ini DIKIRIM ULANG pada ${localNow()}.`,
+    ...(regenerated ? ['File laporan asli tidak ditemukan: Rekap PDF dan CSV penjualan dibuat ulang dari cadangan riwayat shift. Snapshot stok saat tutup shift tidak tersedia.'] : []),
+    '',
+  ];
+  const info = await sendMail(settings, {
+    subject: `[${settings.store_name}] (Kirim Ulang) Rekap Shift ${h.cashier_name} — ${h.closed_at} — Omset Rp ${Number(h.revenue).toLocaleString('id-ID')}`,
+    text: [...intro, reports.summaryText({ ...ctx, homebaseFiles: hbFiles })].join('\n'),
+    attachments,
+  });
+  const response = String(info.response || '');
+  if (!/^250\b/.test(response)) throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}). Laporan belum terkirim ulang.`);
+  return { response, to: settings.owner_email, attachments: attachments.map((a) => a.filename), regenerated };
+}
+
 // ---------------------------------------------------------------- Homebase: paket data untuk pusat data
 const MAX_EMAIL_SNAPSHOT = 8 * 1024 * 1024;
 const hbSource = (extra = {}) => ({ app_version: app.getVersion(), device_mode: device.mode, demo: DEMO, ...extra });
@@ -384,10 +444,11 @@ async function testEmailLocal() {
 const SERVER_MAIN = {
   'main.checkout': checkoutLocal,
   'main.closeShift': closeShiftLocal,
+  'main.resendReport': resendReportLocal,
   'main.testEmail': testEmailLocal,
 };
 const REMOTE_BLOCKED = new Set([
-  'getSettingsRaw', 'archiveShift', 'pruneShiftHistory', 'checkout', 'regenerateStoreId', 'homebaseSnapshotData', 'homebaseShiftData',
+  'getSettingsRaw', 'archiveShift', 'pruneShiftHistory', 'shiftHistoryReport', 'checkout', 'regenerateStoreId', 'homebaseSnapshotData', 'homebaseShiftData',
 ]);
 
 function serverCall(method, args) {
@@ -714,7 +775,7 @@ const ACCESS = {
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR,
-  'shift:history': KASIR, 'shift:historyDetail': KASIR, 'shift:historyReceipt': KASIR,
+  'shift:history': KASIR, 'shift:resendReport': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'app:openPath': KASIR,
 };
 
@@ -820,9 +881,8 @@ const handlers = {
   },
   'shift:summary': () => svc.shiftSummary(),
   'shift:receipt': (a) => svc.receiptDetail(a),
-  'shift:history': () => svc.listShiftHistory(),
-  'shift:historyDetail': (a) => svc.shiftHistoryDetail(a),
-  'shift:historyReceipt': (a) => svc.historyReceiptDetail(a),
+  'shift:history': () => svc.listShiftHistory(), // hanya kasir & waktu (isi riwayat tidak ditampilkan)
+  'shift:resendReport': (a) => runMain('main.resendReport', a),
   'shift:close': (a) => (isClient() ? closeShiftClient(a) : runMain('main.closeShift', a)),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
   'offline:markChecked': (a) => svc.markOfflineChecked(a),

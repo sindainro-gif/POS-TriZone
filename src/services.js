@@ -519,13 +519,12 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return db.all('SELECT * FROM shift_sales WHERE receipt_no = ? ORDER BY id', [receipt_no]);
   }
 
-  // Data nota untuk cetak ulang (uang diterima tidak tersimpan, jadi tanpa kembalian).
-  // Dengan shift_uid: struk dari Riwayat Shift (shift yang sudah ditutup).
-  function receiptForReprint({ receipt_no, shift_uid } = {}) {
-    const rows = shift_uid ? historyReceiptDetail({ shift_uid, receipt_no }) : receiptDetail({ receipt_no });
+  // Data nota untuk cetak ulang (uang diterima tidak tersimpan, jadi tanpa kembalian). Hanya struk shift berjalan.
+  function receiptForReprint({ receipt_no } = {}) {
+    const rows = receiptDetail({ receipt_no });
     if (!rows.length) fail('Struk tidak ditemukan.');
     const total = rows.reduce((s, r) => s + r.line_total, 0);
-    const shift = shift_uid ? db.get('SELECT cashier_name FROM shift_history WHERE shift_uid = ?', [shift_uid]) : getShift();
+    const shift = getShift();
     return {
       receipt_no, created_at: rows[0].created_at, payment_method: rows[0].payment_method,
       cashier: shift ? shift.cashier_name : '-', total, cash_received: total, change: 0,
@@ -584,28 +583,23 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return { shift_uid: uid };
   }
 
+  // Isi riwayat TIDAK ditampilkan di aplikasi (hanya bisa dikirim ulang ke email owner):
+  // daftar ini sengaja tanpa omset, struk, atau barang.
   function listShiftHistory() {
-    return db.all('SELECT * FROM shift_history ORDER BY closed_at DESC')
-      .map((r) => ({ ...r, by_method: JSON.parse(r.by_method || '[]') }));
+    return db.all('SELECT shift_uid, cashier_name, shift_start, closed_at FROM shift_history ORDER BY closed_at DESC');
   }
 
-  function shiftHistoryDetail({ shift_uid } = {}) {
+  // Data lengkap satu shift untuk mengirim ulang laporannya (hanya dipakai proses utama, diblokir dari jaringan)
+  function shiftHistoryReport({ shift_uid } = {}) {
     const shift = db.get('SELECT * FROM shift_history WHERE shift_uid = ?', [shift_uid]);
     if (!shift) fail('Riwayat shift tidak ditemukan (riwayat hanya disimpan sampai akhir hari berikutnya).');
     shift.by_method = JSON.parse(shift.by_method || '[]');
-    const receipts = db.all(
-      `SELECT receipt_no, MIN(created_at) AS created_at, payment_method, SUM(qty_sold) AS qty, SUM(line_total) AS total
-       FROM shift_history_sales WHERE shift_uid = ? GROUP BY receipt_no ORDER BY MIN(id) DESC`, [shift_uid],
-    );
     const byItem = db.all(
       `SELECT sku, product_name AS name, SUM(qty_sold) AS qty, SUM(line_total) AS total
        FROM shift_history_sales WHERE shift_uid = ? GROUP BY sku, product_name ORDER BY total DESC`, [shift_uid],
     );
-    return { shift, receipts, byItem };
-  }
-
-  function historyReceiptDetail({ shift_uid, receipt_no } = {}) {
-    return db.all('SELECT * FROM shift_history_sales WHERE shift_uid = ? AND receipt_no = ? ORDER BY id', [shift_uid, receipt_no]);
+    const sales = db.all('SELECT * FROM shift_history_sales WHERE shift_uid = ? ORDER BY id', [shift_uid]);
+    return { shift, byItem, sales };
   }
 
   // ---------------------------------------------------------------- Transaksi mode darurat (dari PC kasir)
@@ -1393,7 +1387,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     getProduct, listProducts, categories, findByCode, searchProducts, saveProduct, deleteProduct, importRows,
     stockSnapshot, lowStock,
     getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, shiftSalesRows,
-    archiveShift, pruneShiftHistory, listShiftHistory, shiftHistoryDetail, historyReceiptDetail,
+    archiveShift, pruneShiftHistory, listShiftHistory, shiftHistoryReport,
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
     createReception, listReceptions, getReception, importReceptions,

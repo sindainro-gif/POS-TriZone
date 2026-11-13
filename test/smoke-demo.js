@@ -66,22 +66,41 @@ app.on('browser-window-created', (_e, win) => {
       console.log('paket homebase demo:', hbDemo.join(', '), '· shift setelah tutup:', svc.getShift());
       if (!hbDemo.some((f) => /_shift_/.test(f)) || svc.getShift()) throw new Error('tutup shift demo: paket homebase / hapus data shift tidak sesuai');
 
-      // Riwayat Shift: penjualan shift yang ditutup tetap ada sebagai cadangan (hari ini & kemarin)
+      // Riwayat shift: penjualan tersimpan sebagai cadangan, isinya tidak bisa dilihat, laporannya bisa dikirim ulang
       const hist = svc.listShiftHistory();
-      if (hist.length !== 1 || hist[0].receipts !== 1 || svc.shiftSalesRows().length) throw new Error('penjualan tidak pindah ke Riwayat Shift');
+      const uid = JSON.stringify(hist[0] && hist[0].shift_uid);
+      if (hist.length !== 1 || svc.shiftSalesRows().length || svc.shiftHistoryReport({ shift_uid: hist[0].shift_uid }).shift.receipts !== 1) {
+        throw new Error('penjualan tidak tersimpan sebagai cadangan');
+      }
       await run(`go('shift')`);
       await wait(900);
       const histText = await run(`document.querySelector('#shHistoryBody').innerText`);
-      console.log('riwayat shift di layar:', histText.replace(/\s+/g, ' '));
-      if (!/Kasir/.test(histText)) throw new Error('kartu Riwayat Shift tidak tampil');
+      console.log('kirim ulang laporan di layar:', histText.replace(/\s+/g, ' '));
+      if (!/Kasir/.test(histText) || !/Kirim Ulang Laporan/.test(histText) || /Rp|Detail/.test(histText)) {
+        throw new Error('kartu Kirim Ulang Laporan Shift tidak sesuai (isi riwayat tidak boleh tampil)');
+      }
+      const blocked = await run(`window.posBridge.call('shift:historyDetail', { shift_uid: ${uid} })`);
+      if (blocked.ok || !/tidak dikenal/.test(blocked.error)) throw new Error('detail riwayat shift seharusnya tidak bisa dibuka');
+      // Lewat tombol: konfirmasi → kirim ulang
       await run(`document.querySelector('#shHistoryBody [data-h]').click()`);
-      await wait(800);
-      const detail = await run(`document.querySelector('#modalRoot').innerText`);
-      if (!/INV-/.test(detail)) throw new Error('detail Riwayat Shift tidak menampilkan struk');
-      await shot('demo-03b-riwayat-shift');
-      const rePrint = await run(`window.posBridge.call('receipt:reprint', { shift_uid: ${JSON.stringify(hist[0].shift_uid)}, receipt_no: document.querySelector('#modalRoot [data-print-r]').dataset.printR })`);
-      if (!rePrint.ok) throw new Error(`cetak ulang dari Riwayat Shift gagal: ${rePrint.error}`);
-      await run(`document.querySelectorAll('#modalRoot .modal-foot .btn.primary').forEach((b) => b.click())`);
+      await wait(500);
+      await shot('demo-03b-kirim-ulang');
+      await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
+      await wait(3000);
+      const toastText = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
+      console.log('kirim ulang (tombol):', toastText);
+      if (!/dikirim ulang/.test(toastText)) throw new Error('kirim ulang lewat tombol gagal');
+      const resend = await run(`window.posBridge.call('shift:resendReport', { shift_uid: ${uid} })`);
+      console.log('kirim ulang:', JSON.stringify(resend.data || resend.error));
+      if (!resend.ok || resend.data.regenerated || resend.data.attachments.filter((f) => /\.(pdf|csv)$/.test(f)).length !== 3
+        || !resend.data.attachments.some((f) => /_shift_.*\.json\.gz$/.test(f))) throw new Error('lampiran kirim ulang tidak lengkap');
+      // File laporan asli hilang → Rekap PDF & CSV penjualan dibuat ulang dari cadangan riwayat
+      const repDir = path.join(dataDir, 'Laporan-Demo');
+      for (const d of fs.readdirSync(repDir)) for (const f of fs.readdirSync(path.join(repDir, d))) if (/\.(pdf|csv)$/.test(f)) fs.unlinkSync(path.join(repDir, d, f));
+      const regen = await run(`window.posBridge.call('shift:resendReport', { shift_uid: ${uid} })`);
+      console.log('kirim ulang tanpa file asli:', JSON.stringify(regen.data || regen.error));
+      if (!regen.ok || !regen.data.regenerated || !regen.data.attachments.some((f) => /^Rekap_Shift_.*\.pdf$/.test(f))
+        || !regen.data.attachments.some((f) => /^Penjualan_Shift_.*\.csv$/.test(f))) throw new Error('laporan tidak dibuat ulang dari cadangan');
 
       // Reset → data contoh kembali ke awal, harus login lagi
       const reset = await run(`window.posBridge.call('demo:reset')`);
