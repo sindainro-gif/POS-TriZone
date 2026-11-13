@@ -55,6 +55,28 @@ app.on('browser-window-created', (_e, win) => {
       await login('Pemilik', '111111', '111111');
       await shot('01-kasir-belum-shift');
 
+      // Ukuran tampilan: A+ dua kali → 125%; Ctrl+0 → 100%; Ctrl+= → 110% dan tetap berlaku setelah muat ulang
+      const zoomOf = () => run(`({ f: window.posBridge.getZoom(), lbl: document.querySelector('#zoomCtl [data-zoom="0"]').textContent, saved: localStorage.getItem('pos-zoom'), w: window.innerWidth })`);
+      const z100 = await zoomOf();
+      await run(`document.querySelector('#zoomCtl [data-zoom="1"]').click(); document.querySelector('#zoomCtl [data-zoom="1"]').click();`);
+      await wait(400);
+      const z125 = await zoomOf();
+      console.log('ukuran tampilan:', JSON.stringify({ awal: z100, besar: z125 }));
+      if (Math.abs(z100.f - 1) > 0.001 || Math.abs(z125.f - 1.25) > 0.001 || z125.lbl !== '125%' || z125.saved !== '1.25' || !(z125.w < z100.w)) {
+        throw new Error('tombol A+ tidak memperbesar tampilan');
+      }
+      await shot('01b-tampilan-125');
+      await run(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '0', ctrlKey: true, bubbles: true }))`);
+      if (Math.abs((await zoomOf()).f - 1) > 0.001) throw new Error('Ctrl+0 tidak mengembalikan tampilan ke 100%');
+      await run(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '=', ctrlKey: true, bubbles: true }))`);
+      win.webContents.reload();
+      await new Promise((r) => win.webContents.once('did-finish-load', r));
+      await wait(1500);
+      const zReload = await zoomOf();
+      if (Math.abs(zReload.f - 1.1) > 0.001 || zReload.lbl !== '110%') throw new Error(`ukuran tampilan tidak bertahan setelah muat ulang: ${JSON.stringify(zReload)}`);
+      await run(`document.querySelector('#zoomCtl [data-zoom="0"]').click()`); // kembali 100% untuk langkah berikutnya
+      await wait(300);
+
       await run(`if (document.querySelector('#osCash')) throw new Error('kolom modal awal laci masih ada'); document.querySelector('#osBtn').click();`);
       await wait(600);
       // Dropdown saran: salah ketik "minral" tetap menemukan Air Mineral

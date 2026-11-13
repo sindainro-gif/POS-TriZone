@@ -174,6 +174,14 @@ app.on('browser-window-created', (_e, win) => {
       await shot('hb-08-ringkasan-terang');
       await run(`document.querySelector('#themeSeg [data-theme=dark]').click()`);
 
+      // Ukuran tampilan juga ada di Homebase
+      await run(`document.querySelector('#zoomCtl [data-zoom="1"]').click()`);
+      await wait(300);
+      const hbZoom = await run(`({ f: window.posBridge.getZoom(), lbl: document.querySelector('#zoomCtl [data-zoom="0"]').textContent })`);
+      if (Math.abs(hbZoom.f - 1.1) > 0.001 || hbZoom.lbl !== '110%') throw new Error(`ukuran tampilan Homebase tidak berubah: ${JSON.stringify(hbZoom)}`);
+      await shot('hb-08b-tampilan-110');
+      await run(`document.querySelector('#zoomCtl [data-zoom="0"]').click()`);
+
       // Kunci PIN
       if (!(await call('hb:setPin', { pin: '246810' })).ok) throw new Error('PIN gagal disimpan');
       await run(`document.querySelector('#hbLockBtn').click()`);

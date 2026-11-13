@@ -105,6 +105,17 @@ Kolom scan / cari barang (Kasir, Mutasi, Penerimaan, Cetak Barcode) menampilkan 
 - Urutan hasil: barcode/SKU persis → awalan barcode/SKU → nama berawalan kata yang diketik → paling mirip. Enter setelah scan tetap langsung memasukkan barang dengan barcode persis.
 - Mode darurat kasir memakai pencarian yang sama (`src/search.js`).
 
+## Tampilan (tema & ukuran)
+
+Di kiri bawah sidebar (POS dan Homebase):
+- **☾ Gelap / ☀ Terang**: tema warna.
+- **A− · 100% · A+**: ukuran tampilan. Seluruh aplikasi (huruf, tombol, tabel, modal) diperbesar atau diperkecil, pilihannya 80–200%. Klik angka persen untuk kembali ke 100%.
+- Pintasan keyboard: **Ctrl + =** (atau Ctrl + +) memperbesar, **Ctrl + −** memperkecil, **Ctrl + 0** kembali ke 100%.
+- Pilihan tersimpan **per komputer** dan langsung berlaku saat aplikasi dibuka, termasuk di layar login.
+- Bisa diatur sendiri oleh kasir.
+- Nota, label, dan laporan PDF tidak terpengaruh.
+- Pada layar kecil dengan ukuran besar, sidebar bisa di-scroll.
+
 ## Printer nota thermal
 
 1. Pasang driver printer nota (58 mm / 80 mm) sampai printernya muncul di Windows (Settings → Printers & scanners).

@@ -31,6 +31,43 @@ const theme = (() => {
   return { apply, get: () => cur };
 })();
 
+// Ukuran tampilan (zoom seluruh aplikasi): pilihan per komputer, diterapkan juga oleh preload saat halaman dimuat.
+// Tombol A− / persen (kembali 100%) / A+ di sidebar, atau Ctrl + =, Ctrl + −, Ctrl + 0.
+const zoom = (() => {
+  const KEY = 'pos-zoom';
+  const LEVELS = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+  const bridge = window.posBridge || {};
+  let cur = 1;
+  try { cur = Number(window.localStorage.getItem(KEY)) || 1; } catch (_) { /* penyimpanan tidak tersedia */ }
+  const nearest = (f) => LEVELS.reduce((best, l) => (Math.abs(l - f) < Math.abs(best - f) ? l : best), 1);
+  function apply(f) {
+    cur = nearest(Number(f) || 1);
+    if (bridge.setZoom) bridge.setZoom(cur);
+    try { window.localStorage.setItem(KEY, String(cur)); } catch (_) { /* abaikan */ }
+    const lbl = $('#zoomCtl [data-zoom="0"]');
+    if (lbl) lbl.textContent = `${Math.round(cur * 100)}%`;
+    $$('#zoomCtl [data-zoom="-1"]').forEach((b) => { b.disabled = cur <= LEVELS[0]; });
+    $$('#zoomCtl [data-zoom="1"]').forEach((b) => { b.disabled = cur >= LEVELS[LEVELS.length - 1]; });
+    return cur;
+  }
+  function step(dir) {
+    const i = LEVELS.indexOf(cur);
+    return apply(dir === 0 ? 1 : LEVELS[Math.min(LEVELS.length - 1, Math.max(0, i + dir))]);
+  }
+  apply(cur);
+  const ctl = $('#zoomCtl');
+  if (ctl) ctl.addEventListener('click', (e) => { const b = e.target.closest('[data-zoom]'); if (b) step(Number(b.dataset.zoom)); });
+  // Pintasan keyboard di mana pun (juga saat kolom input / modal aktif)
+  document.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey || e.altKey || e.metaKey) return;
+    const dir = { '=': 1, '+': 1, '-': -1, _: -1, 0: 0 }[e.key];
+    if (dir === undefined) return;
+    e.preventDefault();
+    step(dir);
+  }, true);
+  return { apply, step, get: () => cur, LEVELS };
+})();
+
 async function api(channel, args) {
   const r = await window.posBridge.call(channel, args);
   if (!r.ok) throw new Error(r.error);
