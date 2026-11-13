@@ -42,7 +42,7 @@ const readGudangStock = async () => (await gudangServices()).getProduct('BRS-001
 
 function startGudang() {
   return spawn(process.execPath, [path.join(__dirname, '..')], {
-    env: { ...process.env, POS_DATA_DIR: gudangDir, POS_SERVER_HOST: '127.0.0.1', POS_PRINT_TO_PDF: out },
+    env: { ...process.env, POS_DATA_DIR: gudangDir, POS_SERVER_HOST: '127.0.0.1', POS_PRINT_TO_PDF: out, POS_HOMEBASE_DIR: path.join(gudangDir, 'homebase-paket') },
     stdio: 'ignore',
   });
 }
@@ -50,6 +50,7 @@ function startGudang() {
 let gudang;
 process.env.POS_DATA_DIR = kasirDir;
 process.env.POS_PRINT_TO_PDF = out;
+process.env.POS_HOMEBASE_DIR = path.join(kasirDir, 'homebase-paket');
 
 (async () => {
   await seedGudang();

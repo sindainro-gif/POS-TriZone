@@ -208,7 +208,8 @@ const REQUIRED_TABLES = ['products', 'inventory', 'settings'];
 // Kolom yang ditambahkan setelah versi pertama: CREATE TABLE IF NOT EXISTS tidak menambah kolom ke tabel lama
 const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfers', 'doc_id', 'INTEGER'],
   ['stock_opname_docs', 'count_at', 'DATETIME'], ['stock_opname_items', 'before_qty', 'INTEGER'],
-  ['inventory', 'shopee_stock', 'INTEGER DEFAULT 0']];
+  ['inventory', 'shopee_stock', 'INTEGER DEFAULT 0'],
+  ['active_shift', 'shift_uid', 'TEXT']]; // ID unik shift untuk paket Homebase
 
 // Tabel lama punya CHECK zona tanpa Gudang Shopee. SQLite tidak bisa mengubah CHECK,
 // jadi tabelnya dibangun ulang dari definisi lamanya (kolom tambahan ikut) dengan daftar zona baru.
@@ -265,12 +266,13 @@ function posError(msg) {
 }
 
 class Database {
-  static async open(file) {
+  // Bawaan: skema POS. Homebase memakai pembungkus yang sama dengan skemanya sendiri ({ schema, migrate }).
+  static async open(file, { schema = SCHEMA, migrate: migrateFn = migrate } = {}) {
     const SQL = await loadSql();
     const db = file && fs.existsSync(file) ? new SQL.Database(fs.readFileSync(file)) : new SQL.Database();
     const inst = new Database(db, file);
-    inst.db.exec(SCHEMA);
-    migrate(inst.db);
+    inst.db.exec(schema);
+    if (migrateFn) migrateFn(inst.db);
     inst.db.exec('PRAGMA foreign_keys = ON');
     inst.persist();
     return inst;
@@ -381,14 +383,15 @@ class Database {
   }
 
   // Salinan harian database, disimpan maksimal `keep` file terakhir.
-  backup(dir, keep = 14) {
+  backup(dir, keep = 14, prefix = 'pos') {
     if (!this.file || !fs.existsSync(this.file)) return;
     fs.mkdirSync(dir, { recursive: true });
     const d = new Date();
     const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const target = path.join(dir, `pos-${stamp}.db`);
+    const target = path.join(dir, `${prefix}-${stamp}.db`);
     if (!fs.existsSync(target)) fs.copyFileSync(this.file, target);
-    const files = fs.readdirSync(dir).filter((f) => /^pos-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort();
+    const re = new RegExp(`^${prefix}-\\d{4}-\\d{2}-\\d{2}\\.db$`);
+    const files = fs.readdirSync(dir).filter((f) => re.test(f)).sort();
     while (files.length > keep) fs.unlinkSync(path.join(dir, files.shift()));
   }
 }

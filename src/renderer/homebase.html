@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'">
+  <title>Homebase — POS Tri-Zone</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="homebase">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">HB</div>
+      <div><div class="brand-name">Homebase</div><div class="brand-sub">Pusat data POS Tri-Zone</div></div>
+    </div>
+    <nav id="nav">
+      <button class="nav-btn active" data-view="dash"><span class="nav-ico">◫</span><span>Ringkasan</span></button>
+      <button class="nav-btn" data-view="sales"><span class="nav-ico">≋</span><span>Penjualan</span></button>
+      <button class="nav-btn" data-view="stock"><span class="nav-ico">≡</span><span>Stok</span></button>
+      <button class="nav-btn" data-view="docs"><span class="nav-ico">⇄</span><span>Dokumen</span></button>
+      <button class="nav-btn" data-view="imports"><span class="nav-ico">⇩</span><span>Impor &amp; Pengaturan</span><span id="navErr" class="nav-badge hidden"></span></button>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="field" style="margin:0"><label>Toko</label><select id="hbStore"><option value="">Semua toko</option></select></div>
+      <div id="hbInbox" class="conn-badge off">Memuat…</div>
+      <button class="btn sm ghost hidden" id="hbLockBtn">Kunci Homebase</button>
+      <div class="theme-seg" id="themeSeg" title="Tampilan aplikasi (disimpan di komputer ini)">
+        <button data-theme="dark">☾ Gelap</button><button data-theme="light">☀ Terang</button>
+      </div>
+      <div class="clock" id="clock"></div>
+    </div>
+  </aside>
+
+  <main>
+    <!-- ======================= RINGKASAN ======================= -->
+    <section class="view active" id="view-dash">
+      <header class="page-head">
+        <div><h1>Ringkasan</h1><p id="dashSub">Data semua toko yang mengirim paket ke Homebase.</p></div>
+        <button class="btn ghost" id="dashRefresh">Muat Ulang</button>
+      </header>
+      <div class="stats" id="dashStats"></div>
+      <div class="card">
+        <div class="card-head"><h2>Toko</h2><span class="muted small">Omset dihitung dari penjualan yang sudah sampai di Homebase.</span></div>
+        <div class="tbl-wrap tall"><table class="tbl">
+          <thead><tr><th>Toko</th><th>Data terakhir diterima</th><th>Tutup shift terakhir</th><th class="c">Shift</th>
+            <th class="r">Omset hari ini</th><th class="r">7 hari</th><th class="r">Bulan ini</th><th class="r">Barang</th><th class="r">Display menipis</th></tr></thead>
+          <tbody id="dashBody"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= PENJUALAN ======================= -->
+    <section class="view" id="view-sales">
+      <header class="page-head"><div><h1>Penjualan</h1><p>Riwayat penjualan semua shift yang sudah dikirim toko — tidak hilang setelah tutup shift.</p></div></header>
+      <div class="card">
+        <div class="filters">
+          <div class="field"><label>Dari</label><input type="date" id="slFrom"></div>
+          <div class="field"><label>Sampai</label><input type="date" id="slTo"></div>
+          <div class="field"><label>Tampilan</label>
+            <select id="slGroup">
+              <option value="day">Per Hari</option><option value="shift">Per Shift</option><option value="item">Per Barang</option>
+              <option value="method">Per Metode Bayar</option><option value="receipt">Per Struk</option>
+            </select>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn" id="slExport">Ekspor Excel</button>
+        </div>
+        <div id="slTotals" class="totals-line"></div>
+        <div class="tbl-wrap tall"><table class="tbl"><thead id="slHead"></thead><tbody id="slBody"></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- ======================= STOK ======================= -->
+    <section class="view" id="view-stock">
+      <header class="page-head"><div><h1>Stok</h1><p>Stok 4 zona per toko dari paket terakhir yang diterima (lihat kolom "Per waktu").</p></div></header>
+      <div class="card">
+        <div class="filters">
+          <div class="field"><label>Cari</label><input id="skSearch" class="search wide" placeholder="SKU, barcode, nama, merk, kategori…"></div>
+          <div class="field"><label>Saring</label>
+            <select id="skFilter">
+              <option value="all">Semua barang</option><option value="low">Display toko menipis</option><option value="empty">Display toko habis</option>
+              <option value="damaged">Ada barang BS</option><option value="shopee">Ada stok Shopee</option>
+            </select>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn" id="skExport">Ekspor Excel</button>
+        </div>
+        <div id="skTotals" class="totals-line"></div>
+        <div class="tbl-wrap tall"><table class="tbl"><thead id="skHead"></thead><tbody id="skBody"></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- ======================= DOKUMEN ======================= -->
+    <section class="view" id="view-docs">
+      <header class="page-head"><div><h1>Dokumen</h1><p>Riwayat penerimaan barang, mutasi, dan stok opname dari semua toko.</p></div></header>
+      <div class="card">
+        <div class="filters">
+          <div class="field"><label>Jenis</label>
+            <div class="tabs" id="dcTabs"><button data-type="receptions" class="active">Penerimaan</button><button data-type="transfers">Mutasi</button><button data-type="opnames">Stok Opname</button></div>
+          </div>
+          <div class="field"><label>Dari</label><input type="date" id="dcFrom"></div>
+          <div class="field"><label>Sampai</label><input type="date" id="dcTo"></div>
+          <div class="field"><label>Cari</label><input id="dcSearch" class="search" placeholder="No. dokumen, supplier, barang…"></div>
+          <div class="spacer"></div>
+          <button class="btn" id="dcExport">Ekspor Excel</button>
+        </div>
+        <div id="dcTotals" class="totals-line"></div>
+        <div class="tbl-wrap tall"><table class="tbl"><thead id="dcHead"></thead><tbody id="dcBody"></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- ======================= IMPOR & PENGATURAN ======================= -->
+    <section class="view" id="view-imports">
+      <header class="page-head"><div><h1>Impor &amp; Pengaturan</h1><p>Paket data dari toko masuk lewat folder Google Drive atau file lampiran email tutup shift.</p></div></header>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Folder Masuk (Google Drive)</h2>
+          <p class="muted small" style="margin-top:-6px">Pilih folder Google Drive tempat toko menaruh paket <code>TRZ_….json.gz</code>. Folder ini dan subfoldernya diperiksa otomatis setiap menit.</p>
+          <div class="field"><label>Folder</label>
+            <div class="btn-row"><input id="imDir" readonly placeholder="Belum diatur" style="flex:1;min-width:220px">
+              <button class="btn" id="imPick">Pilih Folder…</button><button class="btn ghost" id="imClear">Kosongkan</button></div>
+          </div>
+          <div id="imScanInfo" class="small muted"></div>
+          <div class="btn-row" style="margin-top:12px">
+            <button class="btn primary" id="imScan">Periksa Sekarang</button>
+            <button class="btn" id="imFiles">Impor File…</button>
+          </div>
+          <p class="muted small" style="margin-top:12px">Dari email tutup shift: simpan lampiran <code>TRZ_….json.gz</code>, lalu klik <b>Impor File…</b>. File yang sama tidak pernah dihitung dua kali.</p>
+        </div>
+        <div class="card">
+          <h2>Ekspor &amp; Cadangan</h2>
+          <div class="row-2">
+            <div class="field"><label>Penjualan &amp; dokumen dari</label><input type="date" id="exFrom"></div>
+            <div class="field"><label>Sampai</label><input type="date" id="exTo"></div>
+          </div>
+          <div class="btn-row">
+            <button class="btn primary" id="exAll">Ekspor Semua ke Excel</button>
+            <button class="btn" id="exBackup">Cadangkan Homebase…</button>
+            <button class="btn ghost" id="exOpen">Buka Folder Data</button>
+          </div>
+          <h2 class="mt">Kunci PIN</h2>
+          <p class="muted small" id="pinInfo" style="margin-top:-6px"></p>
+          <div class="btn-row"><button class="btn" id="pinSet">Atur PIN…</button><button class="btn ghost hidden" id="pinRemove">Hapus PIN</button></div>
+          <h2 class="mt">Informasi</h2>
+          <div class="kv"><span>Versi aplikasi</span><b id="infoVersion">-</b></div>
+          <div class="kv"><span>Database Homebase</span><code id="infoDb">-</code></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Toko Terdaftar</h2><span class="muted small">Toko muncul otomatis saat paket pertamanya diterima.</span></div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Toko</th><th>ID Toko</th><th>Versi POS</th><th>Data terakhir</th><th>Snapshot terakhir</th><th>Tutup shift terakhir</th><th>Pertama diterima</th><th></th></tr></thead>
+          <tbody id="stBody"></tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Riwayat Impor</h2><span id="imUnresolved"></span></div>
+        <div class="tbl-wrap tall"><table class="tbl">
+          <thead><tr><th>Waktu impor</th><th>File</th><th>Toko</th><th>Jenis</th><th>Asal</th><th>Status</th><th>Keterangan</th></tr></thead>
+          <tbody id="imBody"></tbody>
+        </table></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="lockScreen" class="login-screen hidden">
+    <div class="login-box">
+      <div class="login-brand"><div class="logo">HB</div><div><div class="brand-name">Homebase</div><div class="brand-sub">Masukkan PIN untuk membuka</div></div></div>
+      <div class="field"><label>PIN (6 digit)</label><input id="lkPin" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></div>
+      <button class="btn primary" id="lkBtn">Buka</button>
+      <div id="lkErr" class="small diff-neg"></div>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toasts"></div>
+  <script src="common.js"></script>
+  <script src="homebase.js"></script>
+</body>
+</html>

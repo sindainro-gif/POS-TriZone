@@ -1,112 +1,8 @@
 'use strict';
 /* global window, document */
+// Aplikasi POS. Utilitas bersama ($, esc, api, toast, modal, badge zona, tema) ada di common.js yang dimuat lebih dulu.
 
-// ================================================================ Utilitas
-const $ = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const rp = (n) => 'Rp ' + Math.round(Number(n) || 0).toLocaleString('id-ID');
-const num = (n) => (Number(n) || 0).toLocaleString('id-ID');
-const fmtTime = (s) => {
-  if (!s) return '-';
-  const d = new Date(String(s).replace(' ', 'T'));
-  return isNaN(d) ? s : d.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-};
-
-// Tema tampilan Gelap / Terang: pilihan per komputer (bukan pengaturan toko yang ikut ke PC kasir lain)
-const theme = (() => {
-  const KEY = 'pos-theme';
-  let cur = 'dark';
-  try { cur = window.localStorage.getItem(KEY) === 'light' ? 'light' : 'dark'; } catch (_) { /* penyimpanan tidak tersedia */ }
-  function apply(t) {
-    cur = t === 'light' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = cur;
-    $$('#themeSeg [data-theme]').forEach((b) => b.classList.toggle('active', b.dataset.theme === cur));
-    try { window.localStorage.setItem(KEY, cur); } catch (_) { /* abaikan */ }
-  }
-  apply(cur);
-  $('#themeSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-theme]'); if (b) apply(b.dataset.theme); });
-  return { apply, get: () => cur };
-})();
-
-async function api(channel, args) {
-  const r = await window.posBridge.call(channel, args);
-  if (!r.ok) throw new Error(r.error);
-  return r.data;
-}
-
-function toast(msg, type = 'info', ms = 3500) {
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.textContent = msg;
-  $('#toasts').appendChild(el);
-  setTimeout(() => el.remove(), ms);
-}
-
-const sound = (() => {
-  let ctx;
-  return (kind) => {
-    try {
-      ctx = ctx || new AudioContext();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.frequency.value = kind === 'err' ? 220 : 1250;
-      o.type = kind === 'err' ? 'square' : 'sine';
-      g.gain.value = 0.06;
-      o.connect(g).connect(ctx.destination);
-      o.start();
-      o.stop(ctx.currentTime + (kind === 'err' ? 0.28 : 0.07));
-    } catch (_) { /* audio tidak tersedia */ }
-  };
-})();
-
-function modal({ title, body, actions = [], wide = false, onOpen, dismissable = true }) {
-  const back = document.createElement('div');
-  back.className = 'modal-back';
-  back.innerHTML = `<div class="modal ${wide ? 'wide' : ''}"><div class="modal-head">${esc(title)}</div><div class="modal-body">${body}</div>
-    ${actions.length ? '<div class="modal-foot"></div>' : ''}</div>`;
-  const foot = $('.modal-foot', back);
-  const prevFocus = document.activeElement;
-  const close = () => {
-    back.remove();
-    document.removeEventListener('keydown', onKey, true);
-    afterModalClose(prevFocus);
-  };
-  actions.forEach((a) => {
-    const b = document.createElement('button');
-    b.className = `btn ${a.kind || ''}`;
-    b.innerHTML = a.label;
-    b.addEventListener('click', () => a.onClick ? a.onClick({ close, el: back, btn: b }) : close());
-    foot.appendChild(b);
-  });
-  function onKey(e) {
-    if (e.key === 'Escape' && dismissable) { e.stopPropagation(); close(); }
-  }
-  document.addEventListener('keydown', onKey, true);
-  $('#modalRoot').appendChild(back);
-  const first = $('input, select, textarea', back) || $('.modal-foot .btn.primary', back);
-  if (first) first.focus();
-  if (onOpen) onOpen(back, close);
-  return { close, el: back };
-}
-
-function confirmDialog(title, message, { okLabel = 'Ya, Lanjutkan', danger = false } = {}) {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (v, close) => { if (!done) { done = true; close(); resolve(v); } };
-    const m = modal({
-      title,
-      body: `<div style="line-height:1.6">${message}</div>`,
-      actions: [
-        { label: 'Batal', kind: 'ghost', onClick: ({ close }) => finish(false, close) },
-        { label: okLabel, kind: danger ? 'danger' : 'primary', onClick: ({ close }) => finish(true, close) },
-      ],
-    });
-    const obs = new MutationObserver(() => { if (!m.el.isConnected) { obs.disconnect(); if (!done) { done = true; resolve(false); } } });
-    obs.observe($('#modalRoot'), { childList: true });
-  });
-}
-
+// ================================================================ Utilitas khusus POS
 function bindMoney(input) {
   input.addEventListener('input', () => {
     const digits = input.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
@@ -116,26 +12,7 @@ function bindMoney(input) {
 const moneyVal = (input) => Number(String(input.value).replace(/\D/g, '')) || 0;
 const setMoney = (input, n) => { input.value = n ? Number(n).toLocaleString('id-ID') : ''; };
 
-function floorBadge(p) {
-  const cls = p.floor_stock <= 0 ? 'zero' : p.floor_stock <= p.min_floor_alert ? 'low' : 'ok';
-  return `<span class="badge floor ${cls}" title="Display Toko (siap jual)">${num(p.floor_stock)}</span>`;
-}
-const whBadge = (p) => `<span class="badge wh" title="Gudang Utama (cadangan)">${num(p.warehouse_stock)}</span>`;
-const bsBadge = (p) => `<span class="badge bs ${p.damaged_stock ? '' : 'none'}" title="Gudang BS / Retur (tidak bisa dijual)">${num(p.damaged_stock)}</span>`;
-const shpBadge = (p) => `<span class="badge shp ${p.shopee_stock ? '' : 'none'}" title="Gudang Shopee (stok online, tidak dijual di kasir)">${num(p.shopee_stock)}</span>`;
-function zoneBadges(p) {
-  return `<div class="zone-badges">
-    <span class="badge floor ${p.floor_stock <= 0 ? 'zero' : p.floor_stock <= p.min_floor_alert ? 'low' : 'ok'}">Display Toko: ${num(p.floor_stock)}</span>
-    <span class="badge wh">Gudang: ${num(p.warehouse_stock)}</span>
-    <span class="badge bs ${p.damaged_stock ? '' : 'none'}">BS: ${num(p.damaged_stock)}</span>
-    <span class="badge shp ${p.shopee_stock ? '' : 'none'}">Shopee: ${num(p.shopee_stock)}</span></div>`;
-}
-const ZONE_CLASS = { floor: 'floor', warehouse: 'wh', damaged: 'bs', shopee: 'shp', customer: 'ext', supplier: 'ext', disposed: 'ext', shopee_sold: 'ext' };
 const zoneTag = (z) => `<span class="badge ${ZONE_CLASS[z]}">${esc(state.meta.zones[z] || z)}</span>`;
-// Daftar baris yang dilewati di modal hasil import
-const errorList = (errors) => (errors.length
-  ? `<div class="tbl-wrap" style="max-height:220px;margin-top:10px"><table class="tbl"><tbody>${errors.map((e) => `<tr><td>${esc(e)}</td></tr>`).join('')}</tbody></table></div>`
-  : '');
 
 // Tebalkan bagian teks yang sama dengan kata yang diketik (aman: setiap potongan di-escape)
 function highlight(text, q) {
@@ -246,10 +123,12 @@ function go(view) {
   views[view].show();
 }
 
+// Kasir: setelah modal ditutup, kursor kembali ke kolom scan
 function afterModalClose(prevFocus) {
   if (state.view === 'checkout' && !$('#modalRoot').children.length) views.checkout.focusScan();
   else if (prevFocus && prevFocus.isConnected) prevFocus.focus();
 }
+modalHooks.afterClose = afterModalClose;
 
 async function refreshShift() {
   state.shift = await api('shift:get');
@@ -2174,6 +2053,100 @@ const modeCard = (() => {
   return { load };
 })();
 
+// ================================================================ Homebase (paket data untuk pusat data)
+const homebaseCard = (() => {
+  let st = null;
+  const KIND = { shift: 'paket shift', snapshot: 'snapshot semua data' };
+
+  function render() {
+    const client = !!(st && st.client);
+    $('#hbClient').classList.toggle('hidden', !client);
+    $('#hbBody').classList.toggle('hidden', client);
+    const badge = $('#hbBadge');
+    if (!st || client) { badge.className = 'badge wh'; badge.textContent = client ? 'Di PC Gudang' : '-'; return; }
+    // Error hanya relevan untuk folder yang sedang diatur (bukan folder lama yang sudah dikosongkan)
+    const err = st.sync_dir && st.last_sync && st.last_sync.dir === st.sync_dir ? st.last_sync.error : '';
+    if (!st.sync_dir) { badge.className = 'badge wh'; badge.textContent = 'Folder belum diatur'; }
+    else if (err) { badge.className = 'badge bs'; badge.textContent = 'Gagal kirim'; }
+    else if (st.pending) { badge.className = 'badge floor low'; badge.textContent = `${num(st.pending)} menunggu`; }
+    else { badge.className = 'badge floor ok'; badge.textContent = 'Terkirim'; }
+    $('#hbStoreId').textContent = st.store_id;
+    $('#hbLast').innerHTML = st.last_package
+      ? `${fmtTime(st.last_package.at)} · ${KIND[st.last_package.kind] || esc(st.last_package.kind)}<br><span class="muted">${num(st.files)} file di folder paket (${num(st.shift_files)} paket shift)</span>`
+      : 'Belum ada paket';
+    const ls = st.last_sync && st.last_sync.dir === st.sync_dir ? st.last_sync : null;
+    $('#hbSync').innerHTML = !st.sync_dir ? '<span class="muted">Folder belum diatur</span>'
+      : ls && ls.at ? `${fmtTime(ls.at)} · ${num(ls.copied || 0)} file disalin${st.pending ? ` · <b>${num(st.pending)} menunggu</b>` : ''}` : 'Belum pernah';
+    $('#hbDir').value = st.sync_dir || '';
+    $('#hbEmail').checked = !!st.email;
+    $('#hbOutbox').textContent = st.dir;
+    $('#hbError').classList.toggle('hidden', !err);
+    $('#hbError').textContent = err ? `${err} — dicoba lagi otomatis tiap 10 menit.` : '';
+  }
+
+  async function load() {
+    if (role() !== 'admin') return;
+    try { st = await api('homebase:status'); } catch (e) { st = null; toast(e.message, 'err'); }
+    render();
+  }
+
+  async function saveConfig(patch) {
+    try { st = await api('homebase:saveConfig', patch); render(); return true; } catch (e) { toast(e.message, 'err', 8000); return false; }
+  }
+
+  $('#hbPick').addEventListener('click', async () => {
+    const dir = await api('homebase:pickFolder').catch((e) => { toast(e.message, 'err'); return null; });
+    if (dir && (await saveConfig({ sync_dir: dir }))) toast('Folder Google Drive disimpan. Paket disalin ke sana.', 'ok', 5000);
+  });
+  $('#hbClear').addEventListener('click', async () => {
+    if (st && st.sync_dir && (await saveConfig({ sync_dir: '' }))) toast('Folder Google Drive dikosongkan. Paket tetap disimpan di komputer ini.', 'ok');
+  });
+  $('#hbEmail').addEventListener('change', () => saveConfig({ email: $('#hbEmail').checked }));
+  $('#hbSend').addEventListener('click', async () => {
+    const btn = $('#hbSend');
+    btn.disabled = true;
+    try {
+      const r = await api('homebase:sendNow');
+      st = r.status;
+      render();
+      const s = r.sync || {};
+      if (s.error) toast(`Paket dibuat, tetapi belum terkirim: ${s.error}`, 'err', 8000);
+      else if (!st.sync_dir) toast(`Paket dibuat: ${r.package}. Atur folder Google Drive agar terkirim otomatis.`, 'ok', 7000);
+      else toast(`Paket dibuat dan disalin ke folder Google Drive (${num(s.copied || 0)} file).`, 'ok', 6000);
+    } catch (e) { toast(e.message, 'err', 8000); } finally { btn.disabled = false; }
+  });
+  $('#hbLegacy').addEventListener('click', async () => {
+    if (!(await confirmDialog('Sertakan Riwayat Penjualan Lama',
+      `Penjualan dari laporan tutup shift lama (file CSV di folder laporan) dijadikan paket shift untuk Homebase.
+       Struk yang tercatat di beberapa folder (tutup shift yang email-nya gagal) hanya dihitung sekali.
+       Aman dijalankan ulang: Homebase tidak menghitungnya dua kali.`, { okLabel: 'Buat Paket Riwayat' }))) return;
+    try {
+      const r = await api('homebase:legacy');
+      st = r.status;
+      render();
+      modal({
+        title: 'Riwayat Penjualan Lama',
+        body: `<div class="kv"><span>Folder laporan</span><code>${esc(r.reports_dir)}</code></div>
+          <div class="kv"><span>Folder shift dibaca</span><b>${num(r.scanned)}</b></div>
+          <div class="kv"><span>Sudah ada di paket shift (dilewati)</span><b>${num(r.covered)}</b></div>
+          <div class="kv"><span>Paket riwayat dibuat</span><b>${num(r.shifts)} shift · ${num(r.receipts)} struk · ${rp(r.revenue)}</b></div>
+          ${r.errors.length ? `<p class="small" style="margin-top:10px">File yang tidak terbaca:</p>${errorList(r.errors)}` : ''}`,
+        actions: [{ label: 'Tutup', kind: 'primary' }],
+      });
+    } catch (e) { toast(e.message, 'err', 8000); }
+  });
+  $('#hbOpen').addEventListener('click', () => api('homebase:openFolder').catch((e) => toast(e.message, 'err')));
+  $('#hbNewId').addEventListener('click', async () => {
+    if (!(await confirmDialog('Ganti ID Toko',
+      `Gunakan hanya bila database ini <b>disalin dari toko lain</b> (mis. membuka cabang baru dari cadangan toko lama).
+       Setelah diganti, Homebase menganggap komputer ini sebagai <b>toko baru</b>. Paket lama tetap tercatat dengan ID lama.`,
+      { okLabel: 'Ganti ID Toko', danger: true }))) return;
+    try { st = await api('homebase:newStoreId'); render(); toast('ID toko baru dibuat.', 'ok'); } catch (e) { toast(e.message, 'err'); }
+  });
+
+  return { load };
+})();
+
 // ================================================================ Pengguna & hak akses (Admin)
 const usersCard = (() => {
   let list = [];
@@ -2408,6 +2381,7 @@ views.settings = (() => {
   async function show() {
     modeCard.load();
     usersCard.load();
+    homebaseCard.load();
     const s = await api('settings:get');
     state.settings = s;
     await loadPrinters(s.printer_name);

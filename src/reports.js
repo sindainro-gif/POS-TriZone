@@ -14,11 +14,54 @@ function toCsv(headers, rows) {
   return '﻿' + [headers, ...rows].map((r) => r.map(cell).join(';')).join('\r\n') + '\r\n';
 }
 
+const SALES_HEADERS = ['No_Struk', 'Waktu', 'SKU', 'Nama_Barang', 'Jumlah_Biji', 'Harga_Satuan', 'Subtotal', 'Metode_Bayar'];
+
 function salesCsv(rows) {
   return toCsv(
-    ['No_Struk', 'Waktu', 'SKU', 'Nama_Barang', 'Jumlah_Biji', 'Harga_Satuan', 'Subtotal', 'Metode_Bayar'],
+    SALES_HEADERS,
     rows.map((r) => [r.receipt_no, r.created_at, r.sku, r.product_name, r.qty_sold, r.unit_price, r.line_total, r.payment_method]),
   );
+}
+
+// Kebalikan toCsv: pemisah ";", sel bertanda kutip boleh berisi ; " dan baris baru, BOM di awal diabaikan
+function parseCsv(text, sep = ';') {
+  const s = String(text ?? '').replace(/^﻿/, '');
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quoted) {
+      if (c !== '"') cell += c;
+      else if (s[i + 1] === '"') { cell += '"'; i++; } else quoted = false;
+    } else if (c === '"') {
+      quoted = true;
+    } else if (c === sep) {
+      row.push(cell);
+      cell = '';
+    } else if (c === '\r' || c === '\n') {
+      if (c === '\r' && s[i + 1] === '\n') i++;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else {
+      cell += c;
+    }
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((v) => v !== ''));
+}
+
+// Baca CSV "Penjualan_Shift_*.csv" buatan salesCsv (riwayat penjualan lama di folder laporan)
+function parseSalesCsv(text) {
+  const [head, ...rows] = parseCsv(text);
+  if (!head || SALES_HEADERS.some((h, i) => head[i] !== h)) throw new Error('Format CSV penjualan tidak dikenal.');
+  return rows.map((r) => ({
+    receipt_no: r[0], created_at: r[1], sku: r[2], product_name: r[3],
+    qty: Number(r[4]) || 0, unit_price: Number(r[5]) || 0, line_total: Number(r[6]) || 0, payment_method: r[7] || '',
+  }));
 }
 
 function stockCsv(rows) {
@@ -78,7 +121,7 @@ ${off.checks.map((c) => `<tr><td>${esc(c.receipt_no)}</td><td>${esc(c.created_at
 </body></html>`;
 }
 
-function summaryText({ store, summary, closedAt }) {
+function summaryText({ store, summary, closedAt, homebaseFiles = [] }) {
   const { shift, totals, byMethod } = summary;
   return [
     `Rekap Tutup Shift — ${store.store_name}`,
@@ -97,6 +140,7 @@ function summaryText({ store, summary, closedAt }) {
     '',
     ...offlineText(summary.offline),
     'Lampiran: Rekap PDF, detail penjualan (CSV), dan snapshot stok Display Toko / Gudang Utama / Gudang BS / Gudang Shopee (CSV).',
+    ...(homebaseFiles.length ? [`Paket data Homebase (impor di aplikasi Homebase): ${homebaseFiles.join(', ')}`] : []),
     '',
     '— Dikirim otomatis oleh POS Tri-Zone',
   ].join('\n');
@@ -111,4 +155,4 @@ function offlineText(off) {
   ];
 }
 
-module.exports = { salesCsv, stockCsv, summaryHtml, summaryText };
+module.exports = { salesCsv, stockCsv, summaryHtml, summaryText, parseCsv, parseSalesCsv, SALES_HEADERS };

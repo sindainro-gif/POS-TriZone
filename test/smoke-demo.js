@@ -62,6 +62,9 @@ app.on('browser-window-created', (_e, win) => {
       console.log('tutup shift demo:', JSON.stringify(close.data && close.data.response || close.error));
       if (!close.ok || !/DEMO/.test(close.data.response)) throw new Error('tutup shift demo gagal');
       if (!fs.readdirSync(path.join(dataDir, 'Laporan-Demo')).length) throw new Error('laporan demo tidak dibuat');
+      const hbDemo = fs.readdirSync(path.join(dataDir, 'Homebase-Demo'));
+      console.log('paket homebase demo:', hbDemo.join(', '), '· shift setelah tutup:', svc.getShift());
+      if (!hbDemo.some((f) => /_shift_/.test(f)) || svc.getShift()) throw new Error('tutup shift demo: paket homebase / hapus data shift tidak sesuai');
 
       // Reset → data contoh kembali ke awal, harus login lagi
       const reset = await run(`window.posBridge.call('demo:reset')`);

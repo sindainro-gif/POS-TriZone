@@ -1,5 +1,6 @@
 'use strict';
 // Logika bisnis POS — tidak bergantung pada Electron agar bisa diuji dengan Node biasa.
+const crypto = require('crypto');
 const { normalizeDesign, DEFAULT_DESIGN } = require('./labels');
 const { ROLES, hashPin, matchLogin } = require('./auth');
 const { rankProducts } = require('./search');
@@ -413,7 +414,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   function openShift({ cashier_name } = {}) {
     if (getShift()) fail('Shift sudah dibuka.');
     const name = toStr(cashier_name, 'Nama kasir', { required: true, max: 60 });
-    db.tx(() => db.run('INSERT INTO active_shift(id, cashier_name, shift_start, initial_cash) VALUES(1, ?, ?, 0)', [name, localNow()]));
+    db.tx(() => db.run('INSERT INTO active_shift(id, cashier_name, shift_start, initial_cash, shift_uid) VALUES(1, ?, ?, 0, ?)', [name, localNow(), crypto.randomUUID()]));
     return getShift();
   }
 
@@ -1180,7 +1181,146 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return u;
   }
 
+  // ---------------------------------------------------------------- Homebase (data untuk diekspor)
+  // Semua fungsi di sini hanya MEMBACA data (kecuali membuat ID toko/shift sekali). Rahasia tidak ikut:
+  // password/akun SMTP, email owner, hash PIN, kode pasangan, dan penanda teknis (checkout_refs, nomor urut struk).
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  // ID toko tersimpan di database, jadi ikut ke file cadangan / pulihkan di PC baru
+  function ensureStoreId() {
+    let id = getSetting('store_id');
+    if (!UUID_RE.test(id)) {
+      id = crypto.randomUUID();
+      db.tx(() => setSetting('store_id', id));
+    }
+    return id;
+  }
+
+  // Dipakai bila database ini disalin dari toko lain (mis. membuka cabang baru dari cadangan toko lama)
+  function regenerateStoreId() {
+    const id = crypto.randomUUID();
+    db.tx(() => setSetting('store_id', id));
+    return id;
+  }
+
+  function storeInfo() {
+    const s = getSettings();
+    return { id: ensureStoreId(), name: s.store_name, address: s.store_address || '' };
+  }
+
+  // Shift yang dibuka sebelum versi ini belum punya ID → dibuatkan sekali
+  function ensureShiftUid() {
+    const s = getShift();
+    if (!s) return null;
+    if (s.shift_uid) return s.shift_uid;
+    const uid = crypto.randomUUID();
+    db.tx(() => db.run('UPDATE active_shift SET shift_uid = ? WHERE id = 1', [uid]));
+    return uid;
+  }
+
+  // Baris penjualan shift berjalan; line_no = urutan baris di dalam satu struk
+  function salesLines() {
+    const seq = new Map();
+    return db.all('SELECT * FROM shift_sales ORDER BY id').map((r) => {
+      const n = (seq.get(r.receipt_no) || 0) + 1;
+      seq.set(r.receipt_no, n);
+      return {
+        receipt_no: r.receipt_no, line_no: n, created_at: r.created_at, sku: r.sku, product_name: r.product_name,
+        qty: r.qty_sold, unit_price: r.unit_price, line_total: r.line_total, payment_method: r.payment_method,
+      };
+    });
+  }
+
+  const groupBy = (rows, key) => {
+    const m = new Map();
+    for (const r of rows) {
+      const k = r[key];
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    }
+    return m;
+  };
+  const numbered = (rows, drop) => (rows || []).map((r, i) => {
+    const o = { line_no: i + 1, ...r };
+    delete o[drop];
+    return o;
+  });
+
+  function homebaseSnapshotData({ includeOpenShift = true } = {}) {
+    const s = getSettings();
+    const recItems = groupBy(db.all(
+      'SELECT reception_id, sku, quantity_received AS qty, pack_type, destination FROM stock_reception_items ORDER BY id',
+    ), 'reception_id');
+    const trLines = groupBy(db.all('SELECT doc_id, sku, qty FROM stock_transfers ORDER BY id'), 'doc_id');
+    const opLines = groupBy(db.all(
+      'SELECT doc_id, sku, system_qty, counted_qty, diff, before_qty FROM stock_opname_items ORDER BY id',
+    ), 'doc_id');
+    const shift = includeOpenShift ? getShift() : null;
+    return {
+      settings: {
+        store_name: s.store_name, store_address: s.store_address || '', receipt_header: s.receipt_header || '', receipt_footer: s.receipt_footer || '',
+      },
+      zones: ZONE_LABEL,
+      payment_methods: PAYMENT_METHODS,
+      products: db.all(
+        'SELECT sku, barcode, name, brand, category, unit_price, base_unit, pack_unit, pack_ratio, created_at FROM products ORDER BY sku',
+      ),
+      // Semua barang punya baris stok (barang tanpa baris inventory = 0, sama seperti di layar POS)
+      inventory: db.all(
+        `SELECT p.sku, COALESCE(i.floor_stock, 0) AS floor_stock, COALESCE(i.warehouse_stock, 0) AS warehouse_stock,
+                COALESCE(i.damaged_stock, 0) AS damaged_stock, COALESCE(i.shopee_stock, 0) AS shopee_stock,
+                COALESCE(i.min_floor_alert, 5) AS min_floor_alert, i.sold_out_at
+         FROM products p LEFT JOIN inventory i ON i.sku = p.sku ORDER BY p.sku`,
+      ),
+      receptions: db.all('SELECT id, reference_no, supplier_name, notes, received_at, total_items_count FROM stock_receptions ORDER BY id')
+        .map(({ id, ...r }) => ({ ...r, items: numbered(recItems.get(id), 'reception_id') })),
+      reception_drafts: db.all(
+        `SELECT d.id AS draft_id, d.reference_no, d.supplier_name, d.notes, d.code, d.name, d.qty, d.pack_type, d.destination, d.source,
+                d.created_at, d.resolved_at, r.reference_no AS reception_reference_no
+         FROM reception_drafts d LEFT JOIN stock_receptions r ON r.id = d.reception_id ORDER BY d.id`,
+      ),
+      transfers: db.all('SELECT id, doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty FROM stock_transfer_docs ORDER BY id')
+        .map(({ id, ...d }) => ({ ...d, lines: numbered(trLines.get(id), 'doc_id') })),
+      opnames: db.all('SELECT id, doc_no, zone, notes, created_at, count_at, line_count, plus_qty, minus_qty FROM stock_opname_docs ORDER BY id')
+        .map(({ id, ...d }) => ({ ...d, lines: numbered(opLines.get(id), 'doc_id') })),
+      offline_sales: db.all(
+        'SELECT receipt_no, client_ref, cashier_name, created_at, synced_at, total, status, notes, checked_at FROM offline_sales ORDER BY created_at, receipt_no',
+      ),
+      users: db.all('SELECT name, role, active, created_at FROM users ORDER BY name COLLATE NOCASE'),
+      label_designs: db.all('SELECT name, config, is_default, updated_at FROM label_designs ORDER BY name COLLATE NOCASE')
+        .map((r) => ({ ...r, config: JSON.parse(r.config) })),
+      // Shift yang masih berjalan (belum tutup): agar omset hari ini sudah terlihat di Homebase
+      current_shift: shift ? {
+        shift_uid: ensureShiftUid(), cashier_name: shift.cashier_name, shift_start: shift.shift_start, sales: salesLines(),
+      } : null,
+    };
+  }
+
+  // Isi paket "shift": dibuat saat tutup shift, sebelum data penjualan shift dihapus
+  function homebaseShiftData({ closed_at, notes = '' } = {}) {
+    const shift = getShift();
+    if (!shift) fail('Tidak ada shift aktif.');
+    const sum = shiftSummary();
+    return {
+      shift: {
+        shift_uid: ensureShiftUid(),
+        cashier_name: shift.cashier_name,
+        shift_start: shift.shift_start,
+        closed_at: closed_at || localNow(),
+        notes: String(notes || ''),
+        receipts: sum.totals.receipts,
+        qty: sum.totals.qty,
+        revenue: sum.totals.revenue,
+        cash_sales: sum.cashSales,
+        by_method: sum.byMethod.map((m) => ({ method: m.method, receipts: m.receipts, total: m.total })),
+        offline_receipts: sum.offline.receipts,
+      },
+      sales: salesLines(),
+    };
+  }
+
   return {
+    ensureStoreId, regenerateStoreId, storeInfo, ensureShiftUid, homebaseSnapshotData, homebaseShiftData,
     needsSetup, listUsers, saveUser, deleteUser, authCache, verifyLogin,
     listLabelDesigns, getLabelDesign, saveLabelDesign, deleteLabelDesign, setDefaultLabelDesign, labelItemsFromReception,
     meta, getSettings, getSettingsRaw, saveSettings,

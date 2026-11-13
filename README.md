@@ -32,6 +32,17 @@ Klik dua kali **`Jalankan DEMO.bat`**. Versi ini untuk latihan kasir dan mencoba
 - Versi demo selalu berjalan **Mandiri**; mode Server/Kasir hanya di aplikasi asli.
 - Uji otomatis: `npm run smoke:demo`.
 
+## Homebase (pusat data banyak toko)
+
+Klik dua kali **`Jalankan HOMEBASE.bat`** di PC owner (rumah / kantor). Homebase menyimpan data dari semua toko di `%APPDATA%\POS Tri-Zone HOMEBASE\homebase.db`.
+
+- **Isi Homebase:** riwayat penjualan (tidak hilang setelah tutup shift), stok terakhir 4 zona per toko, penerimaan, mutasi, dan stok opname. Bisa disaring per toko dan diekspor ke Excel.
+- **Kirim dari toko:** PC Gudang / Mandiri membuat **paket data** (`TRZ_….json.gz`) saat tutup shift dan tiap jam bila ada perubahan. Paket dikirim lewat **folder Google Drive** dan/atau **lampiran email tutup shift**. Atur di **Pengaturan → Homebase (Pusat Data)**.
+- **Tidak ikut:** password dan akun SMTP, PIN, kode pasangan.
+- **Penjualan lama** (sebelum ada Homebase): **Pengaturan → Homebase → Sertakan Riwayat Penjualan Lama…** membacanya dari CSV di folder laporan.
+- Panduan pemasangan, daftar semua data, format paket, dan skema database: [docs/HOMEBASE.md](docs/HOMEBASE.md).
+- Uji otomatis: `npm run smoke:homebase`.
+
 ## Mengedit program dari komputer lain (git)
 
 Kode program ada di repo git (`main`). Data toko **tidak** ikut, karena ada di `%APPDATA%\POS Tri-Zone`. `node_modules`, `dist`, dan cadangan database juga diabaikan lewat `.gitignore`.
@@ -53,6 +64,7 @@ Kode program ada di repo git (`main`). Data toko **tidak** ikut, karena ada di `
 npm test          # tes Node: logika bisnis, nota, label, database, jaringan, mode darurat
 npm run smoke:lan # uji dua komputer (gudang + kasir), termasuk MODE DARURAT & sinkron ulang
 npm run smoke     # uji UI Electron + screenshot (database sementara)
+npm run smoke:homebase # uji aplikasi Homebase: paket 2 toko → ringkasan, penjualan, stok, dokumen, Excel, PIN
 ```
 
 ## Struktur
@@ -65,8 +77,13 @@ npm run smoke     # uji UI Electron + screenshot (database sementara)
 | `src/main.js` | Proses utama Electron: IPC, import/template Excel, PDF, email SMTP, tutup shift |
 | `src/remote.js` | RPC HTTP LAN antara PC Gudang (server) dan PC Kasir (klien) |
 | `src/offline.js` | Mode darurat PC Kasir: cache barang + antrian transaksi OFF- dan sinkron ulang |
-| `src/reports.js` | CSV penjualan, CSV snapshot stok, HTML rekap (→ PDF) |
-| `src/renderer/` | Antarmuka (HTML/CSS/JS, dark mode) |
+| `src/reports.js` | CSV penjualan, CSV snapshot stok, HTML rekap (→ PDF), pembaca CSV penjualan lama |
+| `src/homebase-package.js` | Format paket data Homebase (v1): buat, gzip, baca & validasi |
+| `src/homebase-outbox.js` | Folder paket lokal di toko + salin ke folder Google Drive |
+| `src/homebase-legacy.js` | Riwayat penjualan lama dari CSV laporan tutup shift |
+| `src/homebase-store.js` | Database Homebase: impor paket (aman diulang), laporan, ekspor Excel |
+| `src/homebase-main.js` | Mode HOMEBASE di proses utama: pindai folder masuk, dialog, PIN |
+| `src/renderer/` | Antarmuka POS (`index.html`, `app.js`), Homebase (`homebase.html`, `homebase.js`), utilitas bersama (`common.js`), gaya (`style.css`, gelap/terang) |
 
 ## Pencarian barang
 
@@ -109,6 +126,7 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
 
 - Database: `%APPDATA%\POS Tri-Zone\pos.db` (backup harian di subfolder `backup/`, 14 terakhir). Path persisnya tampil di **Pengaturan → Informasi**.
 - Laporan tutup shift: `Dokumen\POS-Laporan\Shift_YYYYMMDD_HHMMSS\`
+- Paket data Homebase: `Dokumen\POS-Homebase\Paket\` (disalin ke folder Google Drive bila diatur)
 
 ## Login & hak akses
 

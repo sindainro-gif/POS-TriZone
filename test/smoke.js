@@ -11,6 +11,7 @@ const out = path.resolve(process.argv.find((a, i) => i > 1 && !a.startsWith('-')
 fs.mkdirSync(out, { recursive: true });
 process.env.POS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pos-smoke-data-'));
 process.env.POS_REPORTS_DIR = path.join(process.env.POS_DATA_DIR, 'laporan');
+process.env.POS_HOMEBASE_DIR = path.join(process.env.POS_DATA_DIR, 'homebase-paket');
 process.env.POS_PRINT_TO_PDF = out; // nota "dicetak" ke PDF berukuran kertas thermal
 
 const { getServices } = require('../src/main.js');
@@ -361,6 +362,11 @@ app.on('browser-window-created', (_e, win) => {
       const pdf = files.find((f) => f.endsWith('.pdf'));
       fs.copyFileSync(path.join(process.env.POS_REPORTS_DIR, dirs[0], pdf), path.join(out, 'rekap.pdf'));
       if (res.ok || svc.shiftSalesRows().length !== 2 || !svc.getShift()) throw new Error('data shift seharusnya tetap ada');
+      // Paket Homebase tetap dibuat walau email gagal (penjualan shift terarsip), folder laporan diberi tanda
+      const hbFiles = fs.readdirSync(process.env.POS_HOMEBASE_DIR);
+      console.log('paket homebase:', hbFiles.join(', '));
+      if (!hbFiles.some((f) => /_shift_[0-9a-z]+\.json\.gz$/.test(f)) || !hbFiles.some((f) => /_snapshot\.json\.gz$/.test(f))) throw new Error('paket homebase tidak dibuat saat tutup shift');
+      if (!files.includes('homebase.json')) throw new Error('tanda homebase.json tidak ada di folder laporan');
       await shot('09-shift-setelah-gagal-kirim');
 
       const p = svc.getProduct('MNM-001');
@@ -423,6 +429,16 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('[data-view=settings]').click()`);
       await wait(800);
       await shot('10-pengaturan-pengguna');
+      // Kartu Homebase: ID toko & paket terakhir tampil; "Kirim Data Sekarang" membuat snapshot baru
+      const hbCard = await run(`({ id: document.querySelector('#hbStoreId').textContent, last: document.querySelector('#hbLast').innerText, badge: document.querySelector('#hbBadge').textContent })`);
+      console.log('kartu homebase:', JSON.stringify(hbCard));
+      if (!/^[0-9a-f-]{36}$/.test(hbCard.id) || !/paket/.test(hbCard.last)) throw new Error('kartu Homebase tidak menampilkan status');
+      const before = fs.readdirSync(process.env.POS_HOMEBASE_DIR).length;
+      await wait(1100); // nama file berdetik: pastikan detik berbeda dari paket sebelumnya
+      const sent = await run(`window.posBridge.call('homebase:sendNow')`);
+      if (!sent.ok || !/_snapshot\.json\.gz$/.test(sent.data.package) || fs.readdirSync(process.env.POS_HOMEBASE_DIR).length !== before + 1) throw new Error(`Kirim Data Sekarang gagal: ${JSON.stringify(sent)}`);
+      await run(`document.querySelector('#hbCard').scrollIntoView()`);
+      await shot('10b-pengaturan-homebase');
       const navOf = () => run(`[...document.querySelectorAll('.nav-btn')].filter((b) => !b.classList.contains('hidden')).map((b) => b.dataset.view).join(',')`);
       for (const [name, pin, want] of [['Rina', '222222', 'checkout,products,shift'], ['Budi', '333333', 'transfers,receiving,opname,products,barcode']]) {
         await run(`document.querySelector('#logoutBtn').click()`);

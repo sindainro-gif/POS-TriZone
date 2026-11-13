@@ -458,6 +458,35 @@
           <b>Kasir</b>: Kasir / Pembayaran, Laporan Shift, dan Daftar Barang (hanya lihat). Akun disimpan di database PC Gudang dan berlaku di semua komputer.</p>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Dibuat</th><th class="w-act2"></th></tr></thead><tbody id="usBody"></tbody></table></div>
       </div>
+      <div class="card" id="hbCard">
+        <div class="card-head">
+          <h2>Homebase (Pusat Data)</h2>
+          <span id="hbBadge" class="badge wh">-</span>
+        </div>
+        <p class="muted small" style="margin-top:-6px">Setiap tutup shift (dan otomatis tiap jam bila ada perubahan), aplikasi membuat <b>paket data</b>: penjualan shift serta data barang, stok 4 zona, penerimaan, mutasi, dan opname.
+          Paket dikirim ke aplikasi <b>Homebase</b> lewat folder Google Drive dan/atau lampiran email tutup shift. Password, akun SMTP, dan PIN <b>tidak</b> ikut.</p>
+        <div id="hbClient" class="mode-panel hidden">Paket Homebase dibuat oleh komputer yang menyimpan database (PC Gudang). Atur di Pengaturan PC Gudang.</div>
+        <div id="hbBody">
+          <div class="row-3">
+            <div class="field"><label>ID Toko</label><code id="hbStoreId">-</code></div>
+            <div class="field"><label>Paket terakhir</label><div id="hbLast" class="small">-</div></div>
+            <div class="field"><label>Pengiriman ke folder Google Drive</label><div id="hbSync" class="small">-</div></div>
+          </div>
+          <div class="field"><label>Folder Google Drive (folder sinkron)</label>
+            <div class="btn-row"><input id="hbDir" readonly placeholder="Belum diatur — paket hanya disimpan di komputer ini" style="flex:1;min-width:280px">
+              <button class="btn" id="hbPick">Pilih Folder…</button><button class="btn ghost" id="hbClear">Kosongkan</button></div>
+          </div>
+          <label class="check"><input type="checkbox" id="hbEmail"> Lampirkan paket data di email tutup shift</label>
+          <div id="hbError" class="alert danger hidden" style="margin-bottom:12px"></div>
+          <div class="btn-row">
+            <button class="btn primary" id="hbSend">Kirim Data Sekarang</button>
+            <button class="btn" id="hbLegacy">Sertakan Riwayat Penjualan Lama…</button>
+            <button class="btn ghost" id="hbOpen">Buka Folder Paket</button>
+            <button class="btn danger" id="hbNewId">Ganti ID Toko…</button>
+          </div>
+          <p class="muted small" style="margin-top:10px">Folder paket di komputer ini: <code id="hbOutbox">-</code></p>
+        </div>
+      </div>
       <div class="card">
         <h2>Mode Komputer &amp; Jaringan</h2>
         <p class="muted small" style="margin-top:-6px">Untuk 2 komputer: PC Gudang menjadi <b>Server</b> (menyimpan database), PC Kasir memakai mode <b>Kasir</b> dan terhubung ke PC Gudang lewat jaringan toko. Stok selalu sama di kedua komputer.</p>
@@ -538,6 +567,7 @@
   </div>
   <div id="modalRoot"></div>
   <div id="toasts"></div>
+  <script src="common.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
