@@ -79,13 +79,35 @@ app.on('browser-window-created', (_e, win) => {
       };
       const firstFocus = await focusNow();
       if (firstFocus !== 'scanInput') throw new Error(`kursor awal seharusnya di kolom scan (${firstFocus})`);
+      // Suara kasir: tombol 🔊 menyalakan (bawaan mati); teks yang dibacakan ditangkap, tanpa suara sungguhan
+      const voiceOff = await run(`document.querySelector('#voiceBtn').classList.contains('on')`);
+      if (voiceOff) throw new Error('suara kasir seharusnya mati secara bawaan');
+      await run(`window.__spoken = []; window.speechSynthesis.speak = (u) => window.__spoken.push(u.text); document.querySelector('#voiceBtn').click();`);
+      const voiceOn = await run(`({ on: document.querySelector('#voiceBtn').classList.contains('on'), saved: JSON.parse(localStorage.getItem('pos-voice')).enabled, focus: document.activeElement.id })`);
+      if (!voiceOn.on || !voiceOn.saved || voiceOn.focus !== 'scanInput') throw new Error(`tombol suara tidak aktif: ${JSON.stringify(voiceOn)}`);
       await scan('8991234567890', 12);
       const qtyAfter = await run(`document.querySelector('#qtyInput').value`);
       if (qtyAfter !== '1') throw new Error(`Jumlah tidak kembali ke 1 (${qtyAfter})`);
       const afterScan = await focusNow();
       if (afterScan !== 'scanInput') throw new Error(`setelah scan kursor seharusnya tetap di kolom scan (${afterScan})`);
+      // Pengaturan suara: ganti ke "Nama + harga" lewat modal
+      await run(`document.querySelector('#voiceCfg').click()`);
+      await wait(400);
+      await shot('02b-suara-kasir');
+      await run(`(() => { const m = document.querySelector('#modalRoot'); m.querySelector('#vcMode').value = 'name_price';
+        [...m.querySelectorAll('.modal-foot .btn')].find((b) => b.textContent === 'Simpan').click(); })()`);
+      await wait(300);
       await scan('8997654321098');
       await scan('8997654321098', 10); // melebihi display toko → peringatan tiga zona
+      const spoken = await run(`window.__spoken`);
+      console.log('suara kasir:', JSON.stringify(spoken));
+      if (JSON.stringify(spoken) !== JSON.stringify(['Air Mineral 600ml', 'Keripik Kentang 68g, sebelas ribu lima ratus', 'sepuluh Keripik Kentang 68g, seratus lima belas ribu'])) {
+        throw new Error('teks suara kasir tidak sesuai');
+      }
+      // Dimatikan lagi → tidak ada yang dibacakan
+      await run(`document.querySelector('#voiceBtn').click()`);
+      const silent = await run(`(() => { voice.announce({ name: 'Tes' }, 1); return { n: window.__spoken.length, on: document.querySelector('#voiceBtn').classList.contains('on') }; })()`);
+      if (silent.n !== 3 || silent.on) throw new Error(`suara seharusnya mati: ${JSON.stringify(silent)}`);
       // F12 dari metode QRIS → pindah ke Tunai & fokus Uang Diterima; ketik uang lalu Enter = bayar
       await run(`document.querySelector('#payMethods [data-m="QRIS"]').click()`);
       const f12 = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true }));

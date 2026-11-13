@@ -89,6 +89,12 @@ npm run smoke:homebase # uji aplikasi Homebase: paket 2 toko → ringkasan, penj
 
 Di layar Kasir, kursor selalu kembali ke kolom **scan barcode**. Kolom **Jumlah** terpisah di kirinya: tekan **Enter** saat kolom scan kosong untuk pindah ke Jumlah (atau tombol `*`), isi jumlah, lalu **Enter** lagi untuk kembali ke scan. Setelah barang masuk keranjang, Jumlah kembali ke 1 dan kursor tetap di kolom scan. Format lama `12*barcode` tidak dipakai lagi.
 
+**Suara kasir (opsional):** tombol **🔇/🔊 Suara** di kanan kolom scan menyalakan atau mematikan pembacaan barang yang di-scan. Bawaannya mati.
+- Tombol **⚙** di sebelahnya mengatur isi bacaan (**Nama barang**, atau **Nama + harga** seperti "Air Mineral 600ml, tiga ribu lima ratus"), pilihan suara, kecepatan, dan volume. Ada juga tombol **Tes Suara**.
+- Pengaturan suara berlaku per komputer dan bisa diubah oleh kasir.
+- Suara memakai suara Windows (offline). Agar pengucapannya Bahasa Indonesia, pasang **Microsoft Andika** lewat **Pengaturan Windows → Waktu & bahasa → Ucapan → Tambahkan suara → Bahasa Indonesia**, lalu buka ulang aplikasi. Suara ini dipilih otomatis. Tanpa suara Indonesia, aplikasi memakai suara bahasa Inggris bawaan Windows.
+- Saat scan beruntun, yang dibacakan barang terakhir (bacaan sebelumnya dipotong).
+
 **Draft penjualan:** bila pelanggan belum siap bayar, klik **Tahan (Draft)** (boleh diberi nama pelanggan / catatan). Keranjang tersimpan di komputer kasir itu dan layar kosong untuk pelanggan berikutnya. **Daftar Draft** menampilkan semua draft; **Lanjutkan** memasukkan isinya kembali ke keranjang (keranjang yang sedang berisi bisa ditahan otomatis dulu). Stok tidak dipesan: harga & stok dicek ulang saat dilanjutkan dan saat bayar. Draft tetap ada walau aplikasi ditutup, juga saat MODE DARURAT.
 
 **Menjual melebihi display toko:** kasir selalu boleh menjual walaupun display toko di sistem kurang (barangnya ada di tangan pelanggan). Keranjang hanya menampilkan peringatan kuning, dan display toko menjadi 0 atau minus. Stok Gudang Utama dan Gudang BS tidak pernah dipotong. Barang yang display tokonya habis/minus muncul **merah dan paling atas** di **Mutasi → Saran Restock Rak Toko** (label HABIS / MINUS −N), dan menu Mutasi menampilkan angka merah berisi jumlah barang tersebut untuk akun Gudang & Admin. Klik **Isi Rak** untuk mencatat mutasi Gudang Utama → Toko.

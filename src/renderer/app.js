@@ -163,6 +163,63 @@ function openShiftForm(container, onDone) {
   setTimeout(() => btn.focus(), 30); // Enter pada tombol = buka shift
 }
 
+// ================================================================ Suara kasir: bacakan barang yang di-scan
+// Pengaturan per komputer (localStorage, sama seperti tema). Memakai suara Windows lewat speechSynthesis (offline);
+// suara Bahasa Indonesia (Microsoft Andika) dipakai otomatis bila sudah dipasang di Windows.
+const voice = (() => {
+  const KEY = 'pos-voice';
+  const DEF = { enabled: false, mode: 'name', voiceURI: '', rate: 1, volume: 1 };
+  const supported = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  let cfg = { ...DEF };
+  try { cfg = { ...DEF, ...JSON.parse(window.localStorage.getItem(KEY) || '{}') }; } catch (_) { /* pakai bawaan */ }
+  const listeners = [];
+
+  function save(patch) {
+    cfg = { ...cfg, ...patch };
+    try { window.localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (_) { /* penyimpanan tidak tersedia */ }
+    listeners.forEach((fn) => fn(cfg));
+    return { ...cfg };
+  }
+  const isIndonesian = (v) => /^id([-_]|$)/i.test(v.lang || '') || /indonesia/i.test(v.name || '');
+  // Daftar suara Windows, Bahasa Indonesia paling atas
+  function voices() {
+    if (!supported) return [];
+    return window.speechSynthesis.getVoices().slice()
+      .sort((a, b) => Number(isIndonesian(b)) - Number(isIndonesian(a)) || a.name.localeCompare(b.name));
+  }
+  function pick(c = cfg) {
+    const list = voices();
+    return (c.voiceURI && list.find((v) => v.voiceURI === c.voiceURI)) || list.find(isIndonesian) || null;
+  }
+  // "name": nama barang · "name_price": nama + harga (jumlah > 1: "dua belas Air Mineral, empat puluh dua ribu")
+  function itemText(p, qty = 1, mode = cfg.mode) {
+    const name = String(p.name || p.sku || '').trim();
+    if (mode !== 'name_price') return name;
+    const price = Number(p.unit_price) || 0;
+    return qty > 1 ? `${terbilang(qty)} ${name}, ${terbilang(price * qty)}` : `${name}, ${terbilang(price)}`;
+  }
+  function speak(text, c = cfg) {
+    if (!supported || !text) return false;
+    const synth = window.speechSynthesis;
+    synth.cancel(); // scan beruntun: barang terbaru yang dibacakan, tidak menumpuk
+    const u = new window.SpeechSynthesisUtterance(text);
+    const v = pick(c);
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'id-ID';
+    u.rate = Number(c.rate) || 1;
+    const vol = Number(c.volume);
+    u.volume = Number.isFinite(vol) ? Math.min(1, Math.max(0, vol)) : 1;
+    synth.speak(u);
+    return true;
+  }
+  const announce = (p, qty) => (cfg.enabled ? speak(itemText(p, qty)) : false);
+  // Daftar suara Windows bisa baru tersedia setelah halaman dimuat
+  if (supported) window.speechSynthesis.addEventListener('voiceschanged', () => listeners.forEach((fn) => fn(cfg)));
+  return {
+    get: () => ({ ...cfg }), save, voices, pick, isIndonesian, itemText, speak, announce,
+    supported: () => supported, onChange: (fn) => listeners.push(fn),
+  };
+})();
+
 // ================================================================ 1. KASIR
 views.checkout = (() => {
   const cart = []; // {sku, name, barcode, unit_price, qty, floor_stock, warehouse_stock, damaged_stock, min_floor_alert}
@@ -201,13 +258,84 @@ views.checkout = (() => {
       const qty = readQty();
       if (!qty) return;
       scan.value = '';
-      if (addToCart(p, qty)) resetQty();
+      if (addToCart(p, qty)) {
+        resetQty();
+        voice.announce(p, qty); // dibacakan bila suara kasir aktif
+      }
     },
     onEnter: (raw) => {
       sound('err');
       showAlert(`Barang dengan kode / nama "<b>${esc(raw)}</b>" tidak ditemukan.`);
       scan.select();
     },
+  });
+
+  // ---------------------------------------------------------------- Tombol suara (kanan kolom scan)
+  const voiceBtn = $('#voiceBtn');
+  function renderVoiceBtn() {
+    const on = voice.get().enabled;
+    voiceBtn.classList.toggle('on', on);
+    voiceBtn.textContent = on ? '🔊 Suara' : '🔇 Suara';
+    voiceBtn.title = on ? 'Suara aktif: barang yang di-scan dibacakan (klik untuk mematikan)' : 'Suara mati (klik untuk membacakan barang yang di-scan)';
+  }
+  voice.onChange(renderVoiceBtn);
+  renderVoiceBtn();
+  voiceBtn.addEventListener('click', () => {
+    const on = !voice.get().enabled;
+    voice.save({ enabled: on });
+    if (on && !voice.supported()) toast('Suara tidak didukung di komputer ini.', 'err');
+    else toast(on ? 'Suara aktif: barang yang di-scan dibacakan.' : 'Suara dimatikan.', 'ok', 2500);
+    focusScan();
+  });
+
+  const readVoiceForm = (el) => ({
+    enabled: $('#vcOn', el).checked, mode: $('#vcMode', el).value, voiceURI: $('#vcVoice', el).value,
+    rate: Number($('#vcRate', el).value), volume: Number($('#vcVol', el).value),
+  });
+  // Contoh untuk Tes Suara: barang teratas di keranjang, atau contoh tetap
+  const voiceSample = () => cart[0] || { name: 'Air Mineral 600ml', unit_price: 3500 };
+
+  $('#voiceCfg').addEventListener('click', () => {
+    const c = voice.get();
+    const list = voice.voices();
+    const hasId = list.some(voice.isIndonesian);
+    const m = modal({
+      title: 'Suara Kasir',
+      body: `<label class="check"><input type="checkbox" id="vcOn" ${c.enabled ? 'checked' : ''}> Bacakan barang yang di-scan di kolom kasir</label>
+        <div class="row-2">
+          <div class="field"><label>Yang dibacakan</label>
+            <select id="vcMode"><option value="name">Nama barang</option><option value="name_price">Nama + harga</option></select></div>
+          <div class="field"><label>Suara</label>
+            <select id="vcVoice"><option value="">Otomatis (Bahasa Indonesia bila ada)</option>
+              ${list.map((v) => `<option value="${esc(v.voiceURI)}">${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select></div>
+        </div>
+        <div class="row-2">
+          <div class="field"><label>Kecepatan <span class="muted" id="vcRateLbl"></span></label><input type="range" id="vcRate" min="0.7" max="1.6" step="0.1" value="${Number(c.rate) || 1}"></div>
+          <div class="field"><label>Volume <span class="muted" id="vcVolLbl"></span></label><input type="range" id="vcVol" min="0" max="1" step="0.1" value="${Number.isFinite(Number(c.volume)) ? Number(c.volume) : 1}"></div>
+        </div>
+        ${!voice.supported() ? '<div class="alert danger">Suara tidak didukung di komputer ini.</div>'
+          : hasId ? '' : `<div class="alert warn small">Belum ada suara <b>Bahasa Indonesia</b> di komputer ini, jadi nama barang dibacakan dengan suara bahasa Inggris.
+            Pasang lewat <b>Pengaturan Windows → Waktu &amp; bahasa → Ucapan → Tambahkan suara</b>, pilih <b>Bahasa Indonesia (Microsoft Andika)</b>, lalu tutup dan buka lagi aplikasi POS.</div>`}
+        <p class="muted small" style="margin-top:10px">Pengaturan suara hanya berlaku di komputer ini.</p>`,
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        { label: 'Tes Suara', onClick: ({ el }) => { const f = readVoiceForm(el); voice.speak(voice.itemText(voiceSample(), 1, f.mode), f); } },
+        {
+          label: 'Simpan',
+          kind: 'primary',
+          onClick: ({ el, close }) => { voice.save(readVoiceForm(el)); toast('Pengaturan suara disimpan.', 'ok', 2500); close(); },
+        },
+      ],
+    });
+    const el = m.el;
+    $('#vcMode', el).value = c.mode === 'name_price' ? 'name_price' : 'name';
+    $('#vcVoice', el).value = list.some((v) => v.voiceURI === c.voiceURI) ? c.voiceURI : '';
+    const labels = () => {
+      $('#vcRateLbl', el).textContent = `${Number($('#vcRate', el).value).toFixed(1)}×`;
+      $('#vcVolLbl', el).textContent = `${Math.round(Number($('#vcVol', el).value) * 100)}%`;
+    };
+    ['#vcRate', '#vcVol'].forEach((s) => $(s, el).addEventListener('input', labels));
+    labels();
   });
 
   function showAlert(html, kind = 'danger') {

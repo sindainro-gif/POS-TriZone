@@ -55,6 +55,10 @@
                 <span class="scan-ico">▮▯▮▮▯▮</span>
                 <input id="scanInput" autocomplete="off" spellcheck="false" placeholder="Scan barcode atau ketik SKU / nama barang…">
               </div>
+              <div class="voice-ctl">
+                <button class="btn" id="voiceBtn" type="button">🔇 Suara</button>
+                <button class="btn ghost" id="voiceCfg" type="button" title="Pengaturan suara kasir">⚙</button>
+              </div>
             </div>
             <div class="hint"><b>Enter</b> di kolom scan kosong = pindah ke Jumlah, Enter lagi = kembali ke scan · F2 fokus scan · F12 uang diterima, F12 lagi = uang pas (Enter = bayar) · F8 kosongkan · F9 bayar</div>
           </div>
@@ -568,6 +572,7 @@
   <div id="modalRoot"></div>
   <div id="toasts"></div>
   <script src="common.js"></script>
+  <script src="terbilang.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

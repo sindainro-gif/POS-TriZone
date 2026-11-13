@@ -204,6 +204,10 @@ tr.low td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .qty-field:focus-within { border-color: var(--accent); }
 .qty-field span { font-size: 11px; color: var(--muted); }
 .qty-field input { border: 0; background: transparent; font-size: 22px; font-weight: 700; text-align: center; padding: 2px 0 6px; box-shadow: none !important; width: 100%; }
+/* Suara kasir: tombol di kanan kolom scan */
+.voice-ctl { display: flex; gap: 6px; flex: none; }
+.voice-ctl .btn { padding: 0 14px; font-size: 14px; }
+#voiceBtn.on { background: var(--blue-bg); border-color: var(--accent); color: var(--on-active); }
 .cart-card { flex: 1; overflow: auto; padding: 0; margin: 0; position: relative; }
 .cart td { padding: 10px 12px; }
 .cart .qty-ctl { display: inline-flex; align-items: center; gap: 4px; }
