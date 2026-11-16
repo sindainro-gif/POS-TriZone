@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -231,6 +231,74 @@ function fileAccurate() {
   q(`insert into principal (nama) values ('P'); insert into po (no_po, principal_id) values ('PO-1', 1)`);
   assert.throws(() => sebagai('00000000-0000-0000-0000-00000000000b', "update po set status='DISETUJUI'"), /Hanya owner/);
   ok('anon hanya bisa memanggil RPC toko; pemilik toko lain tidak melihat data Tropodo; kunci tidak terbaca; hanya owner menyetujui PO');
+
+  // Import master barang dari Excel: dibaca seperti di browser, diperiksa & disimpan oleh import_produk
+  const IB = require('../web/lib/import-barang');
+  const buku = (aoa) => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Data'); return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }); };
+  const ADMIN = '00000000-0000-0000-0000-00000000000b';
+  const impor = (baris, simpan, uid = ADMIN) => JSON.parse(sebagai(uid, `select public.import_produk(${lit(baris)}, ${simpan}, '2026-11-10')`));
+  const barisBaru = q("select barcode from produk where sku = 'UJ-BARU'");
+  const diubahLama = q("select diubah_at from produk where sku = 'UJ-BARU'");
+  const kesetLama = q("select nama, satuan_masuk, barcode from produk where sku = 'UJ-KESET'").split('|');
+  const f1 = IB.bacaFile(buku([
+    ['DAFTAR BARANG KANTOR'], [],
+    ['sku', 'Nama Barang', 'BARCODE', 'Harga Jual', 'Satuan_Masuk', 'Rasio Isi Dus', 'Principal', 'Isi_Dus_Principal', 'Harga_Beli', 'Aktif', 'Stok_Awal_Toko'],
+    ['UJ-KESET', null, null, 'Rp 17.500', null, null, null, null, null, null, 5],
+    ['UJ-BARU', 'Barang Baru Uji', Number(barisBaru), 7000, 'Coly', 4, null, null, null, 'Ya', null],
+    ['UJ-IMP1', 'Barang Import Satu', '2000000000200', 12500, 'Dus', 12, 'PT Uji Principal', 24, '9.250', 'ya', null],
+    ['UJ-IMP2', null, '2000000000217', 5000, null, null, null, null, null, null, null],
+    ['UJ-IMP3', 'Barcode Bentrok', barisBaru, 5000, null, null, null, null, null, null, null],
+    ['UJ-IMP4', 'Harga Salah', '2000000000231', 'tiga ribu', null, null, null, null, null, 'mungkin', null],
+    [null, 'Baris tanpa SKU', null, 1000],
+  ]));
+  assert.strictEqual(f1.format, 'template');
+  assert.strictEqual(f1.barisJudul, 3);
+  assert.deepStrictEqual(f1.tanpaSku, [10]);
+  assert.deepStrictEqual(f1.masalah.map((m) => m.baris), [9, 9]);
+  assert.strictEqual(f1.baris.find((r) => r.sku === 'UJ-KESET').harga_jual, 17500);
+  assert.strictEqual(f1.baris.find((r) => r.sku === 'UJ-BARU').barcode, barisBaru);
+  const cek1 = impor(f1.baris, false);
+  assert.strictEqual(cek1.ok, false);
+  assert.deepStrictEqual(cek1.error.map((e) => [e.baris, e.pesan.replace(/\d{13}/, 'B')]), [
+    [5, 'Barcode B ada di lebih dari satu baris (5, 8)'], [7, 'Barang baru wajib ada nama'],
+    [8, 'Barcode B ada di lebih dari satu baris (5, 8)'], [8, 'Barcode B sudah dipakai SKU UJ-BARU']]);
+  assert.strictEqual(q("select count(*) from produk where sku like 'UJ-IMP%'"), '0');
+  // Gagal disimpan bila masih ada kesalahan
+  assert.strictEqual(impor(f1.baris, true).disimpan, false);
+  assert.strictEqual(q("select count(*) from principal where nama = 'PT Uji Principal'"), '0');
+
+  const bersih = f1.baris.filter((r) => ['UJ-KESET', 'UJ-BARU', 'UJ-IMP1'].includes(r.sku));
+  const cek2 = impor(bersih, false);
+  assert.deepStrictEqual([cek2.ok, cek2.jumlah, cek2.baru, cek2.diubah, cek2.sama, cek2.harga_beli], [true, 3, 1, 1, 1, 1]);
+  assert.deepStrictEqual(cek2.principal_baru, ['PT Uji Principal']);
+  assert.match(cek2.perubahan.find((x) => x.sku === 'UJ-KESET').detail, /harga jual: 16\.000 → 17\.500|harga jual: 16000 → 17500/);
+  assert.throws(() => impor(bersih, true, '00000000-0000-0000-0000-00000000000a'), /Hanya pengguna kantor/);
+  const simpan = impor(bersih, true);
+  assert.strictEqual(simpan.disimpan, true);
+  assert.deepStrictEqual(q("select harga_jual_konsumen, nama, satuan_masuk, barcode from produk where sku = 'UJ-KESET'").split('|'), ['17500.00', ...kesetLama]);
+  assert.strictEqual(q("select diubah_at from produk where sku = 'UJ-BARU'"), diubahLama); // tidak berubah → tidak disentuh
+  assert.deepStrictEqual(q(`select p.barcode, p.rasio_isi, p.isi_dus, pr.nama, h.harga, h.berlaku_at, h.sumber from produk p
+    join principal pr on pr.id = p.principal_id join harga_beli h on h.sku = p.sku where p.sku = 'UJ-IMP1'`).split('|'),
+    ['2000000000200', '12', '24', 'PT Uji Principal', '9250.00', '2026-11-10', 'PRICELIST']);
+  // Import ulang file yang sama: tidak ada perubahan, harga beli tidak dicatat dobel
+  const ulang = impor(bersih, true);
+  assert.deepStrictEqual([ulang.baru, ulang.diubah, ulang.sama, ulang.harga_beli], [0, 0, 3, 0]);
+  assert.strictEqual(q("select count(*) from harga_beli where sku = 'UJ-IMP1'"), '1');
+  // Toko yang terkunci hanya mengambil barang yang berubah
+  const m3 = await mb.ambilMaster();
+  assert.deepStrictEqual([m3.baru, m3.diubah], [1, 1]);
+  assert.strictEqual(T.getProduct('UJ-KESET').unit_price, 17500);
+  assert.strictEqual(T.getProduct('UJ-IMP1').pack_ratio, 12);
+
+  // Format "data item" program lama: Kode Item jadi barcode barang baru
+  const f2 = IB.bacaFile(buku([['Kode Item', 'Nama Item', 'Jenis', 'Rak', 'Stok', 'Satuan', 'Harga Jual'],
+    ['UJ-DI1', 'Barang Data Item', 'Plastik', 'A1', 10, 'Pcs', 4500], ['UJ-KESET', '', '', '', 0, 'Pcs', 17500]]));
+  assert.strictEqual(f2.format, 'data item');
+  const s2 = impor(f2.baris, true);
+  assert.deepStrictEqual([s2.disimpan, s2.baru, s2.sama], [true, 1, 1]);
+  assert.deepStrictEqual(q("select barcode, kategori, harga_jual_konsumen from produk where sku = 'UJ-DI1'").split('|'), ['UJ-DI1', 'Plastik', '4500.00']);
+  assert.strictEqual(q("select barcode from produk where sku = 'UJ-KESET'"), kesetLama[2]); // barang lama tetap barcode-nya
+  ok('import barang Excel: template Trizone & data item, pratinjau, kesalahan per baris, simpan semua-atau-tidak, sel kosong = nilai lama, toko mengambil yang berubah saja');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });

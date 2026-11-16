@@ -20,7 +20,8 @@ mengelola master barang & harga, dan menyetujui pembelian.
 |---|---|
 | `web/` | Aplikasi web kantor (HTML/JS tanpa proses build). `config.js` diisi alamat project. |
 | `web/lib/accurate.js` | Pembaca laporan Accurate "Rincian Pengiriman Pesanan" (dipakai web & baris perintah) |
-| `supabase/migrations/` | Skema database: `…01_mother_base.sql` (data & protokol Trizone), `…02_aplikasi.sql` (laporan, PO, SO, pengguna, AI) |
+| `web/lib/import-barang.js` | Pembaca Excel import master barang (template Trizone, data item, file "Unduh master") |
+| `supabase/migrations/` | Skema database: `…01_mother_base.sql` (data & protokol Trizone), `…02_aplikasi.sql` (laporan, PO, SO, pengguna, AI), `…03_import_barang.sql` (import master barang) |
 | `supabase/seed.sql` | Data awal: 9 toko, pemetaan pelanggan Accurate |
 | `supabase/functions/asisten/` | Edge Function asisten AI (`index.ts` untuk Deno, inti di `asisten.mjs`) |
 | `apps-script/Code.gs` | Alert email harian pukul 09.00 (opsional) |
@@ -37,7 +38,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 | Stok & Opname | semua | Review & persetujuan SO (kantor), selisih stok Trizone vs hitungan mother base, cari stok, stok lambat |
 | Surat Jalan | kantor | Upload Excel Accurate di browser, unduh file import penerimaan Trizone per toko, simpan, status pencocokan |
 | Pembelian | kantor | Usulan beli per principal → usulan PO dengan alasan per baris → owner ubah qty & setujui → tandai dikirim → terima barang (stok gudang & harga beli diperbarui) |
-| Master Barang | kantor | Barcode, harga jual, satuan & isi, principal; harga beli / pricelist; markup (owner) |
+| Master Barang | kantor | Barcode, harga jual, satuan & isi, principal; harga beli / pricelist; markup (owner); import Excel dengan pratinjau |
 | Principal | kantor | Lead time (perkiraan & aktual), periode order, minimum order; tombol Wawancara AI |
 | Toko | kantor | Koneksi tiap toko, buat / ganti kunci toko (owner), pemetaan pelanggan Accurate |
 | Asisten AI | semua | Tanya jawab data dengan Claude; percakapan tersimpan per pengguna |
@@ -63,7 +64,7 @@ data tokonya, juga saat bertanya ke asisten AI.
 
 1. Buat project di supabase.com.
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
-   `migrations/20261116000002_aplikasi.sql`, lalu `seed.sql`
+   `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`
@@ -136,6 +137,24 @@ Claude tiruan; isi `ANTHROPIC_API_KEY` sebelum `npm run dev` untuk Claude sunggu
 
 Server dev meniru bagian Supabase yang dipakai (REST, RPC, login, Edge Function) di atas
 PostgreSQL, dengan peran dan Row Level Security yang sama. Jangan dipakai di internet.
+
+## Import master barang dari Excel
+
+Di aplikasi: **Master Barang → Import Excel…**. Cara termudah: **Unduh master saat ini**, ubah di Excel,
+lalu pilih file itu lagi.
+
+- **Format:** sama dengan template import barang Trizone (`Barcode`, `SKU`, `Nama_Barang`, `Merk`,
+  `Kategori`, `Harga_Jual`, `Satuan_Masuk`, `Rasio_Isi_Dus`), ditambah kolom kantor `Principal`,
+  `Isi_Dus_Principal`, `Harga_Beli` (per Biji, dicatat sebagai pricelist), dan `Aktif` (Ya/Tidak).
+  File "data item" program lama (`Kode Item`, `Nama Item`, `Jenis`, `Harga Jual`) juga diterima.
+- **Membaca kolom:** nama kolom tidak peka huruf besar/kecil, spasi, atau garis bawah, dan baris judul
+  di atas tabel dilewati.
+- **Sel kosong tidak mengubah data lama.** Barang yang tidak ada di file tidak dihapus. Principal
+  yang belum ada dibuat otomatis.
+- **Pratinjau dulu:** jumlah barang baru, diubah, dan sama, rincian perubahan per barang, serta
+  kesalahan per baris (SKU ganda, barcode dipakai barang lain, angka salah, barang baru tanpa nama).
+  Simpan hanya bisa bila tidak ada kesalahan, dan semua baris tersimpan bersama atau tidak sama sekali.
+- **Ke toko:** hanya barang yang benar-benar berubah yang diambil toko dengan daftar barang terkunci.
 
 ## Surat jalan dari Accurate
 

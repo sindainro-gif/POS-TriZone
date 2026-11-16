@@ -1,5 +1,5 @@
 'use strict';
-/* global supabase, XLSX, MbAccurate */
+/* global supabase, XLSX, MbAccurate, MbImportBarang */
 // Mother Base — aplikasi web kantor. Tanpa proses build: satu file, supabase-js & SheetJS dari CDN.
 // Semua data dibaca dengan login pengguna; Row Level Security di database yang membatasi akses.
 
@@ -42,6 +42,15 @@ async function q(p) {
   return data;
 }
 const rpc = (fn, args) => q(sb.rpc(fn, args || {}));
+// Semua baris (Supabase membatasi 1.000 baris per permintaan). buat() membuat query baru tiap halaman.
+async function ambilSemua(buat, ukuran = 1000) {
+  const semua = [];
+  for (let dari = 0; ; dari += ukuran) {
+    const rows = await q(buat().range(dari, dari + ukuran - 1));
+    semua.push(...rows);
+    if (rows.length < ukuran) return semua;
+  }
+}
 
 function toast(msg, jenis = '') {
   const t = document.createElement('div');
@@ -575,7 +584,7 @@ async function detailSj(sj) {
 // ---------------------------------------------------------------- Master barang
 async function hBarang(el) {
   el.innerHTML = `${head('Master Barang', 'Kode, barcode, harga jual, dan satuan yang dipakai semua toko. Toko dengan daftar barang terkunci mengambilnya otomatis tiap jam.',
-    `<button class="btn" id="brIsi">Isi dari toko…</button><button class="btn" id="brHarga">Catat harga beli…</button>${isOwner() ? '<button class="btn" id="brMarkup">Markup…</button>' : ''}<button class="btn primary" id="brTambah">+ Barang</button>`)}
+    `<button class="btn" id="brImport">Import Excel…</button><button class="btn" id="brIsi">Isi dari toko…</button><button class="btn" id="brHarga">Catat harga beli…</button>${isOwner() ? '<button class="btn" id="brMarkup">Markup…</button>' : ''}<button class="btn primary" id="brTambah">+ Barang</button>`)}
     <div class="card"><div class="card-head"><div class="row"><input id="brCari" placeholder="Cari nama atau SKU" style="min-width:220px"><select id="brPr" aria-label="Principal"><option value="">Semua principal</option></select></div>
     <span class="muted small" id="brJumlah"></span></div><div id="brIsiTabel"></div></div>`;
   const [principal, markupRow] = await Promise.all([
@@ -637,6 +646,7 @@ async function hBarang(el) {
   }
 
   $('#brTambah', el).addEventListener('click', () => formBarang(null));
+  $('#brImport', el).addEventListener('click', () => importExcel(() => muat()));
   $('#brCari', el).addEventListener('input', () => { clearTimeout(S.tCari); S.tCari = setTimeout(() => muat().catch((e) => toast(pesanError(e), 'bad')), 250); });
   $('#brPr', el).addEventListener('change', muat);
   $('#brIsi', el).addEventListener('click', () => modal({
@@ -675,6 +685,79 @@ async function hBarang(el) {
     }));
   }
   await muat();
+}
+
+// Import master barang dari Excel: baca file di browser → pratinjau (import_produk tanpa simpan) → simpan.
+function importExcel(selesai) {
+  let file = null;
+  let data = null;
+  const m = modal({
+    judul: 'Import barang dari Excel', lebar: true,
+    isi: `<p style="margin-top:0">Format sama dengan template import barang Trizone, ditambah kolom kantor <b>Principal</b>, <b>Isi_Dus_Principal</b>, <b>Harga_Beli</b> (per Biji), dan <b>Aktif</b>.
+        File "data item" (Kode Item, Nama Item, Jenis, Harga Jual) juga bisa. <b>Sel kosong tidak mengubah data lama.</b> Barang yang tidak ada di file tidak dihapus.</p>
+      <div class="row"><button class="btn sm" id="imTemplate">Unduh template</button><button class="btn sm" id="imMaster">Unduh master saat ini</button>
+        <span class="muted small">Cara termudah: unduh master, ubah di Excel, lalu import kembali.</span></div>
+      <div class="grid g2" style="margin-top:12px"><label class="f">File Excel<input type="file" id="imFile" accept=".xlsx,.xls"></label>
+        <label class="f">Harga beli berlaku mulai<input type="date" id="imTgl" value="${hariIni()}"></label></div>
+      <div id="imHasil"></div>`,
+    aksi: [{ label: 'Batal' }, { label: 'Simpan ke master', kelas: 'primary', onClick: async ({ tutup }) => {
+      if (!data) throw new Error('Pilih file Excel dulu.');
+      if (!data.cek.ok || data.file.masalah.length) throw new Error('Perbaiki kesalahan di file dulu, lalu pilih file lagi.');
+      const r = await rpc('import_produk', { p_baris: data.file.baris, p_simpan: true, p_tanggal_harga: $('#imTgl', m.el).value || hariIni() });
+      if (!r.disimpan) throw new Error('Tidak disimpan: data di server berubah. Pilih file lagi untuk memeriksa ulang.');
+      tutup();
+      toast(`Import selesai: ${num(r.baru)} barang baru, ${num(r.diubah)} diubah, ${num(r.harga_beli)} harga beli dicatat.`);
+      selesai();
+    } }],
+  });
+  const tombolSimpan = $('.modal-kaki .primary', m.el);
+  tombolSimpan.disabled = true;
+
+  $('#imTemplate', m.el).addEventListener('click', () => XLSX.writeFile(MbImportBarang.workbook(MbImportBarang.CONTOH), 'Template_Import_Barang.xlsx'));
+  $('#imMaster', m.el).addEventListener('click', (e) => sibuk(e.target, async () => {
+    const [produk, principal, harga] = await Promise.all([
+      ambilSemua(() => sb.from('produk').select('*').order('sku')),
+      q(sb.from('principal').select('id,nama')),
+      ambilSemua(() => sb.from('v_harga_produk').select('sku,harga_beli_dasar').order('sku')),
+    ]);
+    const nmPr = Object.fromEntries(principal.map((p) => [p.id, p.nama]));
+    const hb = Object.fromEntries(harga.map((h) => [h.sku, h.harga_beli_dasar]));
+    XLSX.writeFile(MbImportBarang.workbook(MbImportBarang.barisMaster(produk, nmPr, hb)), `Master_Barang_${hariIni()}.xlsx`);
+  }));
+
+  async function periksa() {
+    const box = $('#imHasil', m.el);
+    tombolSimpan.disabled = true;
+    data = null;
+    if (!file) return;
+    box.innerHTML = '<div class="kosong">Membaca dan memeriksa file…</div>';
+    try {
+      const f = MbImportBarang.bacaFile(await file.arrayBuffer());
+      if (!f.baris.length) throw new Error('Tidak ada baris barang (dengan SKU / Kode Item) di file ini.');
+      const cek = await rpc('import_produk', { p_baris: f.baris, p_simpan: false, p_tanggal_harga: $('#imTgl', m.el).value || hariIni() });
+      data = { file: f, cek };
+      const salah = [...f.masalah, ...cek.error].sort((a, b) => a.baris - b.baris);
+      const nSalah = f.masalah.length + cek.jumlah_error;
+      const bisa = nSalah === 0 && (cek.baru + cek.diubah + cek.harga_beli) > 0;
+      tombolSimpan.disabled = !bisa;
+      box.innerHTML = `<div class="grid" style="margin-top:12px">
+        <div class="alert ${nSalah ? 'bad' : 'ok'}"><b>${esc(file.name)}</b> · lembar ${esc(f.lembar)} · format ${esc(f.format)} · judul kolom di baris ${num(f.barisJudul)}<br>
+          ${num(cek.jumlah)} barang: <b>${num(cek.baru)} baru</b>, <b>${num(cek.diubah)} diubah</b>, ${num(cek.sama)} sama${cek.harga_beli ? ` · ${num(cek.harga_beli)} harga beli baru` : ''}
+          ${cek.principal_baru.length ? `<br>Principal baru: ${cek.principal_baru.map(esc).join(', ')}` : ''}
+          <br><span class="small">Kolom terbaca: ${f.kolom.map((k) => esc(k.judul)).join(', ')}</span>
+          ${nSalah ? `<br><b>${num(nSalah)} kesalahan. Perbaiki di Excel, simpan, lalu pilih file lagi.</b>` : ''}</div>
+        ${f.tanpaSku.length ? `<div class="alert warn">${num(f.tanpaSku.length)} baris tanpa SKU dilewati (baris ${f.tanpaSku.slice(0, 15).join(', ')}${f.tanpaSku.length > 15 ? ', …' : ''}).</div>` : ''}
+        ${cek.belum_lengkap ? `<div class="alert warn">${num(cek.belum_lengkap)} barang belum punya barcode atau harga jual, jadi belum dikirim ke toko sampai dilengkapi.</div>` : ''}
+        ${salah.length ? tabel([{ k: 'baris', judul: 'Baris', num: true }, { k: 'pesan', judul: 'Kesalahan' }], salah.slice(0, 200)) : ''}
+        ${!nSalah && cek.perubahan.length ? tabel([{ k: 'baris', judul: 'Baris', num: true }, { k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` },
+          { k: 'nama', judul: 'Nama' }, { k: 'status', judul: '', fmt: (v) => (v === 'BARU' ? '<span class="pill ok">Baru</span>' : '<span class="pill info">Diubah</span>') },
+          { k: 'detail', judul: 'Perubahan', fmt: (v) => `<span class="small">${esc(v)}</span>` }], cek.perubahan) : ''}
+        ${!nSalah && !bisa ? '<div class="alert">Tidak ada perubahan: isi file sama dengan master.</div>' : ''}
+        ${cek.perubahan.length >= 500 ? '<p class="muted small" style="margin:0">Hanya 500 perubahan pertama yang ditampilkan.</p>' : ''}</div>`;
+    } catch (err) { box.innerHTML = `<div class="alert bad" style="margin-top:12px">${esc(pesanError(err))}</div>`; }
+  }
+  $('#imFile', m.el).addEventListener('change', (e) => { file = e.target.files[0] || null; periksa(); });
+  $('#imTgl', m.el).addEventListener('change', periksa);
 }
 
 // ---------------------------------------------------------------- Principal

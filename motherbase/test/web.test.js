@@ -216,6 +216,60 @@ function fileAccurate() {
     await shot('06-master-barang');
     ok('master barang: ubah harga jual, markup 7% (owner)');
 
+    // Import Excel: unduh master → ubah di "Excel" → import → pratinjau → simpan
+    await page.click('#brImport');
+    await page.waitForSelector('#imFile');
+    const [dlTpl] = await Promise.all([page.waitForEvent('download'), page.click('#imTemplate')]);
+    const fTpl = path.join(OUT, dlTpl.suggestedFilename());
+    await dlTpl.saveAs(fTpl);
+    assert.deepStrictEqual(XLSX.utils.sheet_to_json(XLSX.readFile(fTpl).Sheets.Barang, { header: 1 })[0].slice(0, 8),
+      ['Barcode', 'SKU', 'Nama_Barang', 'Merk', 'Kategori', 'Harga_Jual', 'Satuan_Masuk', 'Rasio_Isi_Dus']);
+    const [dlMaster] = await Promise.all([page.waitForEvent('download'), page.click('#imMaster')]);
+    const fMaster = path.join(OUT, dlMaster.suggestedFilename());
+    await dlMaster.saveAs(fMaster);
+    const master = XLSX.utils.sheet_to_json(XLSX.readFile(fMaster).Sheets.Barang, { defval: '' });
+    assert.strictEqual(master.length, Number((await db('select count(*) n from produk'))[0].n));
+    const rtn = master.find((r) => r.SKU === 'RTN-002');
+    assert.strictEqual(rtn.Harga_Jual, 27500);
+    rtn.Harga_Jual = 28000;
+    master.push({ Barcode: '2999000000017', SKU: 'IMP-WEB-1', Nama_Barang: 'Barang Import Web', Merk: 'Uji', Kategori: 'Uji', Harga_Jual: 15000,
+      Satuan_Masuk: 'Dus', Rasio_Isi_Dus: 6, Principal: 'PT Principal Web Baru', Isi_Dus_Principal: 12, Harga_Beli: 9000, Aktif: 'Ya' });
+    const fUbah = path.join(OUT, 'Master_diubah.xlsx');
+    const wbUbah = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbUbah, XLSX.utils.json_to_sheet(master), 'Barang');
+    XLSX.writeFile(wbUbah, fUbah);
+    await page.setInputFiles('#imFile', fUbah);
+    await page.waitForSelector('#imHasil .alert.ok');
+    const ringkas = await page.textContent('#imHasil');
+    assert.match(ringkas, /1 baru/);
+    assert.match(ringkas, /1 diubah/);
+    assert.match(ringkas, /PT Principal Web Baru/);
+    assert.match(ringkas, /harga jual: 27\.500 → 28\.000/);
+    assert.match(ringkas, /harga jual 15\.000 · 1 Dus = 6 Biji · PT Principal Web Baru · harga beli 9\.000/);
+    await shot('06b-import-barang-pratinjau');
+    await page.click('.modal-kaki .btn.primary');
+    await toastCocok(/Import selesai: 1 barang baru, 1 diubah/);
+    assert.strictEqual(Number((await db("select harga_jual_konsumen from produk where sku = 'RTN-002'"))[0].harga_jual_konsumen), 28000);
+    const [impBaru] = await db(`select p.rasio_isi, pr.nama from produk p join principal pr on pr.id = p.principal_id where p.sku = 'IMP-WEB-1'`);
+    assert.deepStrictEqual([impBaru.rasio_isi, impBaru.nama], [6, 'PT Principal Web Baru']);
+    // File bermasalah: pratinjau menampilkan kesalahan per baris, tombol simpan mati
+    const fSalah = path.join(OUT, 'Import_salah.xlsx');
+    const wbSalah = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbSalah, XLSX.utils.aoa_to_sheet([['SKU', 'Nama_Barang', 'Barcode', 'Harga_Jual'],
+      ['IMP-WEB-2', '', '2999000000024', 1000], ['IMP-WEB-3', 'Barcode dobel', '2999000000017', 'seribu']]), 'Barang');
+    XLSX.writeFile(wbSalah, fSalah);
+    await page.click('#brImport');
+    await page.setInputFiles('#imFile', fSalah);
+    await page.waitForSelector('#imHasil .alert.bad');
+    const teksSalah = await page.textContent('#imHasil');
+    assert.match(teksSalah, /wajib ada nama/);
+    assert.match(teksSalah, /sudah dipakai SKU IMP-WEB-1/);
+    assert.match(teksSalah, /bukan angka/);
+    assert.strictEqual(await page.$eval('.modal-kaki .btn.primary', (b) => b.disabled), true);
+    await shot('06c-import-barang-salah');
+    await page.click('.modal .tutup');
+    ok('master barang: import Excel (unduh template & master, ubah, pratinjau, simpan; kesalahan per baris menahan simpan)');
+
     await buka('principal');
     await shot('07-principal');
     await page.click('[data-ww]');

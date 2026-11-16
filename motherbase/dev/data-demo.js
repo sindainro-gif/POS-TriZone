@@ -76,7 +76,7 @@ async function buatDatabase(dbUrl) {
   const c = new Client({ connectionString: dbUrl });
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
-    'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;
