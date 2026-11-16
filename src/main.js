@@ -1051,7 +1051,12 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+    // Dibuka lagi saat sudah berjalan: tampilkan jendela yang ada (juga bila masih tersembunyi)
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      if (!win.isVisible()) { win.maximize(); win.show(); }
+      win.focus();
+    }
   });
   app.whenReady().then(async () => {
     try {
