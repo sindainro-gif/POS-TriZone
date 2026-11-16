@@ -64,7 +64,7 @@ $$;
 
 -- Pengaturan (mis. markup harga jual ke toko): kantor membaca, hanya owner yang mengubah.
 create policy owner_tulis_pengaturan on pengaturan for all to authenticated
-  using (mb.peran_saya() = 'owner') with check (mb.peran_saya() = 'owner');
+  using ((select mb.peran_saya()) = 'owner') with check ((select mb.peran_saya()) = 'owner');
 
 -- ---------------------------------------------------------------------
 -- 2. Toko
@@ -291,7 +291,7 @@ $$;
 
 -- Angka untuk teks: tanpa nol di belakang koma, koma desimal (24.000 → 24, 16.54 → 16,5).
 create or replace function mb.angka(x numeric, d int default 1) returns text
-language sql immutable as $$ select replace(trim_scale(round(x, d))::text, '.', ',') $$;
+language sql immutable set search_path = '' as $$ select replace(trim_scale(round(x, d))::text, '.', ',') $$;
 
 -- Membuat usulan PO dari v_usulan_beli untuk satu principal, dengan alasan per baris.
 create or replace function public.buat_po_dari_usulan(p_principal_id bigint) returns text
@@ -390,9 +390,11 @@ create table ai_percakapan (
   diubah_at   timestamptz not null default now()
 );
 create index on ai_percakapan (pengguna, diubah_at desc);
+create index on ai_percakapan (principal_id);
 alter table ai_percakapan enable row level security;
 create policy milik_sendiri on ai_percakapan for all to authenticated
-  using (pengguna = auth.uid()) with check (pengguna = auth.uid() and mb.peran_saya() is not null);
+  using (pengguna = (select auth.uid()))
+  with check (pengguna = (select auth.uid()) and (select mb.peran_saya()) is not null);
 create trigger ai_percakapan_diubah before update on ai_percakapan for each row execute function mb.set_diubah_at();
 
 -- ---------------------------------------------------------------------

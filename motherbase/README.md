@@ -76,6 +76,12 @@ data tokonya, juga saat bertanya ke asisten AI.
 
 ### 2. Asisten AI (Edge Function)
 
+Tanpa CLI: **Edge Functions → Deploy a new function → Via Editor**, nama `asisten`, isi
+`index.ts` dan `asisten.mjs` dari `supabase/functions/asisten/`. Lalu **Edge Functions → Secrets**:
+tambah `ANTHROPIC_API_KEY` (dari console.anthropic.com → API Keys).
+
+Dengan CLI:
+
 ```bash
 supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 ```
@@ -84,8 +90,8 @@ supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 supabase functions deploy asisten
 ```
 
-Opsional: `supabase secrets set ASISTEN_ALLOWED_ORIGIN=https://alamat-aplikasi-anda` untuk
-membatasi asal permintaan.
+Opsional: secret `ASISTEN_ALLOWED_ORIGIN=https://alamat-aplikasi-anda` untuk membatasi asal
+permintaan.
 
 ### 3. Aplikasi web
 

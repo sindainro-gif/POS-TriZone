@@ -30,17 +30,17 @@ create type sumber_harga   as enum ('PEMBELIAN','PRICELIST');
 
 -- Jam lokal toko "YYYY-MM-DD HH:MM:SS" → timestamptz WIB.
 create or replace function mb.wib(t text) returns timestamptz
-language sql immutable as $$
+language sql immutable set search_path = '' as $$
   select case when t is null or btrim(t) = '' then null else (btrim(t) || '+07')::timestamptz end
 $$;
 
 create or replace function mb.tgl_wib(t timestamptz) returns date
-language sql immutable as $$ select (t at time zone 'Asia/Jakarta')::date $$;
+language sql immutable set search_path = '' as $$ select (t at time zone 'Asia/Jakarta')::date $$;
 
 -- Metode bayar Trizone → kelompok laporan. "Kartu Debit" (versi lama Trizone)
 -- dihitung sebagai Transfer sesuai keputusan 16 Nov 2026.
 create or replace function mb.kelompok_metode(m text) returns text
-language sql immutable as $$
+language sql immutable set search_path = '' as $$
   select case
     when upper(btrim(m)) in ('TUNAI','CASH') then 'TUNAI'
     when upper(btrim(m)) = 'QRIS' then 'QRIS'
@@ -50,7 +50,7 @@ language sql immutable as $$
 $$;
 
 create or replace function mb.is_zona_stok(z text) returns boolean
-language sql immutable as $$ select z in ('floor','warehouse','damaged','shopee') $$;
+language sql immutable set search_path = '' as $$ select z in ('floor','warehouse','damaged','shopee') $$;
 
 -- ---------------------------------------------------------------------
 -- 1. Master data
@@ -104,7 +104,7 @@ create table produk (
 );
 create index on produk (principal_id);
 create index on produk (diubah_at);
-create or replace function mb.set_diubah_at() returns trigger language plpgsql as $$
+create or replace function mb.set_diubah_at() returns trigger language plpgsql set search_path = '' as $$
 begin new.diubah_at := now(); return new; end $$;
 create trigger produk_diubah before update on produk for each row execute function mb.set_diubah_at();
 
@@ -149,7 +149,7 @@ language sql stable security definer set search_path = public as $$
   select kode_toko from pengguna where id = auth.uid() and aktif
 $$;
 create or replace function mb.boleh_lihat_toko(x char(3)) returns boolean
-language sql stable as $$ select mb.is_kantor() or x = mb.toko_saya() $$;
+language sql stable set search_path = '' as $$ select mb.is_kantor() or x = mb.toko_saya() $$;
 
 -- ---------------------------------------------------------------------
 -- 3. Koneksi toko
@@ -473,7 +473,7 @@ end $$;
 -- Shift yang ditutup memakai p_at = waktu tutup; shift berjalan memakai waktu snapshot,
 -- jadi data tutup shift selalu menggantikan potongan shift berjalan.
 create or replace function mb.terapkan_shift(p_kode char(3), sh jsonb, sales jsonb, p_at timestamptz)
-returns boolean language plpgsql as $$
+returns boolean language plpgsql set search_path = public, mb as $$
 declare
   v_ada   timestamptz;
   v_tutup timestamptz;
@@ -514,7 +514,7 @@ end $$;
 -- Riwayat dokumen: penerimaan, mutasi, stok opname. Dokumen Trizone tidak berubah setelah dibuat;
 -- kiriman ulang dokumen yang sama hanya mengganti barisnya bila kepalanya berbeda.
 create or replace function mb.terapkan_dokumen(p_kode char(3), d jsonb) returns jsonb
-language plpgsql as $$
+language plpgsql set search_path = public, mb as $$
 declare
   v_list text[];
   n_rc int := jsonb_array_length(coalesce(d->'receptions','[]'));
@@ -592,7 +592,7 @@ end $$;
 -- Keadaan terkini toko: barang, stok, draft penerimaan, transaksi darurat, shift berjalan.
 -- Snapshot yang lebih lama dari yang sudah ada dilewati, jadi stok tidak mundur.
 create or replace function mb.terapkan_snapshot(p_kode char(3), s jsonb) returns boolean
-language plpgsql as $$
+language plpgsql set search_path = public, mb as $$
 declare
   v_at timestamptz := mb.wib(s->>'created_at');
   cs   jsonb := s->'current_shift';
@@ -647,7 +647,7 @@ end $$;
 
 -- Kode toko + kunci toko → kode toko, atau error. Kunci disimpan sebagai sha256.
 create or replace function mb.cek_kunci(p_kode text, p_kunci text) returns char(3)
-language plpgsql stable security definer set search_path = public, mb as $$
+language plpgsql stable security definer set search_path = public, mb, extensions as $$
 declare v char(3);
 begin
   select k.kode_toko into v
@@ -744,7 +744,7 @@ end $$;
 -- Membuat (atau mengganti) kunci toko. Kunci hanya ditampilkan sekali; masukkan di
 -- Trizone: Pengaturan → Mother Base. Kunci lama langsung tidak berlaku.
 create or replace function public.buat_kunci_toko(p_kode char(3)) returns text
-language plpgsql security definer set search_path = public, mb as $$
+language plpgsql security definer set search_path = public, mb, extensions as $$
 declare v text := encode(gen_random_bytes(24), 'hex');
 begin
   if auth.uid() is not null and mb.peran_saya() is distinct from 'owner' then
@@ -778,7 +778,7 @@ language sql stable security definer set search_path = public, mb as $$
   select t.kode, t.nama, exists (select 1 from toko_kunci k where k.kode_toko = t.kode),
          s.shift_terakhir_at, s.kiriman_terakhir_at
   from toko t left join toko_status s on s.kode_toko = t.kode
-  where t.aktif
+  where t.aktif and (auth.uid() is null or mb.boleh_lihat_toko(t.kode))
     and not exists (select 1 from shift x where x.kode_toko = t.kode and mb.tgl_wib(x.tutup_at) = p_tanggal)
   order by t.kode
 $$;
@@ -1066,13 +1066,13 @@ begin
                            'penerimaan_principal_baris','audit_log','kiriman_log']
   loop
     execute format('alter table %I enable row level security', t);
-    execute format('create policy kantor_baca on %I for select to authenticated using (mb.is_kantor())', t);
+    execute format('create policy kantor_baca on %I for select to authenticated using ((select mb.is_kantor()))', t);
   end loop;
   foreach t in array array['pelanggan_accurate','principal','produk','harga_beli','gudang_mutasi','po','po_baris',
                            'penerimaan_principal','penerimaan_principal_baris']
   loop
-    execute format('create policy kantor_tulis on %I for insert to authenticated with check (mb.is_kantor())', t);
-    execute format('create policy kantor_ubah on %I for update to authenticated using (mb.is_kantor())', t);
+    execute format('create policy kantor_tulis on %I for insert to authenticated with check ((select mb.is_kantor()))', t);
+    execute format('create policy kantor_ubah on %I for update to authenticated using ((select mb.is_kantor()))', t);
   end loop;
 
   -- Tabel per toko: kantor melihat semua, pemilik toko hanya tokonya. Ditulis lewat terima_data.
@@ -1082,24 +1082,31 @@ begin
                            'transaksi_darurat']
   loop
     execute format('alter table %I enable row level security', t);
-    execute format('create policy baca_per_toko on %I for select to authenticated using (mb.boleh_lihat_toko(kode_toko))', t);
+    execute format('create policy baca_per_toko on %I for select to authenticated using ((select mb.is_kantor()) or kode_toko = (select mb.toko_saya()))', t);
   end loop;
 end $$;
 
 -- Kunci toko: RLS aktif TANPA policy, jadi tidak terbaca lewat API oleh siapa pun (hanya fungsi security definer).
 alter table toko_kunci enable row level security;
 
-create policy kantor_review on stok_opname_review for update to authenticated using (mb.is_kantor());
+-- Index untuk relasi yang sering di-join
+create index on pelanggan_accurate (kode_toko);
+create index on po (principal_id);
+create index on po_baris (sku);
+create index on penerimaan_principal (no_po);
+create index on gudang_mutasi (sku);
+
+create policy kantor_review on stok_opname_review for update to authenticated using ((select mb.is_kantor()));
 
 alter table toko enable row level security;
-create policy baca_toko on toko for select to authenticated using (mb.peran_saya() is not null);
+create policy baca_toko on toko for select to authenticated using ((select mb.peran_saya()) is not null);
 create policy owner_ubah_toko on toko for all to authenticated
-  using (mb.peran_saya() = 'owner') with check (mb.peran_saya() = 'owner');
+  using ((select mb.peran_saya()) = 'owner') with check ((select mb.peran_saya()) = 'owner');
 
 alter table pengguna enable row level security;
-create policy lihat_diri on pengguna for select to authenticated using (id = auth.uid() or mb.peran_saya() = 'owner');
+create policy lihat_diri on pengguna for select to authenticated using (id = (select auth.uid()) or (select mb.peran_saya()) = 'owner');
 create policy owner_kelola on pengguna for all to authenticated
-  using (mb.peran_saya() = 'owner') with check (mb.peran_saya() = 'owner');
+  using ((select mb.peran_saya()) = 'owner') with check ((select mb.peran_saya()) = 'owner');
 
 -- Hanya owner yang boleh menyetujui PO.
 create or replace function mb.cek_persetujuan_po() returns trigger
@@ -1116,8 +1123,8 @@ begin
 end $$;
 create trigger po_persetujuan before update on po for each row execute function mb.cek_persetujuan_po();
 
-revoke all on function public.terima_data(jsonb)          from public;
-revoke all on function public.ambil_master(jsonb)         from public;
+revoke all on function public.terima_data(jsonb)          from public, authenticated;
+revoke all on function public.ambil_master(jsonb)         from public, authenticated;
 revoke all on function public.buat_kunci_toko(char)       from public, anon;
 revoke all on function public.isi_master_dari_toko(char)  from public, anon;
 revoke all on function public.import_surat_jalan(jsonb)   from public, anon;
