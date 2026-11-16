@@ -1,15 +1,14 @@
 -- =====================================================================
 -- Mother Base Trizone — skema database (Supabase / PostgreSQL 15+)
 --
--- Sumber data toko: paket Homebase POS Tri-Zone (format v1, file TRZ_*.json.gz),
--- lihat docs/HOMEBASE.md. Paket diterima lewat lampiran email dan/atau folder
--- Google Drive, lalu dimasukkan oleh motherbase/apps-script/Code.gs melalui
--- RPC ingest_paket(). Aturan impor sama dengan Homebase:
---   * paket yang sama (sha256) tidak diproses dua kali;
---   * penjualan disimpan per shift; paket yang lebih baru menggantikan shift itu;
---   * snapshot terbaru mengganti keadaan terkini (barang, stok); snapshot lama
---     hanya menambah riwayat;
---   * riwayat dokumen (penerimaan, mutasi, opname) ditambah/diperbarui, tidak dihapus.
+-- Sumber data toko: Trizone (PC Gudang / Mandiri) mengirim langsung lewat HTTPS ke
+-- RPC terima_data() dengan kode toko + kunci toko (src/motherbase.js di Trizone).
+-- Trizone menyimpan antrean kiriman di pos.db, jadi toko tetap jalan tanpa internet.
+--   * penjualan disimpan per shift; data shift yang lebih baru menggantikan shift itu;
+--   * snapshot terbaru mengganti keadaan terkini (barang, stok); snapshot lama dilewati;
+--   * riwayat dokumen (penerimaan, mutasi, opname) ditambah/diperbarui, tidak dihapus;
+--   * kiriman ulang selalu aman (idempoten).
+-- Master barang & harga jual diambil Trizone lewat RPC ambil_master().
 --
 -- Satuan barang selalu Biji. Waktu dari toko = jam lokal WIB.
 -- Kode zona mengikuti Trizone: floor (Display Toko), warehouse (Gudang Utama),
@@ -61,8 +60,6 @@ create table toko (
   nama            text not null,
   kota            text not null,
   nama_pt         text,
-  store_id        text unique,          -- ID toko Trizone (Pengaturan → Homebase); diisi saat toko dihubungkan
-  email_pengirim  text unique,          -- alamat email tutup shift toko (jalur email)
   batas_hari_sj   int  not null check (batas_hari_sj > 0),
   aktif           boolean not null default true,
   dibuat_at       timestamptz not null default now()
@@ -94,12 +91,22 @@ create table produk (
   sku                 text primary key,
   nama                text not null,
   principal_id        bigint references principal(id),
-  isi_dus             int  not null default 1 check (isi_dus > 0),
-  harga_jual_konsumen numeric(14,2),
+  isi_dus             int  not null default 1 check (isi_dus > 0),   -- isi dus dari principal (pembulatan PO)
+  barcode             text unique,
+  merk                text,
+  kategori            text,
+  harga_jual_konsumen numeric(14,2),                                   -- harga jual di toko (dikirim ke Trizone)
+  satuan_masuk        text not null default 'Dus',                     -- satuan kiriman ke toko, mis. Coly
+  rasio_isi           int  not null default 1 check (rasio_isi > 0),   -- Biji per satuan masuk
   aktif               boolean not null default true,
-  dibuat_at           timestamptz not null default now()
+  dibuat_at           timestamptz not null default now(),
+  diubah_at           timestamptz not null default now()
 );
 create index on produk (principal_id);
+create index on produk (diubah_at);
+create or replace function mb.set_diubah_at() returns trigger language plpgsql as $$
+begin new.diubah_at := now(); return new; end $$;
+create trigger produk_diubah before update on produk for each row execute function mb.set_diubah_at();
 
 create table harga_beli (
   id          bigint generated always as identity primary key,
@@ -145,41 +152,35 @@ create or replace function mb.boleh_lihat_toko(x char(3)) returns boolean
 language sql stable as $$ select mb.is_kantor() or x = mb.toko_saya() $$;
 
 -- ---------------------------------------------------------------------
--- 3. Paket masuk
+-- 3. Koneksi toko
 -- ---------------------------------------------------------------------
-create table paket_impor (
-  id           bigint generated always as identity primary key,
-  sha256       text not null unique,
-  nama_file    text,
-  sumber       text not null check (sumber in ('EMAIL','DRIVE','MANUAL')),
-  pengirim     text,
-  package_id   text,
-  jenis        text,                    -- snapshot / shift
-  store_id     text,
-  nama_toko_trizone text,
-  kode_toko    char(3) references toko(kode),
-  dibuat_at    timestamptz,             -- waktu paket dibuat di toko
-  diterima_at  timestamptz not null default now(),
-  status       text not null check (status in ('OK','LAMA','DITOLAK','MENUNGGU_TOKO')),
-  pesan        text,
-  jumlah       jsonb,                   -- counts dari paket
-  isi          jsonb                    -- paket utuh: semua paket shift, dan snapshot yang menunggu toko
+-- Kunci toko (sha256). Tidak bisa dibaca pengguna mana pun lewat API (RLS tanpa policy).
+create table toko_kunci (
+  kode_toko   char(3) primary key references toko(kode),
+  kunci_hash  text not null,
+  dibuat_at   timestamptz not null default now()
 );
-create index on paket_impor (kode_toko, dibuat_at);
-create index on paket_impor (status) where status = 'MENUNGGU_TOKO';
+
+create table kiriman_log (
+  id             bigint generated always as identity primary key,
+  kode_toko      char(3) not null references toko(kode),
+  versi_trizone  text,
+  dikirim_at     timestamptz,
+  diterima_at    timestamptz not null default now(),
+  jumlah         jsonb
+);
+create index on kiriman_log (kode_toko, diterima_at);
 
 create table toko_status (
   kode_toko         char(3) primary key references toko(kode),
-  nama_trizone      text,
-  versi_trizone     text,
-  paket_terakhir_at timestamptz,
+  versi_trizone        text,
+  kiriman_terakhir_at  timestamptz,
   snapshot_terakhir_at timestamptz,
-  shift_terakhir_at timestamptz,
-  diterima_terakhir_at timestamptz
+  shift_terakhir_at    timestamptz
 );
 
 -- ---------------------------------------------------------------------
--- 4. Data toko (dari paket)
+-- 4. Data toko (dikirim Trizone)
 -- ---------------------------------------------------------------------
 -- Keadaan terkini (diganti setiap snapshot terbaru)
 create table produk_toko (
@@ -232,8 +233,7 @@ create table shift (
   tunai          numeric(14,2),
   per_metode     jsonb,
   struk_darurat  int,
-  riwayat_lama   boolean not null default false,
-  paket_at       timestamptz not null,   -- waktu paket yang menang
+  data_at        timestamptz not null,   -- waktu data yang menang (tutup shift / snapshot)
   primary key (kode_toko, shift_uid)
 );
 create index on shift (kode_toko, tutup_at);
@@ -467,19 +467,24 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
--- 7. Menerapkan isi paket
+-- 7. Menerapkan data dari toko
 -- ---------------------------------------------------------------------
--- Penjualan satu shift. Paket yang lebih baru menang; yang lebih lama dilewati.
-create or replace function mb.terapkan_shift(p_kode char(3), sh jsonb, sales jsonb, p_at timestamptz, p_legacy boolean)
+-- Penjualan satu shift. Data yang lebih baru (p_at) menang; yang lebih lama dilewati.
+-- Shift yang ditutup memakai p_at = waktu tutup; shift berjalan memakai waktu snapshot,
+-- jadi data tutup shift selalu menggantikan potongan shift berjalan.
+create or replace function mb.terapkan_shift(p_kode char(3), sh jsonb, sales jsonb, p_at timestamptz)
 returns boolean language plpgsql as $$
 declare
-  v_ada timestamptz;
+  v_ada   timestamptz;
+  v_tutup timestamptz;
 begin
-  select paket_at into v_ada from shift where kode_toko = p_kode and shift_uid = sh->>'shift_uid';
+  select data_at, tutup_at into v_ada, v_tutup from shift where kode_toko = p_kode and shift_uid = sh->>'shift_uid';
   if v_ada is not null and v_ada > p_at then return false; end if;
+  -- Potongan shift berjalan tidak boleh membuka lagi shift yang sudah tertutup.
+  if v_tutup is not null and sh->>'closed_at' is null then return false; end if;
 
   insert into shift as s (kode_toko, shift_uid, kasir, mulai_at, tutup_at, catatan, jumlah_struk, qty, omzet,
-                          tunai, per_metode, struk_darurat, riwayat_lama, paket_at)
+                          tunai, per_metode, struk_darurat, data_at)
   with l as (select x from jsonb_array_elements(coalesce(sales,'[]')) x)
   select p_kode, sh->>'shift_uid', sh->>'cashier_name', mb.wib(sh->>'shift_start'), mb.wib(sh->>'closed_at'),
          coalesce(sh->>'notes',''),
@@ -488,12 +493,11 @@ begin
          coalesce((sh->>'revenue')::numeric, (select coalesce(sum((x->>'line_total')::numeric),0) from l)),
          coalesce((sh->>'cash_sales')::numeric,
                   (select coalesce(sum((x->>'line_total')::numeric),0) from l where x->>'payment_method' = 'Tunai')),
-         sh->'by_method', coalesce((sh->>'offline_receipts')::int, 0), p_legacy, p_at
+         sh->'by_method', coalesce((sh->>'offline_receipts')::int, 0), p_at
   on conflict (kode_toko, shift_uid) do update set
     kasir = excluded.kasir, mulai_at = excluded.mulai_at, tutup_at = excluded.tutup_at, catatan = excluded.catatan,
     jumlah_struk = excluded.jumlah_struk, qty = excluded.qty, omzet = excluded.omzet, tunai = excluded.tunai,
-    per_metode = excluded.per_metode, struk_darurat = excluded.struk_darurat,
-    riwayat_lama = excluded.riwayat_lama, paket_at = excluded.paket_at;
+    per_metode = excluded.per_metode, struk_darurat = excluded.struk_darurat, data_at = excluded.data_at;
 
   delete from penjualan where kode_toko = p_kode and shift_uid = sh->>'shift_uid';
   insert into penjualan (kode_toko, shift_uid, no_struk, baris_ke, waktu, tanggal, sku, nama, qty, harga, subtotal, metode_bayar)
@@ -503,22 +507,20 @@ begin
          (x->>'line_total')::numeric, x->>'payment_method'
   from jsonb_array_elements(coalesce(sales,'[]')) with ordinality t(x, o)
   on conflict (kode_toko, shift_uid, no_struk, baris_ke) do update
-    set qty = excluded.qty, subtotal = excluded.subtotal;   -- baris ganda di paket: yang terakhir menang
+    set qty = excluded.qty, subtotal = excluded.subtotal;
   return true;
 end $$;
 
-create or replace function mb.terapkan_snapshot(p_kode char(3), pk jsonb) returns text
+-- Riwayat dokumen: penerimaan, mutasi, stok opname. Dokumen Trizone tidak berubah setelah dibuat;
+-- kiriman ulang dokumen yang sama hanya mengganti barisnya bila kepalanya berbeda.
+create or replace function mb.terapkan_dokumen(p_kode char(3), d jsonb) returns jsonb
 language plpgsql as $$
 declare
-  d        jsonb := pk->'data';
-  v_at     timestamptz := mb.wib(pk->>'created_at');
-  v_newest boolean;
-  v_list   text[];
-  cs       jsonb;
+  v_list text[];
+  n_rc int := jsonb_array_length(coalesce(d->'receptions','[]'));
+  n_tr int := jsonb_array_length(coalesce(d->'transfers','[]'));
+  n_op int := jsonb_array_length(coalesce(d->'opnames','[]'));
 begin
-  v_newest := not exists (select 1 from toko_status where kode_toko = p_kode and snapshot_terakhir_at > v_at);
-
-  -- Penerimaan: dokumen berubah (waktu / total) → baris diganti
   with b as (
     insert into penerimaan_toko as t (kode_toko, no_sj, supplier, catatan, diterima_at, total_biji)
     select p_kode, x->>'reference_no', x->>'supplier_name', x->>'notes', mb.wib(x->>'received_at'),
@@ -540,7 +542,6 @@ begin
        jsonb_array_elements(coalesce(x->'items','[]')) with ordinality t(l, o)
   where x->>'reference_no' = any(v_list);
 
-  -- Mutasi
   with b as (
     insert into mutasi_toko as t (kode_toko, no_dok, dari, ke, alasan, waktu, jumlah_baris, total_qty)
     select p_kode, x->>'doc_no', x->>'from_zone', x->>'to_zone', x->>'reason', mb.wib(x->>'created_at'),
@@ -560,7 +561,6 @@ begin
        jsonb_array_elements(coalesce(x->'lines','[]')) with ordinality t(l, o)
   where x->>'doc_no' = any(v_list);
 
-  -- Stok opname
   with b as (
     insert into stok_opname as t (kode_toko, no_op, zona, catatan, dibuat_at, hitung_at, jumlah_baris, plus_qty, minus_qty)
     select p_kode, x->>'doc_no', x->>'zone', x->>'notes', mb.wib(x->>'created_at'), mb.wib(x->>'count_at'),
@@ -586,204 +586,197 @@ begin
   select p_kode, unnest(v_list)
   on conflict (kode_toko, no_op) do update set status = 'BARU', direview_oleh = null, direview_at = null;
 
-  -- Transaksi mode darurat
+  return jsonb_build_object('penerimaan', n_rc, 'mutasi', n_tr, 'opname', n_op);
+end $$;
+
+-- Keadaan terkini toko: barang, stok, draft penerimaan, transaksi darurat, shift berjalan.
+-- Snapshot yang lebih lama dari yang sudah ada dilewati, jadi stok tidak mundur.
+create or replace function mb.terapkan_snapshot(p_kode char(3), s jsonb) returns boolean
+language plpgsql as $$
+declare
+  v_at timestamptz := mb.wib(s->>'created_at');
+  cs   jsonb := s->'current_shift';
+begin
+  if v_at is null then raise exception 'snapshot tanpa created_at'; end if;
+  if exists (select 1 from toko_status where kode_toko = p_kode and snapshot_terakhir_at > v_at) then
+    return false;
+  end if;
+
+  delete from produk_toko where kode_toko = p_kode;
+  insert into produk_toko (kode_toko, sku, barcode, nama, merk, kategori, harga_jual, pack_unit, pack_ratio, dibuat_at)
+  select p_kode, x->>'sku', nullif(x->>'barcode',''), x->>'name', x->>'brand', x->>'category',
+         (x->>'unit_price')::numeric, x->>'pack_unit', (x->>'pack_ratio')::int, mb.wib(x->>'created_at')
+  from jsonb_array_elements(coalesce(s->'products','[]')) x
+  on conflict do nothing;
+
+  delete from stok_toko where kode_toko = p_kode;
+  insert into stok_toko (kode_toko, sku, display, gudang, bs, shopee, min_display, habis_at, per_waktu)
+  select p_kode, x->>'sku', coalesce((x->>'floor_stock')::numeric,0), coalesce((x->>'warehouse_stock')::numeric,0),
+         coalesce((x->>'damaged_stock')::numeric,0), coalesce((x->>'shopee_stock')::numeric,0),
+         (x->>'min_floor_alert')::numeric, mb.wib(x->>'sold_out_at'), v_at
+  from jsonb_array_elements(coalesce(s->'inventory','[]')) x
+  on conflict do nothing;
+
+  insert into stok_kosong_harian (kode_toko, tanggal, sku)
+  select p_kode, mb.tgl_wib(v_at), sku from stok_toko
+  where kode_toko = p_kode and display + gudang + shopee <= 0
+  on conflict do nothing;
+
+  delete from penerimaan_draft_toko where kode_toko = p_kode;
+  insert into penerimaan_draft_toko (kode_toko, draft_id, no_sj, kode, nama, qty, satuan_input, zona, dibuat_at, selesai_at)
+  select p_kode, (x->>'draft_id')::bigint, x->>'reference_no', x->>'code', x->>'name', (x->>'qty')::numeric,
+         x->>'pack_type', x->>'destination', mb.wib(x->>'created_at'), mb.wib(x->>'resolved_at')
+  from jsonb_array_elements(coalesce(s->'reception_drafts','[]')) x
+  where x->>'draft_id' is not null
+  on conflict do nothing;
+
   insert into transaksi_darurat (kode_toko, no_struk, kasir, dibuat_at, disinkron_at, total, status, catatan, dicek_at)
   select p_kode, x->>'receipt_no', x->>'cashier_name', mb.wib(x->>'created_at'), mb.wib(x->>'synced_at'),
          (x->>'total')::numeric, x->>'status', x->>'notes', mb.wib(x->>'checked_at')
-  from jsonb_array_elements(coalesce(d->'offline_sales','[]')) x
+  from jsonb_array_elements(coalesce(s->'offline_sales','[]')) x
   where coalesce(x->>'receipt_no','') <> ''
   on conflict (kode_toko, no_struk) do update
     set status = excluded.status, catatan = excluded.catatan, dicek_at = excluded.dicek_at,
         disinkron_at = excluded.disinkron_at, total = excluded.total;
 
-  if v_newest then
-    delete from produk_toko where kode_toko = p_kode;
-    insert into produk_toko (kode_toko, sku, barcode, nama, merk, kategori, harga_jual, pack_unit, pack_ratio, dibuat_at)
-    select p_kode, x->>'sku', nullif(x->>'barcode',''), x->>'name', x->>'brand', x->>'category',
-           (x->>'unit_price')::numeric, x->>'pack_unit', (x->>'pack_ratio')::int, mb.wib(x->>'created_at')
-    from jsonb_array_elements(coalesce(d->'products','[]')) x
-    on conflict do nothing;
-
-    delete from stok_toko where kode_toko = p_kode;
-    insert into stok_toko (kode_toko, sku, display, gudang, bs, shopee, min_display, habis_at, per_waktu)
-    select p_kode, x->>'sku', coalesce((x->>'floor_stock')::numeric,0), coalesce((x->>'warehouse_stock')::numeric,0),
-           coalesce((x->>'damaged_stock')::numeric,0), coalesce((x->>'shopee_stock')::numeric,0),
-           (x->>'min_floor_alert')::numeric, mb.wib(x->>'sold_out_at'), v_at
-    from jsonb_array_elements(coalesce(d->'inventory','[]')) x
-    on conflict do nothing;
-
-    insert into stok_kosong_harian (kode_toko, tanggal, sku)
-    select p_kode, mb.tgl_wib(v_at), sku from stok_toko
-    where kode_toko = p_kode and display + gudang + shopee <= 0
-    on conflict do nothing;
-
-    delete from penerimaan_draft_toko where kode_toko = p_kode;
-    insert into penerimaan_draft_toko (kode_toko, draft_id, no_sj, kode, nama, qty, satuan_input, zona, dibuat_at, selesai_at)
-    select p_kode, (x->>'draft_id')::bigint, x->>'reference_no', x->>'code', x->>'name', (x->>'qty')::numeric,
-           x->>'pack_type', x->>'destination', mb.wib(x->>'created_at'), mb.wib(x->>'resolved_at')
-    from jsonb_array_elements(coalesce(d->'reception_drafts','[]')) x
-    where x->>'draft_id' is not null
-    on conflict do nothing;
-
-    cs := d->'current_shift';
-    if cs is not null and jsonb_typeof(cs) = 'object' and cs->>'shift_uid' is not null then
-      perform mb.terapkan_shift(p_kode, (cs - 'sales') || '{"closed_at": null}', cs->'sales', v_at, false);
-    end if;
+  if cs is not null and jsonb_typeof(cs) = 'object' and cs->>'shift_uid' is not null then
+    perform mb.terapkan_shift(p_kode, (cs - 'sales') || '{"closed_at": null}', cs->'sales', v_at);
   end if;
-
-  return case when v_newest then 'OK' else 'LAMA' end;
+  return true;
 end $$;
 
-create or replace function mb.terapkan_paket(p_kode char(3), pk jsonb) returns text
-language plpgsql as $$
-declare
-  v_at timestamptz := mb.wib(pk->>'created_at');
-  v_status text;
-  sh jsonb;
+-- Kode toko + kunci toko → kode toko, atau error. Kunci disimpan sebagai sha256.
+create or replace function mb.cek_kunci(p_kode text, p_kunci text) returns char(3)
+language plpgsql stable security definer set search_path = public, mb as $$
+declare v char(3);
 begin
-  if pk->>'kind' = 'shift' then
-    sh := pk->'data'->'shift';
-    v_status := case when mb.terapkan_shift(p_kode, sh, pk->'data'->'sales', v_at,
-                                            coalesce((pk->'source'->>'legacy')::boolean, false)
-                                            or coalesce((sh->>'legacy')::boolean, false))
-                     then 'OK' else 'LAMA' end;
-  else
-    v_status := mb.terapkan_snapshot(p_kode, pk);
+  select k.kode_toko into v
+  from toko_kunci k join toko t on t.kode = k.kode_toko
+  where k.kode_toko = upper(btrim(p_kode)) and t.aktif
+    and k.kunci_hash = encode(digest(coalesce(p_kunci,''), 'sha256'), 'hex');
+  if v is null then
+    raise exception 'Kode toko atau kunci toko salah, atau toko tidak aktif.' using errcode = '28000';
   end if;
-
-  insert into toko_status as s (kode_toko, nama_trizone, versi_trizone, paket_terakhir_at, snapshot_terakhir_at,
-                                shift_terakhir_at, diterima_terakhir_at)
-  values (p_kode, pk->'store'->>'name', pk->'source'->>'app_version', v_at,
-          case when pk->>'kind' = 'snapshot' then v_at end,
-          case when pk->>'kind' = 'shift' then mb.wib(pk->'data'->'shift'->>'closed_at') end, now())
-  on conflict (kode_toko) do update set
-    nama_trizone  = case when excluded.paket_terakhir_at >= coalesce(s.paket_terakhir_at, '-infinity') then excluded.nama_trizone else s.nama_trizone end,
-    versi_trizone = case when excluded.paket_terakhir_at >= coalesce(s.paket_terakhir_at, '-infinity') then excluded.versi_trizone else s.versi_trizone end,
-    paket_terakhir_at    = greatest(s.paket_terakhir_at, excluded.paket_terakhir_at),
-    snapshot_terakhir_at = greatest(s.snapshot_terakhir_at, excluded.snapshot_terakhir_at),
-    shift_terakhir_at    = greatest(s.shift_terakhir_at, excluded.shift_terakhir_at),
-    diterima_terakhir_at = now();
-  return v_status;
-end $$;
-
--- Validasi amplop paket (sama dengan validatePackage di src/homebase-package.js).
-create or replace function mb.cek_paket(pk jsonb) returns text
-language plpgsql immutable as $$
-begin
-  if pk is null or jsonb_typeof(pk) <> 'object' or pk->>'format' is distinct from 'pos-trizone-homebase' then
-    return 'Bukan paket data POS Tri-Zone.'; end if;
-  if jsonb_typeof(pk->'version') <> 'number' or (pk->>'version')::numeric < 1 then return 'Versi paket tidak valid.'; end if;
-  if (pk->>'version')::numeric > 1 then
-    return format('Paket versi %s lebih baru dari yang dikenal mother base (versi 1). Perbarui mother base.', pk->>'version'); end if;
-  if pk->>'kind' not in ('snapshot','shift') or pk->>'kind' is null then return format('Jenis paket "%s" tidak dikenal.', pk->>'kind'); end if;
-  if coalesce(pk->'store'->>'id','') !~* '^[0-9a-z-]{8,64}$' then return 'ID toko di paket tidak valid.'; end if;
-  if coalesce(pk->>'created_at','') !~ '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$' then return 'Waktu pembuatan paket tidak valid.'; end if;
-  if jsonb_typeof(pk->'data') is distinct from 'object' then return 'Paket tidak berisi data.'; end if;
-  if pk->>'kind' = 'shift' and (pk->'data'->'shift'->>'shift_uid' is null
-                               or jsonb_typeof(pk->'data'->'sales') is distinct from 'array') then
-    return 'Paket shift tidak lengkap.'; end if;
-  if coalesce((pk->'source'->>'demo')::boolean, false) then
-    return 'Paket dari versi DEMO (data latihan) tidak diimpor.'; end if;
-  return null;
+  return v;
 end $$;
 
 -- ---------------------------------------------------------------------
 -- 8. RPC
 -- ---------------------------------------------------------------------
--- Dipanggil Apps Script (service_role). p = {sha256, nama_file, sumber, pengirim, paket}
--- Satu paket = satu transaksi: semua masuk atau tidak sama sekali.
-create or replace function public.ingest_paket(p jsonb) returns jsonb
+-- Dipanggil langsung oleh Trizone (PC Gudang / Mandiri) dengan anon key + kode & kunci toko.
+-- Protokol v1:
+-- p = { protokol: 1, kode_toko, kunci, app_version, dikirim_at,
+--       shifts:   [{ shift: {shift_uid, cashier_name, shift_start, closed_at, notes, receipts, qty, revenue,
+--                           cash_sales, by_method, offline_receipts}, sales: [...] }],
+--       dokumen:  { receptions: [...], transfers: [...], opnames: [...] },
+--       snapshot: null | { created_at, products, inventory, reception_drafts, offline_sales, current_shift } }
+-- Satu kiriman = satu transaksi. Balasan berisi shift_uid yang diterima; Trizone baru menandai
+-- data terkirim setelah balasan ini, jadi kiriman ulang selalu aman.
+create or replace function public.terima_data(p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, mb as $$
 declare
-  pk      jsonb := p->'paket';
-  v_sha   text  := lower(p->>'sha256');
-  v_err   text;
-  v_kode  char(3);
-  v_stat  text;
-  v_id    bigint;
-  v_ada   paket_impor;
+  v_kode   char(3);
+  v_shift  jsonb;
+  v_uids   text[] := '{}';
+  v_lama   int := 0;
+  v_dok    jsonb := '{}';
+  v_snap   boolean := null;
+  v_closed timestamptz;
 begin
-  if coalesce(v_sha,'') !~ '^[0-9a-f]{64}$' then raise exception 'sha256 tidak valid'; end if;
-  select * into v_ada from paket_impor where sha256 = v_sha;
-  if found and v_ada.status <> 'DITOLAK' then
-    return jsonb_build_object('status','SUDAH_ADA','id',v_ada.id,'status_awal',v_ada.status);
+  v_kode := mb.cek_kunci(p->>'kode_toko', p->>'kunci');
+  if coalesce((p->>'protokol')::int, 0) <> 1 then
+    raise exception 'Versi protokol % tidak dikenal mother base (perbarui mother base).', p->>'protokol';
   end if;
-  delete from paket_impor where sha256 = v_sha;   -- percobaan ulang paket yang dulu ditolak
-  if jsonb_typeof(pk) is distinct from 'object' then pk := '{}'; end if;
 
-  v_err := coalesce(nullif(p->>'alasan_parser', ''), mb.cek_paket(pk));
-  if v_err is null then
-    select kode into v_kode from toko where store_id = pk->'store'->>'id' and aktif;
-    if v_kode is null then
-      v_stat := 'MENUNGGU_TOKO';
-      v_err := format('ID toko %s (%s) belum dihubungkan ke kode toko mother base.',
-                      pk->'store'->>'id', pk->'store'->>'name');
-    else
-      v_stat := mb.terapkan_paket(v_kode, pk);
-      if v_stat = 'LAMA' then
-        v_err := case when pk->>'kind' = 'shift' then 'Sudah ada data shift ini yang lebih baru; paket dilewati.'
-                      else 'Snapshot lebih lama dari data yang ada: hanya riwayat yang ditambahkan.' end;
-      end if;
+  for v_shift in select x from jsonb_array_elements(coalesce(p->'shifts','[]')) x loop
+    if v_shift->'shift'->>'shift_uid' is null or v_shift->'shift'->>'closed_at' is null then
+      raise exception 'Data shift tanpa shift_uid atau closed_at';
     end if;
-  else
-    v_stat := 'DITOLAK';
-  end if;
-
-  insert into paket_impor (sha256, nama_file, sumber, pengirim, package_id, jenis, store_id, nama_toko_trizone,
-                           kode_toko, dibuat_at, status, pesan, jumlah, isi)
-  values (v_sha, p->>'nama_file', coalesce(p->>'sumber','MANUAL'), p->>'pengirim', pk->>'package_id', pk->>'kind',
-          pk->'store'->>'id', pk->'store'->>'name', v_kode,
-          case when pk->>'created_at' ~ '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$' then mb.wib(pk->>'created_at') end,
-          v_stat, v_err, pk->'counts',
-          case when v_stat = 'MENUNGGU_TOKO' or (pk->>'kind' = 'shift' and v_stat <> 'DITOLAK') then pk end)
-  returning id into v_id;
-
-  return jsonb_build_object('status', v_stat, 'id', v_id, 'kode_toko', v_kode, 'pesan', v_err);
-end $$;
-
--- Nama file yang sudah pernah diproses (Apps Script tidak perlu mengunduh ulang).
-create or replace function public.paket_sudah_ada(p_nama text[]) returns setof text
-language sql stable security definer set search_path = public as $$
-  select nama_file from paket_impor where nama_file = any(p_nama) and status <> 'DITOLAK'
-$$;
-
--- Hubungkan ID toko Trizone ke kode toko, lalu proses paket yang menunggu.
-create or replace function public.hubungkan_toko(p_kode char(3), p_store_id text) returns jsonb
-language plpgsql security definer set search_path = public, mb as $$
-declare
-  r paket_impor;
-  n int := 0;
-  v text;
-begin
-  if auth.uid() is not null and mb.peran_saya() not in ('owner','admin_kantor') then
-    raise exception 'Hanya owner atau admin kantor yang boleh menghubungkan toko';
-  end if;
-  update toko set store_id = p_store_id where kode = p_kode;
-  if not found then raise exception 'Kode toko % tidak ada', p_kode; end if;
-  for r in select * from paket_impor
-           where status = 'MENUNGGU_TOKO' and store_id = p_store_id
-           order by dibuat_at, id
-  loop
-    v := mb.terapkan_paket(p_kode, r.isi);
-    update paket_impor set status = v, kode_toko = p_kode, pesan = null,
-                           isi = case when r.jenis = 'shift' then r.isi end
-     where id = r.id;
-    n := n + 1;
+    v_closed := mb.wib(v_shift->'shift'->>'closed_at');
+    if not mb.terapkan_shift(v_kode, v_shift->'shift', v_shift->'sales', v_closed) then v_lama := v_lama + 1; end if;
+    v_uids := v_uids || (v_shift->'shift'->>'shift_uid');
   end loop;
-  return jsonb_build_object('kode_toko', p_kode, 'paket_diproses', n);
+
+  if p->'dokumen' is not null then v_dok := mb.terapkan_dokumen(v_kode, p->'dokumen'); end if;
+  if jsonb_typeof(p->'snapshot') = 'object' then v_snap := mb.terapkan_snapshot(v_kode, p->'snapshot'); end if;
+
+  insert into toko_status as s (kode_toko, versi_trizone, kiriman_terakhir_at, snapshot_terakhir_at, shift_terakhir_at)
+  values (v_kode, p->>'app_version', now(),
+          case when v_snap then mb.wib(p->'snapshot'->>'created_at') end,
+          (select max(mb.wib(x->'shift'->>'closed_at')) from jsonb_array_elements(coalesce(p->'shifts','[]')) x))
+  on conflict (kode_toko) do update set
+    versi_trizone        = coalesce(excluded.versi_trizone, s.versi_trizone),
+    kiriman_terakhir_at  = now(),
+    snapshot_terakhir_at = greatest(s.snapshot_terakhir_at, excluded.snapshot_terakhir_at),
+    shift_terakhir_at    = greatest(s.shift_terakhir_at, excluded.shift_terakhir_at);
+
+  insert into kiriman_log (kode_toko, versi_trizone, dikirim_at, jumlah)
+  values (v_kode, p->>'app_version', mb.wib(p->>'dikirim_at'),
+          jsonb_build_object('shift', jsonb_array_length(coalesce(p->'shifts','[]')), 'shift_lama', v_lama,
+                             'snapshot', v_snap) || v_dok);
+
+  return jsonb_build_object('ok', true, 'kode_toko', v_kode, 'shift_diterima', to_jsonb(v_uids),
+                            'snapshot', v_snap, 'dokumen', v_dok, 'server_at', now());
 end $$;
 
--- Email pengirim yang diizinkan (jalur email).
-create or replace function public.daftar_toko_aktif() returns table(kode char(3), email_pengirim text, store_id text)
-language sql stable security definer set search_path = public as $$
-  select kode, lower(email_pengirim), store_id from toko where aktif order by kode
-$$;
+-- Master barang & harga jual untuk Trizone (daftar barang terkunci di toko).
+-- p = { kode_toko, kunci, sejak (opsional, ISO) } → { server_at, produk: [...] }
+create or replace function public.ambil_master(p jsonb) returns jsonb
+language plpgsql stable security definer set search_path = public, mb as $$
+declare
+  v_kode  char(3);
+  v_sejak timestamptz := nullif(p->>'sejak','')::timestamptz;
+begin
+  v_kode := mb.cek_kunci(p->>'kode_toko', p->>'kunci');
+  return jsonb_build_object(
+    'kode_toko', v_kode,
+    'server_at', now(),
+    'produk', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'sku', sku, 'barcode', barcode, 'name', nama, 'brand', merk, 'category', kategori,
+        'unit_price', harga_jual_konsumen, 'pack_unit', satuan_masuk, 'pack_ratio', rasio_isi,
+        'aktif', aktif, 'diubah_at', diubah_at) order by sku)
+      from produk
+      where barcode is not null and harga_jual_konsumen is not null
+        and (v_sejak is null or diubah_at > v_sejak)), '[]'::jsonb));
+end $$;
+
+-- Membuat (atau mengganti) kunci toko. Kunci hanya ditampilkan sekali; masukkan di
+-- Trizone: Pengaturan → Mother Base. Kunci lama langsung tidak berlaku.
+create or replace function public.buat_kunci_toko(p_kode char(3)) returns text
+language plpgsql security definer set search_path = public, mb as $$
+declare v text := encode(gen_random_bytes(24), 'hex');
+begin
+  if auth.uid() is not null and mb.peran_saya() is distinct from 'owner' then
+    raise exception 'Hanya owner yang boleh membuat kunci toko';
+  end if;
+  if not exists (select 1 from toko where kode = p_kode) then raise exception 'Kode toko % tidak ada', p_kode; end if;
+  insert into toko_kunci (kode_toko, kunci_hash, dibuat_at) values (p_kode, encode(digest(v, 'sha256'), 'hex'), now())
+  on conflict (kode_toko) do update set kunci_hash = excluded.kunci_hash, dibuat_at = now();
+  return v;
+end $$;
+
+-- Mengisi master produk kantor dari daftar barang satu toko (sekali, saat mulai).
+-- Barang yang sudah ada di master tidak diubah.
+create or replace function public.isi_master_dari_toko(p_kode char(3)) returns int
+language plpgsql security definer set search_path = public, mb as $$
+declare n int;
+begin
+  if auth.uid() is not null and not mb.is_kantor() then raise exception 'Hanya pengguna kantor'; end if;
+  insert into produk (sku, nama, barcode, merk, kategori, harga_jual_konsumen, satuan_masuk, rasio_isi)
+  select sku, nama, barcode, merk, kategori, harga_jual, coalesce(pack_unit,'Dus'), coalesce(pack_ratio,1)
+  from produk_toko where kode_toko = p_kode
+  on conflict (sku) do nothing;
+  get diagnostics n = row_count;
+  return n;
+end $$;
 
 -- Toko yang belum menutup shift pada tanggal tertentu.
 create or replace function public.laporan_belum_masuk(p_tanggal date default current_date - 1)
-returns table(kode char(3), nama text, terhubung boolean, shift_terakhir timestamptz, paket_terakhir timestamptz)
+returns table(kode char(3), nama text, terhubung boolean, shift_terakhir timestamptz, kiriman_terakhir timestamptz)
 language sql stable security definer set search_path = public, mb as $$
-  select t.kode, t.nama, t.store_id is not null, s.shift_terakhir_at, s.paket_terakhir_at
+  select t.kode, t.nama, exists (select 1 from toko_kunci k where k.kode_toko = t.kode),
+         s.shift_terakhir_at, s.kiriman_terakhir_at
   from toko t left join toko_status s on s.kode_toko = t.kode
   where t.aktif
     and not exists (select 1 from shift x where x.kode_toko = t.kode and mb.tgl_wib(x.tutup_at) = p_tanggal)
@@ -1070,7 +1063,7 @@ begin
   -- Tabel kantor: hanya pengguna kantor.
   foreach t in array array['pelanggan_accurate','principal','produk','harga_beli','pengaturan','surat_jalan',
                            'surat_jalan_baris','gudang_mutasi','po','po_baris','penerimaan_principal',
-                           'penerimaan_principal_baris','audit_log','paket_impor']
+                           'penerimaan_principal_baris','audit_log','kiriman_log']
   loop
     execute format('alter table %I enable row level security', t);
     execute format('create policy kantor_baca on %I for select to authenticated using (mb.is_kantor())', t);
@@ -1082,7 +1075,7 @@ begin
     execute format('create policy kantor_ubah on %I for update to authenticated using (mb.is_kantor())', t);
   end loop;
 
-  -- Tabel per toko: kantor melihat semua, pemilik toko hanya tokonya. Ditulis lewat ingest_paket.
+  -- Tabel per toko: kantor melihat semua, pemilik toko hanya tokonya. Ditulis lewat terima_data.
   foreach t in array array['toko_status','produk_toko','stok_toko','stok_kosong_harian','shift','penjualan',
                            'penerimaan_toko','penerimaan_toko_baris','penerimaan_draft_toko','mutasi_toko',
                            'mutasi_toko_baris','stok_opname','stok_opname_baris','stok_opname_review',
@@ -1092,6 +1085,9 @@ begin
     execute format('create policy baca_per_toko on %I for select to authenticated using (mb.boleh_lihat_toko(kode_toko))', t);
   end loop;
 end $$;
+
+-- Kunci toko: RLS aktif TANPA policy, jadi tidak terbaca lewat API oleh siapa pun (hanya fungsi security definer).
+alter table toko_kunci enable row level security;
 
 create policy kantor_review on stok_opname_review for update to authenticated using (mb.is_kantor());
 
@@ -1120,16 +1116,18 @@ begin
 end $$;
 create trigger po_persetujuan before update on po for each row execute function mb.cek_persetujuan_po();
 
-revoke all on function public.ingest_paket(jsonb)            from public, anon, authenticated;
-revoke all on function public.paket_sudah_ada(text[])        from public, anon, authenticated;
-revoke all on function public.daftar_toko_aktif()            from public, anon, authenticated;
-revoke all on function public.hubungkan_toko(char, text)     from public, anon;
-revoke all on function public.import_surat_jalan(jsonb)      from public, anon;
-revoke all on function public.laporan_belum_masuk(date)      from public, anon;
-grant execute on function public.ingest_paket(jsonb)         to service_role;
-grant execute on function public.paket_sudah_ada(text[])     to service_role;
-grant execute on function public.daftar_toko_aktif()         to service_role;
-grant execute on function public.hubungkan_toko(char, text)  to service_role, authenticated;
-grant execute on function public.import_surat_jalan(jsonb)   to service_role, authenticated;
-grant execute on function public.laporan_belum_masuk(date)   to service_role, authenticated;
+revoke all on function public.terima_data(jsonb)          from public;
+revoke all on function public.ambil_master(jsonb)         from public;
+revoke all on function public.buat_kunci_toko(char)       from public, anon;
+revoke all on function public.isi_master_dari_toko(char)  from public, anon;
+revoke all on function public.import_surat_jalan(jsonb)   from public, anon;
+revoke all on function public.laporan_belum_masuk(date)   from public, anon;
+revoke all on function mb.cek_kunci(text, text)           from public, anon, authenticated;
+-- Trizone memanggil dengan anon key; keamanan dari kode + kunci toko.
+grant execute on function public.terima_data(jsonb)       to anon, service_role;
+grant execute on function public.ambil_master(jsonb)      to anon, service_role;
+grant execute on function public.buat_kunci_toko(char)    to service_role, authenticated;
+grant execute on function public.isi_master_dari_toko(char) to service_role, authenticated;
+grant execute on function public.import_surat_jalan(jsonb) to service_role, authenticated;
+grant execute on function public.laporan_belum_masuk(date) to service_role, authenticated;
 grant usage on schema mb to authenticated, service_role;

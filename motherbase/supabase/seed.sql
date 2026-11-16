@@ -1,18 +1,17 @@
 -- Data awal mother base. Jalankan sekali setelah migrasi.
--- Ganti alamat email contoh dengan alamat email tutup shift toko yang asli.
--- store_id diisi lewat hubungkan_toko('KRP', '<ID toko Trizone>') setelah paket pertama masuk.
+-- Setelah itu buat kunci tiap toko: select buat_kunci_toko('KRP');  (tampil sekali, isi di Trizone)
 
-insert into toko (kode, nama, kota, email_pengirim, batas_hari_sj) values
-  ('KRP','Krampung','Surabaya', null, 1),
-  ('MNK','Manukan', 'Surabaya', null, 1),
-  ('SDA','Sidoarjo','Sidoarjo', null, 1),
-  ('TRP','Tropodo', 'Sidoarjo', null, 1),
-  ('MLG','Malang',  'Malang',   null, 3),
-  ('BKS','Bekasi',  'Bekasi',   null, 7),
-  ('CLD','Ciledug', 'Tangerang',null, 7),
-  ('DPK','Depok',   'Depok',    null, 7),
+insert into toko (kode, nama, kota, batas_hari_sj) values
+  ('KRP','Krampung','Surabaya', 1),
+  ('MNK','Manukan', 'Surabaya', 1),
+  ('SDA','Sidoarjo','Sidoarjo', 1),
+  ('TRP','Tropodo', 'Sidoarjo', 1),
+  ('MLG','Malang',  'Malang', 3),
+  ('BKS','Bekasi',  'Bekasi', 7),
+  ('CLD','Ciledug', 'Tangerang', 7),
+  ('DPK','Depok',   'Depok', 7),
   -- Toko ke-9: kode sementara sampai nama tokonya pasti.
-  ('XXX','Toko ke-9 (sementara)','-', null, 7)
+  ('XXX','Toko ke-9 (sementara)','-', 7)
 on conflict (kode) do nothing;
 
 -- Pelanggan di Accurate. "X Special" = toko yang sama dengan "X".

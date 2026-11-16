@@ -1,32 +1,25 @@
 'use strict';
 // Uji mother base dari ujung ke ujung, memakai kode Trizone asli:
 //   1. File Accurate "Rincian Pengiriman Pesanan" (tiruan, tata letak sama) dibaca accurate-do.js.
-//   2. Toko Trizone di memori: import penerimaan dari file itu, stok opname, penjualan, mutasi.
-//   3. Paket Homebase (snapshot + shift) dibuat dengan src/homebase-package.js.
-//   4. Paket dicek oleh Apps Script (Code.gs) lalu dimasukkan ke PostgreSQL lewat ingest_paket.
-//   5. Hasil dicek: penjualan, pencocokan surat jalan, stok seharusnya = stok Trizone, hak akses.
+//   2. Database mother base dibuat dari migrasi + seed; kunci toko dibuat.
+//   3. Toko Trizone di memori: import penerimaan dari file Accurate, stok opname, mutasi, penjualan, tutup shift.
+//      Data dikirim dengan src/motherbase.js ke RPC terima_data (dijalankan sebagai peran anon).
+//   4. Hasil dicek: penjualan, pencocokan surat jalan, stok seharusnya = stok Trizone, master barang, hak akses.
 //
 // Jalankan dari folder repo:
-//   node motherbase/test/uji.js                      → langkah 1–4 tanpa database
+//   node motherbase/test/uji.js                      → langkah 1 saja (tanpa database)
 //   MB_PSQL="psql -h <host> -p <port> -U postgres" node motherbase/test/uji.js
 //      → + database: membuat database mb_uji baru, migrasi, seed, lalu semua pengecekan.
 const assert = require('assert');
-const fs = require('fs');
 const path = require('path');
-const vm = require('vm');
 const { execFileSync } = require('child_process');
 const XLSX = require('xlsx');
 
 const ROOT = path.join(__dirname, '..', '..');
 const { Database } = require(path.join(ROOT, 'src/db'));
 const { createServices } = require(path.join(ROOT, 'src/services'));
-const hp = require(path.join(ROOT, 'src/homebase-package'));
+const { createMotherbase } = require(path.join(ROOT, 'src/motherbase'));
 const acc = require('../accurate/accurate-do');
-
-// Code.gs dijalankan di sandbox (fungsi Apps Script tidak dipanggil di sini)
-const gsMod = { exports: {} };
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Code.gs'), 'utf8'), { module: gsMod });
-const GS = gsMod.exports;
 
 let lulus = 0;
 const ok = (nama) => { lulus++; console.log('  ✓', nama); };
@@ -80,8 +73,44 @@ function fileAccurate() {
   assert.ok(rusak.masalah.some((m) => /total 4/.test(m)));
   ok('total DO yang tidak cocok dilaporkan');
 
-  // ---------------------------------------------------------------- 2. Toko Trizone
-  console.log('Trizone');
+  const PSQL = process.env.MB_PSQL;
+  if (!PSQL) { console.log(`\n${lulus} uji lulus (database dilewati; isi MB_PSQL untuk uji lengkap)`); return; }
+
+  // ---------------------------------------------------------------- 2. Database mother base
+  console.log('Database');
+  const [bin, ...args] = PSQL.split(' ');
+  const DB = 'mb_uji';
+  const run = (db, sqlArgs, input) => execFileSync(bin, [...args, '-d', db, '-v', 'ON_ERROR_STOP=1', '-q', '-tA', ...sqlArgs],
+    { encoding: 'utf8', input, maxBuffer: 64e6, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  run('postgres', ['-c', `drop database if exists ${DB}`]);
+  run('postgres', ['-c', `create database ${DB}`]);
+  const dir = path.join(__dirname, '..', 'supabase');
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  const q = (sql) => run(DB, [], sql + ';');
+  const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
+  // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
+  q('grant select on all tables in schema public to anon, authenticated; grant update on po, stok_opname_review to authenticated');
+
+  const kunci = q(`select public.buat_kunci_toko('TRP')`);
+  assert.match(kunci, /^[0-9a-f]{48}$/);
+  assert.strictEqual(q('select count(*) from toko_kunci where kunci_hash = $$' + kunci + '$$'), '0'); // hanya hash yang disimpan
+
+  // fetch tiruan: RPC PostgREST dijalankan sebagai peran anon, error SQL → HTTP 400 {message}
+  const fetchFn = async (url, opt) => {
+    const fn = url.split('/rest/v1/rpc/')[1];
+    const p = JSON.parse(opt.body).p;
+    try {
+      const out = run(DB, [], `set role anon; select public.${fn}(${lit(p)});`);
+      return { ok: true, status: 200, text: async () => out };
+    } catch (e) {
+      const m = /ERROR:\s+(.*)/.exec(String(e.stderr || e.message));
+      return { ok: false, status: 400, text: async () => JSON.stringify({ message: m ? m[1] : String(e.message) }) };
+    }
+  };
+  ok('kunci toko dibuat (hanya hash yang disimpan)');
+
+  // ---------------------------------------------------------------- 3. Toko Trizone
+  console.log('Trizone → mother base');
   const T = createServices(await Database.open(null));
   T.saveSettings({ store_name: 'Tropodo (uji)' });
   T.importRows([
@@ -89,18 +118,16 @@ function fileAccurate() {
     { Barcode: '2000000000118', SKU: 'UJ-KURSI', Nama_Barang: 'Kursi Uji', Harga_Jual: 85000, Satuan_Masuk: 'Coly', Rasio_Isi_Dus: 6, Stok_Awal_Toko: 2 },
     { Barcode: '2000000000125', SKU: 'UJ-EMBER', Nama_Barang: 'Ember Uji', Harga_Jual: 25000, Satuan_Masuk: 'Coly', Rasio_Isi_Dus: 12, Stok_Awal_Toko: 4 },
   ]);
-  const storeId = T.ensureStoreId();
+  T.mbSaveConfig({ url: 'http://127.0.0.1:54321', anon_key: 'anon-uji', kode_toko: 'TRP', kunci });
+  const mb = createMotherbase({ svc: T, appVersion: 'uji', fetchFn });
 
-  // DO.UJI.0001 diterima persis; DO.UJI.0004 diterima kurang 1 Biji (dihitung fisik)
+  // DO.UJI.0001 diterima persis lewat file import buatan accurate-do.js
   const imp1 = T.importReceptions({ rows: acc.barisImportTrizone({ ...hasil, do: [hasil.do[0]] }) });
   assert.deepStrictEqual(imp1.errors, []);
-  assert.strictEqual(imp1.created.length, 1);
   assert.strictEqual(T.getReception({ id: imp1.created[0].id }).total_items_count, 150 + 2 * 6);
-  ok('file import penerimaan dari Accurate diterima Trizone (Pcs → Biji, Coly → isi satuan masuk)');
   tidur(1100);
-  // Stok opname patokan (Display Toko: keset kurang 1; Gudang Utama sesuai sistem)
   const stok = () => Object.fromEntries(T.listProducts({}).map((p) => [p.sku, p]));
-  let s = stok();
+  const s = stok();
   T.createOpname({ zone: 'floor', notes: 'SO awal', items: [{ sku: 'UJ-KESET', counted: s['UJ-KESET'].floor_stock - 1 },
     { sku: 'UJ-KURSI', counted: s['UJ-KURSI'].floor_stock }, { sku: 'UJ-EMBER', counted: s['UJ-EMBER'].floor_stock }] });
   T.createOpname({ zone: 'warehouse', notes: 'SO awal', items: Object.values(s).map((p) => ({ sku: p.sku, counted: p.warehouse_stock })) });
@@ -112,74 +139,48 @@ function fileAccurate() {
   T.openShift({ cashier_name: 'Rina' });
   T.checkout({ items: [{ sku: 'UJ-KESET', qty: 4 }, { sku: 'UJ-KURSI', qty: 1 }], payment_method: 'Tunai', cash_received: 1e6 });
   T.checkout({ items: [{ sku: 'UJ-KESET', qty: 2 }], payment_method: 'QRIS' });
-  T.checkout({ items: [{ sku: 'UJ-EMBER', qty: 1 }], payment_method: 'Kartu Debit' });
+  T.checkout({ items: [{ sku: 'UJ-EMBER', qty: 1 }], payment_method: 'Transfer' });
   const rows4 = acc.barisImportTrizone({ ...hasil, do: [hasil.do[3]] }).map((r) => ({ ...r, Jumlah: 1, Satuan: 'Dus' }));
   rows4.push({ ...rows4[0], Jumlah: 11, Satuan: 'Biji' });          // 1 Coly + 11 Biji = 23 Biji, dikirim 24
   assert.deepStrictEqual(T.importReceptions({ rows: rows4 }).errors, []);
-  ok('penerimaan, SO, mutasi (termasuk Shopee dan retur), dan 3 transaksi tercatat');
 
-  // ---------------------------------------------------------------- 3. Paket Homebase
-  const now = () => new Date(Date.now() + 7 * 3600e3).toISOString().replace('T', ' ').slice(0, 19);
-  const pk = (kind, data, at, src = {}) => hp.makePackage({ kind, store: T.storeInfo(), source: { app_version: '1.7.0', ...src }, created_at: at, data });
-  const snapLama = pk('snapshot', T.homebaseSnapshotData(), '2026-11-01 08:00:00');
+  // Kunci salah ditolak; data tetap menunggu
+  T.mbSaveConfig({ kunci: 'salah' });
+  await assert.rejects(mb.kirim(), /kunci toko salah/);
+  T.mbSaveConfig({ kunci });
+  ok('kunci salah ditolak mother base; data tetap menunggu di toko');
+
+  // Shift masih berjalan: omzet sudah terlihat di mother base
+  let r = await mb.kirim();
+  assert.deepStrictEqual([r.shift, r.penerimaan, r.mutasi, r.opname, r.snapshot], [0, 2, 4, 2, true]);
+  const ring = () => q("select jumlah_transaksi || '|' || omzet || '|' || tunai || '|' || qris || '|' || transfer from v_ringkasan_harian where kode_toko='TRP'");
+  const harap = `3|${4 * 15000 + 85000 + 30000 + 25000}.00|${4 * 15000 + 85000}.00|30000.00|25000.00`;
+  assert.strictEqual(ring(), harap);
+  assert.strictEqual(q("select tutup_at is null from shift where kode_toko='TRP'"), 't');
+  ok('dikirim langsung lewat RPC (peran anon): dokumen, stok, dan shift berjalan; omzet Tunai/QRIS/Transfer');
+
+  // Tutup shift → antrean → terkirim; shift tertutup menggantikan potongan shift berjalan
   tidur(1100);
-  const tutup = now();
-  const paketShift = pk('shift', T.homebaseShiftData({ closed_at: tutup }), tutup);
-  const snap = pk('snapshot', T.homebaseSnapshotData(), tutup);
-  const demo = pk('snapshot', T.homebaseSnapshotData(), tutup, { demo: true });
-  const kemas = (p) => { const buf = hp.encodePackage(p); return { buf, sha: hp.sha256(buf), nama: hp.packageFileName(p) }; };
-  const F = { snap: kemas(snap), shift: kemas(paketShift), lama: kemas(snapLama), demo: kemas(demo) };
-  for (const f of Object.values(F)) assert.match(f.nama, GS.RE_FILE);
-  assert.strictEqual(GS.cekPaket(snap), null);
-  assert.strictEqual(GS.cekPaket(paketShift), null);
-  assert.match(GS.cekPaket(demo), /DEMO/);
-  assert.match(GS.cekPaket({ ...snap, version: 2 }), /lebih baru/);
-  assert.match(GS.cekPaket({ format: 'x' }), /Bukan paket/);
-  assert.ok(GS.lolosOtentikasi('mx.google.com; dkim=pass header.i=@gmail.com'));
-  assert.ok(!GS.lolosOtentikasi('mx.google.com; dkim=fail; spf=fail'));
-  ok('paket TRZ dibuat dengan kode Trizone dan lolos cek Apps Script (DEMO/versi baru/bukan paket ditolak)');
-
-  // ---------------------------------------------------------------- 4–5. Database
-  const PSQL = process.env.MB_PSQL;
-  if (!PSQL) { console.log(`\n${lulus} uji lulus (database dilewati; isi MB_PSQL untuk uji lengkap)`); return; }
-  console.log('Database');
-  const [bin, ...args] = PSQL.split(' ');
-  const run = (db, sqlArgs, input) => execFileSync(bin, [...args, '-d', db, '-v', 'ON_ERROR_STOP=1', '-q', '-tA', ...sqlArgs],
-    { encoding: 'utf8', input, maxBuffer: 64e6 }).trim();
-  const DB = 'mb_uji';
-  run('postgres', ['-c', `drop database if exists ${DB}`]);
-  run('postgres', ['-c', `create database ${DB}`]);
-  const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
-  const q = (sql) => run(DB, [], sql + ';');
-  const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
-  const ingest = (f, sumber = 'DRIVE', extra = {}) =>
-    JSON.parse(q(`select public.ingest_paket(${lit({ sha256: f.sha, nama_file: f.nama, sumber, paket: JSON.parse(require('zlib').gunzipSync(f.buf)), ...extra })})`));
-
-  let r = ingest(F.snap);
-  assert.strictEqual(r.status, 'MENUNGGU_TOKO');
-  assert.strictEqual(ingest(F.shift).status, 'MENUNGGU_TOKO');
-  assert.strictEqual(q('select count(*) from penjualan'), '0');
-  r = JSON.parse(q(`select public.hubungkan_toko('TRP', '${storeId}')`));
-  assert.strictEqual(r.paket_diproses, 2);
-  ok('paket dari toko yang belum terhubung ditahan, lalu diproses saat hubungkan_toko');
-
-  assert.strictEqual(ingest(F.snap).status, 'SUDAH_ADA');
-  assert.strictEqual(ingest(F.lama).status, 'LAMA');
-  r = ingest(F.demo); assert.strictEqual(r.status, 'DITOLAK'); assert.match(r.pesan, /DEMO/);
-  r = ingest({ sha: 'a'.repeat(64), nama: 'TRZ_rusak.json.gz', buf: require('zlib').gzipSync('{}') }, 'DRIVE', { alasan_parser: 'File rusak atau belum selesai tersalin.' });
-  assert.strictEqual(r.status, 'DITOLAK'); assert.match(r.pesan, /rusak/);
-  assert.strictEqual(q(`select string_agg(x, ',') from public.paket_sudah_ada(array['${F.snap.nama}','${F.demo.nama}']) x`), F.snap.nama);
-  ok('paket ganda dilewati, snapshot lama hanya menambah riwayat, DEMO dan file rusak ditolak');
-
-  // Penjualan: 3 struk, Kartu Debit masuk kelompok Transfer, shift tertutup (paket shift menang atas shift berjalan)
-  const ring = q("select jumlah_transaksi || '|' || omzet || '|' || tunai || '|' || qris || '|' || transfer from v_ringkasan_harian where kode_toko='TRP'");
-  assert.strictEqual(ring, `3|${4 * 15000 + 85000 + 30000 + 25000}.00|${4 * 15000 + 85000}.00|30000.00|25000.00`);
-  assert.ok(q(`select tutup_at is not null from shift where kode_toko='TRP'`) === 't');
+  T.archiveShift({ notes: 'tutup uji' });
+  r = await mb.kirim();
+  assert.strictEqual(r.shift, 1);
+  assert.strictEqual(q("select tutup_at is not null from shift where kode_toko='TRP'"), 't');
+  assert.strictEqual(ring(), harap);
+  assert.strictEqual(T.mbStatus().pending_shifts, 0);
   assert.strictEqual(q(`select qty from v_permintaan_harian where kode_toko='TRP' and sku='UJ-KESET' and kanal='SHOPEE'`), '3.000');
-  ok('ringkasan harian: omzet, Tunai/QRIS/Transfer (Kartu Debit lama → Transfer), penjualan Shopee terhitung');
+  ok('tutup shift terkirim; shift berjalan diganti data tutup shift, tidak dobel');
 
-  // Surat jalan
+  // Kirim ulang semuanya (mis. database toko dipulihkan): tidak ada yang dobel
+  const db0 = q('select (select count(*) from penjualan) || ' + "'|'" + ' || (select count(*) from penerimaan_toko_baris) || ' + "'|'" + ' || (select count(*) from mutasi_toko_baris)');
+  T.mbSaveConfig({ kode_toko: 'KRP' }); T.mbSaveConfig({ kode_toko: 'TRP' }); // reset penanda → kirim ulang semua dokumen & stok
+  T.mbQueueHistory();
+  r = await mb.kirim();
+  assert.ok(r.mutasi === 4 && r.snapshot);
+  assert.strictEqual(q('select (select count(*) from penjualan) || ' + "'|'" + ' || (select count(*) from penerimaan_toko_baris) || ' + "'|'" + ' || (select count(*) from mutasi_toko_baris)'), db0);
+  assert.strictEqual(ring(), harap);
+  ok('kiriman ulang aman: tidak ada penjualan, penerimaan, atau mutasi yang dobel');
+
+  // Surat jalan Accurate
   const imp = JSON.parse(q(`select public.import_surat_jalan(${lit(acc.payloadMotherBase(hasil, 'uji.xlsx'))})`));
   assert.strictEqual(imp.do_baru, 4);
   assert.deepStrictEqual(imp.pelanggan_belum_dipetakan, ['Utama']);
@@ -188,33 +189,48 @@ function fileAccurate() {
     'DO.UJI.0001': 'COCOK', 'DO.UJI.0002': 'BELUM_DIINPUT', 'DO.UJI.0003': 'PELANGGAN_BELUM_DIPETAKAN', 'DO.UJI.0004': 'SELISIH_QTY',
   });
   assert.strictEqual(q(`select qty_biji from v_sj_baris_biji where no_sj='DO.UJI.0001' and kode='UJ-KURSI'`), '12.000');
-  const ulang = JSON.parse(q(`select public.import_surat_jalan(${lit(acc.payloadMotherBase(hasil, 'uji.xlsx'))})`));
-  assert.strictEqual(ulang.do_diganti, 4);
+  assert.strictEqual(JSON.parse(q(`select public.import_surat_jalan(${lit(acc.payloadMotherBase(hasil, 'uji.xlsx'))})`)).do_diganti, 4);
   assert.strictEqual(q('select count(*) from surat_jalan_baris'), '5');
   ok('surat jalan: Cocok, Belum diinput, Pelanggan belum dipetakan, Selisih qty; Coly dikali isi; impor ulang tidak dobel');
 
   // Stok seharusnya vs Trizone setelah SO disetujui
   assert.strictEqual(q("select count(*) from stok_opname_review where status='BARU'"), '2');
   q("update stok_opname_review set status='DISETUJUI'");
-  assert.strictEqual(q('select count(*) from v_selisih_snapshot'), '0',
-    'stok seharusnya harus sama dengan stok Trizone:\n' + q('select * from v_selisih_snapshot'));
-  const disp = q(`select stok_seharusnya from v_stok_seharusnya where kode_toko='TRP' and sku='UJ-KESET' and zona='floor'`);
-  assert.strictEqual(disp, String(T.getProduct('UJ-KESET').floor_stock) + '.000');
-  assert.strictEqual(q(`select count(*) from v_selisih_so where nilai_selisih is null and selisih <> 0`), '1');   // harga beli belum diisi
+  assert.strictEqual(q('select count(*) from v_selisih_snapshot'), '0', 'selisih:\n' + q('select * from v_selisih_snapshot'));
+  assert.strictEqual(q(`select stok_seharusnya from v_stok_seharusnya where kode_toko='TRP' and sku='UJ-KESET' and zona='floor'`),
+    `${T.getProduct('UJ-KESET').floor_stock}.000`);
   ok('stok seharusnya per zona (SO + penerimaan − jual ± mutasi) sama persis dengan stok Trizone');
+
+  // Master barang: kantor mengisi dari toko, mengubah harga & menambah barang; toko yang terkunci mengambilnya
+  assert.strictEqual(q(`select public.isi_master_dari_toko('TRP')`), '3');
+  q(`update produk set harga_jual_konsumen = 16000 where sku = 'UJ-KESET'`);
+  q(`insert into produk (sku, nama, barcode, merk, kategori, harga_jual_konsumen, satuan_masuk, rasio_isi)
+     values ('UJ-BARU', 'Barang Baru Uji', '2000000000132', 'M', 'K', 7000, 'Coly', 4)`);
+  T.mbSaveConfig({ kunci_master: true });
+  assert.throws(() => T.saveProduct({ product: { ...T.getProduct('UJ-KESET'), unit_price: 1 } }), /dikunci mother base/);
+  const m = await mb.ambilMaster({ full: true });
+  assert.deepStrictEqual([m.baru, m.diubah, m.dilewati.length], [1, 1, 0]);
+  assert.strictEqual(T.getProduct('UJ-KESET').unit_price, 16000);
+  assert.deepStrictEqual([T.getProduct('UJ-BARU').pack_unit, T.getProduct('UJ-BARU').pack_ratio, T.getProduct('UJ-BARU').floor_stock], ['Coly', 4, 0]);
+  const m2 = await mb.ambilMaster();
+  assert.strictEqual(m2.jumlah, 0); // tidak ada perubahan sejak pengambilan terakhir
+  assert.strictEqual((await mb.tes()).kode_toko, 'TRP');
+  ok('master barang & harga diambil toko yang terkunci; hanya perubahan yang diambil berikutnya');
 
   // Hak akses
   q(`insert into auth.users values ('00000000-0000-0000-0000-00000000000a'), ('00000000-0000-0000-0000-00000000000b')`);
   q(`insert into pengguna values ('00000000-0000-0000-0000-00000000000a','Pemilik Malang','pemilik_toko','MLG',true),
                                  ('00000000-0000-0000-0000-00000000000b','Admin','admin_kantor',null,true)`);
-  q('grant select on all tables in schema public to authenticated; grant update on po to authenticated');
   const sebagai = (uid, sql) => q(`set role authenticated; set request.jwt.claim.sub = '${uid}'; ${sql}`);
   assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000a', 'select count(*) from penjualan'), '0');
-  assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000a', 'select count(*) from paket_impor'), '0');
   assert.notStrictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from penjualan'), '0');
+  assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from toko_kunci'), '0');
+  assert.strictEqual(q('set role anon; select count(*) from penjualan'), '0');
+  assert.strictEqual(q('set role anon; select count(*) from toko_kunci'), '0');
+  assert.throws(() => q("set role anon; select public.buat_kunci_toko('TRP')"), /permission denied/);
   q(`insert into principal (nama) values ('P'); insert into po (no_po, principal_id) values ('PO-1', 1)`);
   assert.throws(() => sebagai('00000000-0000-0000-0000-00000000000b', "update po set status='DISETUJUI'"), /Hanya owner/);
-  ok('pemilik toko lain tidak melihat data Tropodo; admin kantor melihat; hanya owner yang menyetujui PO');
+  ok('anon hanya bisa memanggil RPC toko; pemilik toko lain tidak melihat data Tropodo; kunci tidak terbaca; hanya owner menyetujui PO');
 
   console.log(`\n${lulus} uji lulus`);
-})().catch((e) => { console.error('\n✗', e && (e.stack || e.message) || e, e); process.exit(1); });
+})().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });
