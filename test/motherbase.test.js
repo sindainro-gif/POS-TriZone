@@ -76,6 +76,9 @@ function fakeMotherbase() {
   await t('pengaturan: alamat https, kode 3 huruf, kunci disimpan terenkripsi dan tidak tampil di status', () => {
     throwsMsg(() => svc.mbSaveConfig({ url: 'ftp://x' }), /https/);
     throwsMsg(() => svc.mbSaveConfig({ kode_toko: 'KR' }), /3 huruf/);
+    // Kolom tertukar: kunci toko di Anon key, anon key di Kunci toko
+    throwsMsg(() => svc.mbSaveConfig({ anon_key: '4a'.repeat(24) }), /adalah kunci toko/);
+    throwsMsg(() => svc.mbSaveConfig({ kunci: 'eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.abc_DEF-123' }), /adalah anon key/);
     const enc = createServices(db, { encrypt: (s) => 'enc:' + Buffer.from(s).toString('base64'), decrypt: (s) => Buffer.from(String(s).slice(4), 'base64').toString() });
     const st = enc.mbSaveConfig({ url: 'https://contoh.supabase.co/', anon_key: 'anon-123', kode_toko: 'trp', kunci: 'kunci-rahasia' });
     assert.strictEqual(db.get("SELECT value FROM settings WHERE key = 'mb_kunci'").value.startsWith('enc:'), true);

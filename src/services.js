@@ -1314,7 +1314,15 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     }
     const k = kode_toko === undefined ? undefined : toStr(kode_toko, 'Kode toko', { max: 3 }).toUpperCase();
     if (k && !/^[A-Z]{3}$/.test(k)) fail('Kode toko harus 3 huruf, mis. KRP.');
-    const key = anon_key === undefined ? undefined : toStr(anon_key, 'Anon key', { max: 1000 });
+    // Spasi / baris baru ikut tersalin dari chat atau email: buang. Tolak bila dua kolom tertukar.
+    const key = anon_key === undefined ? undefined : toStr(anon_key, 'Anon key', { max: 1000 }).replace(/\s+/g, '');
+    if (key && /^[0-9a-f]{48}$/i.test(key)) {
+      fail('Yang diisi di Anon key adalah kunci toko. Anon key berupa teks panjang yang diawali "eyJ"; kunci toko (48 karakter) diisi di kolom Kunci toko.');
+    }
+    const kn = kunci ? String(kunci).replace(/\s+/g, '') : kunci;
+    if (kn && (/^eyJ[\w-]*\.[\w-]*\.[\w-]*$/.test(kn) || /^sb_(publishable|secret)_/.test(kn))) {
+      fail('Yang diisi di Kunci toko adalah anon key. Kunci toko (48 karakter) dibuat di aplikasi mother base: Toko → Buat kunci.');
+    }
     db.tx(() => {
       if (u !== undefined) setSetting('mb_url', u);
       if (key !== undefined) setSetting('mb_anon_key', key);
@@ -1326,7 +1334,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         setSetting('mb_master_at', '');
       }
       if (clear_kunci) setSetting('mb_kunci', '');
-      else if (kunci) setSetting('mb_kunci', encrypt(String(kunci).trim()));
+      else if (kn) setSetting('mb_kunci', encrypt(kn));
       if (kunci_master !== undefined) setSetting('mb_kunci_master', kunci_master === true || kunci_master === '1' ? '1' : '0');
     });
     return mbStatus();

@@ -24,9 +24,12 @@ function explain(err, res, body) {
   if (res) {
     let msg = '';
     try { msg = JSON.parse(body).message || ''; } catch (_) { msg = String(body || '').slice(0, 200); }
+    if (/kunci toko/i.test(msg)) return mbError(msg);
+    if (/invalid api key/i.test(msg)) {
+      return mbError('Anon key tidak dikenali mother base. Salin ulang anon key dari kantor: teks panjang yang diawali "eyJ", bukan kunci toko.');
+    }
     if (res.status === 401 || res.status === 403) return mbError(`Mother base menolak akses (HTTP ${res.status}). Periksa anon key. ${msg}`.trim());
     if (res.status === 404) return mbError('Alamat mother base salah atau fungsi belum dipasang (HTTP 404). Periksa alamat dan migrasi database.');
-    if (/kunci toko/i.test(msg)) return mbError(msg);
     return mbError(`Mother base membalas HTTP ${res.status}: ${msg || 'tanpa keterangan'}`);
   }
   if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) return mbError('Koneksi ke mother base habis waktu. Periksa internet.', { network: true });
