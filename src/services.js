@@ -5,10 +5,13 @@ const { normalizeDesign, DEFAULT_DESIGN } = require('./labels');
 const { ROLES, hashPin, matchLogin } = require('./auth');
 const { rankProducts } = require('./search');
 
-const PAYMENT_METHODS = ['Tunai', 'QRIS', 'Kartu Debit'];
+const PAYMENT_METHODS = ['Tunai', 'QRIS', 'Transfer'];
+// Nama metode dari versi lama yang masih bisa datang dari antrean mode darurat PC kasir
+const LEGACY_PAYMENT = { 'Kartu Debit': 'Transfer' };
 
-// Riwayat shift yang sudah ditutup disimpan 2 hari kalender: hari ini + kemarin (cadangan minimal 1 hari penuh)
-const SHIFT_HISTORY_DAYS = 2;
+// Riwayat shift yang sudah ditutup disimpan 4 hari kalender: hari ini + 3 hari sebelumnya
+// (cadangan bila email laporan atau kiriman ke mother base tertunda, mis. saat akhir pekan)
+const SHIFT_HISTORY_DAYS = 4;
 
 const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock', shopee: 'shopee_stock' };
 
@@ -188,7 +191,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   function meta() {
-    return { directions: DIRECTIONS, zones: ZONE_LABEL, paymentMethods: PAYMENT_METHODS, destinations: DESTINATIONS };
+    return { directions: DIRECTIONS, zones: ZONE_LABEL, paymentMethods: PAYMENT_METHODS, destinations: DESTINATIONS, master_locked: masterLocked() };
   }
 
   // ---------------------------------------------------------------- Produk
@@ -276,6 +279,13 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const exists = !!db.get('SELECT 1 FROM products WHERE sku = ?', [p.sku]);
     if (isNew && exists) fail(`SKU ${p.sku} sudah terdaftar.`);
     if (!isNew && !exists) fail(`SKU ${p.sku} tidak ditemukan.`);
+    if (masterLocked()) {
+      if (isNew) assertMasterUnlocked('barang baru ditambahkan');
+      // Saat terkunci hanya batas minimum display toko yang boleh diubah di toko
+      const cur = db.get('SELECT * FROM products WHERE sku = ?', [p.sku]);
+      const changed = ['barcode', 'name', 'brand', 'category', 'unit_price', 'pack_unit', 'pack_ratio'].filter((k) => String(cur[k]) !== String(p[k]));
+      if (changed.length) assertMasterUnlocked('kode, nama, barcode, merk, kategori, harga, dan satuan diubah');
+    }
     assertBarcodeFree(p.barcode, p.sku);
     db.tx(() => {
       if (isNew) {
@@ -295,6 +305,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   function deleteProduct({ sku } = {}) {
     const p = getProduct(sku);
     if (!p) fail('Barang tidak ditemukan.');
+    assertMasterUnlocked('barang dihapus');
     const refs = db.get(
       `SELECT (SELECT COUNT(*) FROM stock_reception_items WHERE sku = ?) +
               (SELECT COUNT(*) FROM stock_transfers WHERE sku = ?) +
@@ -311,6 +322,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   function importRows(rows = []) {
+    assertMasterUnlocked('daftar barang diimpor');
     const norm = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
     const data = rows.map((r) => {
       const o = {};
@@ -536,9 +548,10 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return db.all('SELECT * FROM shift_sales ORDER BY id');
   }
 
-  // ---------------------------------------------------------------- Riwayat shift (cadangan hari ini & kemarin)
-  // Tutup shift tidak lagi menghapus penjualan: barisnya dipindah ke riwayat. Riwayat yang ditutup sebelum
-  // kemarin 00:00 dihapus otomatis, jadi selalu ada cadangan minimal satu hari penuh.
+  // ---------------------------------------------------------------- Riwayat shift (cadangan 4 hari)
+  // Tutup shift tidak menghapus penjualan: barisnya dipindah ke riwayat. Riwayat yang ditutup sebelum
+  // 00:00 tiga hari lalu dihapus otomatis. Penjualan shift juga masuk antrean mother base (mb_outbox_shift),
+  // yang tidak ikut dihapus sampai diterima mother base.
   function historyCutoff(today = localNow().slice(0, 10)) {
     const d = new Date(`${today}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() - (SHIFT_HISTORY_DAYS - 1));
@@ -561,11 +574,15 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     if (!shift) fail('Tidak ada shift aktif.');
     const uid = ensureShiftUid();
     const sum = shiftSummary();
+    const closedAt = closed_at || localNow();
+    const forMb = shiftData({ closed_at: closedAt, notes });
     db.tx(() => {
+      db.run('INSERT OR REPLACE INTO mb_outbox_shift(shift_uid, closed_at, payload, created_at, sent_at) VALUES(?, ?, ?, ?, NULL)',
+        [uid, closedAt, JSON.stringify(forMb), localNow()]);
       db.run(
         `INSERT OR REPLACE INTO shift_history(shift_uid, cashier_name, shift_start, closed_at, notes, receipts, qty, revenue, cash_sales, by_method, report_dir)
          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [uid, shift.cashier_name, shift.shift_start, closed_at || localNow(), String(notes || ''), sum.totals.receipts, sum.totals.qty,
+        [uid, shift.cashier_name, shift.shift_start, closedAt, String(notes || ''), sum.totals.receipts, sum.totals.qty,
           sum.totals.revenue, sum.cashSales, JSON.stringify(sum.byMethod.map((m) => ({ method: m.method, receipts: m.receipts, total: m.total }))),
           String(report_dir || '')],
       );
@@ -586,13 +603,27 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   // Isi riwayat TIDAK ditampilkan di aplikasi (hanya bisa dikirim ulang ke email owner):
   // daftar ini sengaja tanpa omset, struk, atau barang.
   function listShiftHistory() {
-    return db.all('SELECT shift_uid, cashier_name, shift_start, closed_at FROM shift_history ORDER BY closed_at DESC');
+    return db.all(
+      `SELECT shift_uid, cashier_name, shift_start, closed_at, CASE WHEN email_sent_at IS NULL THEN 0 ELSE 1 END AS email_terkirim
+       FROM shift_history ORDER BY closed_at DESC`,
+    );
+  }
+
+  // Laporan tutup shift yang email-nya belum terkirim (dicoba ulang otomatis oleh proses utama)
+  function pendingShiftEmails() {
+    return db.all('SELECT shift_uid, closed_at, email_error FROM shift_history WHERE email_sent_at IS NULL ORDER BY closed_at');
+  }
+  function markShiftEmail({ shift_uid, ok, error = '' } = {}) {
+    db.tx(() => {
+      if (ok) db.run('UPDATE shift_history SET email_sent_at = ?, email_error = NULL WHERE shift_uid = ?', [localNow(), shift_uid]);
+      else db.run('UPDATE shift_history SET email_error = ? WHERE shift_uid = ? AND email_sent_at IS NULL', [String(error).slice(0, 500), shift_uid]);
+    });
   }
 
   // Data lengkap satu shift untuk mengirim ulang laporannya (hanya dipakai proses utama, diblokir dari jaringan)
   function shiftHistoryReport({ shift_uid } = {}) {
     const shift = db.get('SELECT * FROM shift_history WHERE shift_uid = ?', [shift_uid]);
-    if (!shift) fail('Riwayat shift tidak ditemukan (riwayat hanya disimpan sampai akhir hari berikutnya).');
+    if (!shift) fail(`Riwayat shift tidak ditemukan (riwayat hanya disimpan ${SHIFT_HISTORY_DAYS} hari).`);
     shift.by_method = JSON.parse(shift.by_method || '[]');
     const byItem = db.all(
       `SELECT sku, product_name AS name, SUM(qty_sold) AS qty, SUM(line_total) AS total
@@ -609,6 +640,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   function importOfflineSale({ receipt_no, client_ref, created_at, payment_method, cashier, lines = [] } = {}) {
     const no = toStr(receipt_no, 'No. struk darurat', { required: true, max: 60 });
     if (!/^OFF-/.test(no)) fail('No. struk darurat harus diawali OFF-.');
+    if (LEGACY_PAYMENT[payment_method]) payment_method = LEGACY_PAYMENT[payment_method];
     if (!PAYMENT_METHODS.includes(payment_method)) fail('Metode pembayaran tidak dikenal.');
     if (!Array.isArray(lines) || !lines.length) fail(`Struk ${no} tidak berisi barang.`);
     const items = lines.map((l) => ({
@@ -1241,31 +1273,258 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return u;
   }
 
-  // ---------------------------------------------------------------- Homebase (data untuk diekspor)
-  // Semua fungsi di sini hanya MEMBACA data (kecuali membuat ID toko/shift sekali). Rahasia tidak ikut:
-  // password/akun SMTP, email owner, hash PIN, kode pasangan, dan penanda teknis (checkout_refs, nomor urut struk).
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // ---------------------------------------------------------------- Mother base (pusat data kantor)
+  // Data dikirim oleh PC pemilik database (src/motherbase.js). Fungsi di sini hanya menyiapkan dan
+  // menandai data; tidak ada koneksi jaringan. Rahasia toko tidak ikut: password/akun SMTP, email owner,
+  // hash PIN, kode pasangan, dan penanda teknis.
+  const MB_DOCS = {
+    receptions: { table: 'stock_receptions', cursor: 'mb_cursor_receptions' },
+    transfers: { table: 'stock_transfer_docs', cursor: 'mb_cursor_transfers' },
+    opnames: { table: 'stock_opname_docs', cursor: 'mb_cursor_opnames' },
+  };
+  const MB_LIMITS = { shifts: 10, receptions: 100, transfers: 200, opnames: 50 };
+  const MB_STATE_KEYS = ['last_attempt_at', 'last_ok_at', 'last_error', 'last_result', 'master_at', 'master_server_at', 'master_error', 'master_result'];
 
-  // ID toko tersimpan di database, jadi ikut ke file cadangan / pulihkan di PC baru
-  function ensureStoreId() {
-    let id = getSetting('store_id');
-    if (!UUID_RE.test(id)) {
-      id = crypto.randomUUID();
-      db.tx(() => setSetting('store_id', id));
+  function masterLocked() {
+    return getSetting('mb_kunci_master') === '1';
+  }
+  function assertMasterUnlocked(what) {
+    if (masterLocked()) {
+      fail(`Daftar barang dikunci mother base: ${what} hanya lewat mother base (Pengaturan → Mother Base → Ambil Master Barang).`);
     }
-    return id;
   }
 
-  // Dipakai bila database ini disalin dari toko lain (mis. membuka cabang baru dari cadangan toko lama)
-  function regenerateStoreId() {
-    const id = crypto.randomUUID();
-    db.tx(() => setSetting('store_id', id));
-    return id;
+  // Konfigurasi lengkap (termasuk kunci toko) — hanya untuk proses utama PC pemilik database
+  function mbConfig() {
+    const cfg = {
+      url: getSetting('mb_url').replace(/\/+$/, ''),
+      anon_key: getSetting('mb_anon_key'),
+      kode_toko: getSetting('mb_kode_toko'),
+      kunci: decrypt(getSetting('mb_kunci')),
+      master_locked: masterLocked(),
+    };
+    cfg.ready = !!(cfg.url && cfg.anon_key && cfg.kode_toko && cfg.kunci);
+    return cfg;
   }
 
-  function storeInfo() {
-    const s = getSettings();
-    return { id: ensureStoreId(), name: s.store_name, address: s.store_address || '' };
+  function mbSaveConfig({ url, anon_key, kode_toko, kunci, clear_kunci, kunci_master } = {}) {
+    const u = url === undefined ? undefined : toStr(url, 'Alamat mother base', { max: 200 }).replace(/\/+$/, '');
+    if (u && !/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(u) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(u)) {
+      fail('Alamat mother base harus berbentuk https://<project>.supabase.co');
+    }
+    const k = kode_toko === undefined ? undefined : toStr(kode_toko, 'Kode toko', { max: 3 }).toUpperCase();
+    if (k && !/^[A-Z]{3}$/.test(k)) fail('Kode toko harus 3 huruf, mis. KRP.');
+    const key = anon_key === undefined ? undefined : toStr(anon_key, 'Anon key', { max: 1000 });
+    db.tx(() => {
+      if (u !== undefined) setSetting('mb_url', u);
+      if (key !== undefined) setSetting('mb_anon_key', key);
+      if (k !== undefined && k !== getSetting('mb_kode_toko')) {
+        setSetting('mb_kode_toko', k);
+        // Toko lain di mother base: kirim ulang semua dokumen & keadaan terkini
+        for (const d of Object.values(MB_DOCS)) setSetting(d.cursor, '0');
+        setSetting('mb_snapshot_hash', '');
+        setSetting('mb_master_at', '');
+      }
+      if (clear_kunci) setSetting('mb_kunci', '');
+      else if (kunci) setSetting('mb_kunci', encrypt(String(kunci).trim()));
+      if (kunci_master !== undefined) setSetting('mb_kunci_master', kunci_master === true || kunci_master === '1' ? '1' : '0');
+    });
+    return mbStatus();
+  }
+
+  function mbState() {
+    let st = {};
+    try { st = JSON.parse(getSetting('mb_state', '{}')) || {}; } catch (_) { st = {}; }
+    return st;
+  }
+  function mbSetState(patch = {}) {
+    const st = { ...mbState() };
+    for (const [k, v] of Object.entries(patch)) if (MB_STATE_KEYS.includes(k)) st[k] = v;
+    db.tx(() => setSetting('mb_state', JSON.stringify(st)));
+    return st;
+  }
+
+  // Ringkasan untuk layar Pengaturan (tanpa kunci toko); boleh dipanggil PC kasir
+  function mbStatus() {
+    const cfg = mbConfig();
+    const pending = db.get('SELECT COUNT(*) AS n, MIN(closed_at) AS oldest FROM mb_outbox_shift WHERE sent_at IS NULL');
+    const docsPending = {};
+    for (const [k, d] of Object.entries(MB_DOCS)) {
+      const cur = Number(getSetting(d.cursor, '0')) || 0;
+      docsPending[k] = db.get(`SELECT COUNT(*) AS n FROM ${d.table} WHERE id > ?`, [cur]).n;
+    }
+    return {
+      url: cfg.url, anon_key_set: !!cfg.anon_key, kode_toko: cfg.kode_toko, has_kunci: !!cfg.kunci, ready: cfg.ready,
+      master_locked: cfg.master_locked, pending_shifts: pending.n, oldest_pending: pending.oldest, pending_docs: docsPending,
+      ...mbState(),
+    };
+  }
+
+  // Shift yang ditutup sebelum ada mother base, tapi masih di Riwayat Shift: masukkan ke antrean (sekali, aman diulang)
+  function mbQueueHistory() {
+    const rows = db.all(
+      `SELECT h.* FROM shift_history h LEFT JOIN mb_outbox_shift o ON o.shift_uid = h.shift_uid
+       WHERE o.shift_uid IS NULL ORDER BY h.closed_at`,
+    );
+    if (!rows.length) return 0;
+    db.tx(() => {
+      for (const h of rows) {
+        const seq = new Map();
+        const sales = db.all('SELECT * FROM shift_history_sales WHERE shift_uid = ? ORDER BY id', [h.shift_uid]).map((r) => {
+          const n = (seq.get(r.receipt_no) || 0) + 1;
+          seq.set(r.receipt_no, n);
+          return {
+            receipt_no: r.receipt_no, line_no: n, created_at: r.created_at, sku: r.sku, product_name: r.product_name,
+            qty: r.qty_sold, unit_price: r.unit_price, line_total: r.line_total, payment_method: r.payment_method,
+          };
+        });
+        const shift = {
+          shift_uid: h.shift_uid, cashier_name: h.cashier_name, shift_start: h.shift_start, closed_at: h.closed_at, notes: h.notes || '',
+          receipts: h.receipts, qty: h.qty, revenue: h.revenue, cash_sales: h.cash_sales,
+          by_method: JSON.parse(h.by_method || '[]'), offline_receipts: new Set(sales.filter((l) => /^OFF-/.test(l.receipt_no)).map((l) => l.receipt_no)).size,
+        };
+        db.run('INSERT OR IGNORE INTO mb_outbox_shift(shift_uid, closed_at, payload, created_at) VALUES(?, ?, ?, ?)',
+          [h.shift_uid, h.closed_at, JSON.stringify({ shift, sales }), localNow()]);
+      }
+    });
+    return rows.length;
+  }
+
+  function snapshotData() {
+    const shift = getShift();
+    return {
+      products: db.all(
+        'SELECT sku, barcode, name, brand, category, unit_price, base_unit, pack_unit, pack_ratio, created_at FROM products ORDER BY sku',
+      ),
+      // Semua barang punya baris stok (barang tanpa baris inventory = 0, sama seperti di layar POS)
+      inventory: db.all(
+        `SELECT p.sku, COALESCE(i.floor_stock, 0) AS floor_stock, COALESCE(i.warehouse_stock, 0) AS warehouse_stock,
+                COALESCE(i.damaged_stock, 0) AS damaged_stock, COALESCE(i.shopee_stock, 0) AS shopee_stock,
+                COALESCE(i.min_floor_alert, 5) AS min_floor_alert, i.sold_out_at
+         FROM products p LEFT JOIN inventory i ON i.sku = p.sku ORDER BY p.sku`,
+      ),
+      reception_drafts: db.all(
+        `SELECT d.id AS draft_id, d.reference_no, d.supplier_name, d.notes, d.code, d.name, d.qty, d.pack_type, d.destination, d.source,
+                d.created_at, d.resolved_at, r.reference_no AS reception_reference_no
+         FROM reception_drafts d LEFT JOIN stock_receptions r ON r.id = d.reception_id ORDER BY d.id`,
+      ),
+      offline_sales: db.all(
+        'SELECT receipt_no, client_ref, cashier_name, created_at, synced_at, total, status, notes, checked_at FROM offline_sales ORDER BY created_at, receipt_no',
+      ),
+      // Shift yang masih berjalan: omset hari ini sudah terlihat di mother base sebelum tutup shift
+      current_shift: shift ? {
+        shift_uid: ensureShiftUid(), cashier_name: shift.cashier_name, shift_start: shift.shift_start, sales: salesLines(),
+      } : null,
+    };
+  }
+
+  // Dokumen dengan id > penanda terakhir yang sudah diterima mother base
+  function docsSince(kind, limit) {
+    const d = MB_DOCS[kind];
+    let cur = Number(getSetting(d.cursor, '0')) || 0;
+    // Database dipulihkan dari cadangan lama (id lebih kecil dari penanda): kirim ulang semuanya
+    const max = db.get(`SELECT COALESCE(MAX(id), 0) AS m FROM ${d.table}`).m;
+    if (cur > max) cur = 0;
+    if (kind === 'receptions') {
+      const docs = db.all('SELECT id, reference_no, supplier_name, notes, received_at, total_items_count FROM stock_receptions WHERE id > ? ORDER BY id LIMIT ?', [cur, limit]);
+      const items = docs.length ? groupBy(db.all(
+        `SELECT reception_id, sku, quantity_received AS qty, pack_type, destination FROM stock_reception_items
+         WHERE reception_id BETWEEN ? AND ? ORDER BY id`, [docs[0].id, docs[docs.length - 1].id],
+      ), 'reception_id') : new Map();
+      return { docs: docs.map(({ id, ...r }) => ({ ...r, items: numbered(items.get(id), 'reception_id') })), last: docs.length ? docs[docs.length - 1].id : cur, full: docs.length === limit };
+    }
+    if (kind === 'transfers') {
+      const docs = db.all('SELECT id, doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty FROM stock_transfer_docs WHERE id > ? ORDER BY id LIMIT ?', [cur, limit]);
+      const lines = docs.length ? groupBy(db.all('SELECT doc_id, sku, qty FROM stock_transfers WHERE doc_id BETWEEN ? AND ? ORDER BY id',
+        [docs[0].id, docs[docs.length - 1].id]), 'doc_id') : new Map();
+      return { docs: docs.map(({ id, ...r }) => ({ ...r, lines: numbered(lines.get(id), 'doc_id') })), last: docs.length ? docs[docs.length - 1].id : cur, full: docs.length === limit };
+    }
+    const docs = db.all('SELECT id, doc_no, zone, notes, created_at, count_at, line_count, plus_qty, minus_qty FROM stock_opname_docs WHERE id > ? ORDER BY id LIMIT ?', [cur, limit]);
+    const lines = docs.length ? groupBy(db.all(
+      'SELECT doc_id, sku, system_qty, counted_qty, diff, before_qty FROM stock_opname_items WHERE doc_id BETWEEN ? AND ? ORDER BY id',
+      [docs[0].id, docs[docs.length - 1].id],
+    ), 'doc_id') : new Map();
+    return { docs: docs.map(({ id, ...r }) => ({ ...r, lines: numbered(lines.get(id), 'doc_id') })), last: docs.length ? docs[docs.length - 1].id : cur, full: docs.length === limit };
+  }
+
+  // Satu kiriman: shift tertutup yang belum diterima, dokumen baru, dan keadaan terkini bila berubah.
+  // Belum ada yang ditandai terkirim sampai mbAck dipanggil dengan balasan mother base.
+  function mbBatch({ includeSnapshot = true, force = false, limits = MB_LIMITS } = {}) {
+    const lim = { ...MB_LIMITS, ...limits };
+    const shiftRows = db.all('SELECT shift_uid, payload FROM mb_outbox_shift WHERE sent_at IS NULL ORDER BY closed_at LIMIT ?', [lim.shifts]);
+    const dokumen = {};
+    const cursors = {};
+    let more = shiftRows.length === lim.shifts;
+    for (const kind of Object.keys(MB_DOCS)) {
+      const r = docsSince(kind, lim[kind]);
+      if (r.docs.length) { dokumen[kind] = r.docs; cursors[kind] = r.last; }
+      if (r.full) more = true;
+    }
+    let snapshot = null;
+    let snapshotHash = null;
+    if (includeSnapshot) {
+      const data = snapshotData();
+      snapshotHash = crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
+      if (force || snapshotHash !== getSetting('mb_snapshot_hash')) snapshot = { created_at: localNow(), ...data };
+    }
+    const empty = !shiftRows.length && !Object.keys(dokumen).length && !snapshot;
+    return {
+      empty, more,
+      shifts: shiftRows.map((r) => JSON.parse(r.payload)),
+      dokumen: Object.keys(dokumen).length ? dokumen : null,
+      snapshot,
+      ack: { shift_uids: shiftRows.map((r) => r.shift_uid), cursors, snapshot_hash: snapshot ? snapshotHash : null },
+    };
+  }
+
+  // Tandai yang sudah diterima mother base (balasan terima_data)
+  function mbAck(ack = {}, reply = {}) {
+    const accepted = new Set(Array.isArray(reply.shift_diterima) ? reply.shift_diterima : []);
+    const at = localNow();
+    db.tx(() => {
+      for (const uid of ack.shift_uids || []) {
+        if (accepted.has(uid)) db.run('UPDATE mb_outbox_shift SET sent_at = ? WHERE shift_uid = ? AND sent_at IS NULL', [at, uid]);
+      }
+      if (reply.ok) {
+        for (const [kind, last] of Object.entries(ack.cursors || {})) if (MB_DOCS[kind]) setSetting(MB_DOCS[kind].cursor, String(last));
+        if (ack.snapshot_hash) setSetting('mb_snapshot_hash', ack.snapshot_hash);
+      }
+    });
+    return { shifts: [...accepted].length };
+  }
+
+  // Master barang & harga dari mother base. Stok tidak diubah. Barang yang tidak ada di master dibiarkan.
+  function mbApplyMaster({ produk = [], server_at } = {}) {
+    const out = { baru: 0, diubah: 0, sama: 0, dilewati: [] };
+    db.tx(() => {
+      for (const m of produk) {
+        if (m.aktif === false) continue;
+        let p;
+        try {
+          p = normalizeProduct({ ...m, min_floor_alert: undefined });
+        } catch (e) {
+          out.dilewati.push(`${m.sku || '?'}: ${e.message}`);
+          continue;
+        }
+        const other = db.get('SELECT sku FROM products WHERE barcode = ? AND sku <> ?', [p.barcode, p.sku]);
+        if (other) { out.dilewati.push(`${p.sku}: barcode ${p.barcode} dipakai barang ${other.sku} di toko ini`); continue; }
+        const cur = db.get('SELECT p.*, COALESCE(i.min_floor_alert, 5) AS min_floor_alert FROM products p LEFT JOIN inventory i ON i.sku = p.sku WHERE p.sku = ?', [p.sku]);
+        if (!cur) {
+          insertProduct(p, { floor: 0, warehouse: 0, damaged: 0, shopee: 0 });
+          out.baru++;
+          continue;
+        }
+        const same = ['barcode', 'name', 'brand', 'category', 'unit_price', 'pack_unit', 'pack_ratio'].every((k) => String(cur[k]) === String(p[k]));
+        if (same) { out.sama++; continue; }
+        updateProduct({ ...p, min_floor_alert: cur.min_floor_alert });
+        out.diubah++;
+      }
+      if (server_at) setSetting('mb_master_at', String(server_at));
+    });
+    return out;
+  }
+  function mbMasterSince() {
+    return getSetting('mb_master_at');
   }
 
   // Shift yang dibuka sebelum versi ini belum punya ID → dibuatkan sekali
@@ -1306,58 +1565,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return o;
   });
 
-  function homebaseSnapshotData({ includeOpenShift = true } = {}) {
-    const s = getSettings();
-    const recItems = groupBy(db.all(
-      'SELECT reception_id, sku, quantity_received AS qty, pack_type, destination FROM stock_reception_items ORDER BY id',
-    ), 'reception_id');
-    const trLines = groupBy(db.all('SELECT doc_id, sku, qty FROM stock_transfers ORDER BY id'), 'doc_id');
-    const opLines = groupBy(db.all(
-      'SELECT doc_id, sku, system_qty, counted_qty, diff, before_qty FROM stock_opname_items ORDER BY id',
-    ), 'doc_id');
-    const shift = includeOpenShift ? getShift() : null;
-    return {
-      settings: {
-        store_name: s.store_name, store_address: s.store_address || '', receipt_header: s.receipt_header || '', receipt_footer: s.receipt_footer || '',
-      },
-      zones: ZONE_LABEL,
-      payment_methods: PAYMENT_METHODS,
-      products: db.all(
-        'SELECT sku, barcode, name, brand, category, unit_price, base_unit, pack_unit, pack_ratio, created_at FROM products ORDER BY sku',
-      ),
-      // Semua barang punya baris stok (barang tanpa baris inventory = 0, sama seperti di layar POS)
-      inventory: db.all(
-        `SELECT p.sku, COALESCE(i.floor_stock, 0) AS floor_stock, COALESCE(i.warehouse_stock, 0) AS warehouse_stock,
-                COALESCE(i.damaged_stock, 0) AS damaged_stock, COALESCE(i.shopee_stock, 0) AS shopee_stock,
-                COALESCE(i.min_floor_alert, 5) AS min_floor_alert, i.sold_out_at
-         FROM products p LEFT JOIN inventory i ON i.sku = p.sku ORDER BY p.sku`,
-      ),
-      receptions: db.all('SELECT id, reference_no, supplier_name, notes, received_at, total_items_count FROM stock_receptions ORDER BY id')
-        .map(({ id, ...r }) => ({ ...r, items: numbered(recItems.get(id), 'reception_id') })),
-      reception_drafts: db.all(
-        `SELECT d.id AS draft_id, d.reference_no, d.supplier_name, d.notes, d.code, d.name, d.qty, d.pack_type, d.destination, d.source,
-                d.created_at, d.resolved_at, r.reference_no AS reception_reference_no
-         FROM reception_drafts d LEFT JOIN stock_receptions r ON r.id = d.reception_id ORDER BY d.id`,
-      ),
-      transfers: db.all('SELECT id, doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty FROM stock_transfer_docs ORDER BY id')
-        .map(({ id, ...d }) => ({ ...d, lines: numbered(trLines.get(id), 'doc_id') })),
-      opnames: db.all('SELECT id, doc_no, zone, notes, created_at, count_at, line_count, plus_qty, minus_qty FROM stock_opname_docs ORDER BY id')
-        .map(({ id, ...d }) => ({ ...d, lines: numbered(opLines.get(id), 'doc_id') })),
-      offline_sales: db.all(
-        'SELECT receipt_no, client_ref, cashier_name, created_at, synced_at, total, status, notes, checked_at FROM offline_sales ORDER BY created_at, receipt_no',
-      ),
-      users: db.all('SELECT name, role, active, created_at FROM users ORDER BY name COLLATE NOCASE'),
-      label_designs: db.all('SELECT name, config, is_default, updated_at FROM label_designs ORDER BY name COLLATE NOCASE')
-        .map((r) => ({ ...r, config: JSON.parse(r.config) })),
-      // Shift yang masih berjalan (belum tutup): agar omset hari ini sudah terlihat di Homebase
-      current_shift: shift ? {
-        shift_uid: ensureShiftUid(), cashier_name: shift.cashier_name, shift_start: shift.shift_start, sales: salesLines(),
-      } : null,
-    };
-  }
-
-  // Isi paket "shift": dibuat saat tutup shift, sebelum data penjualan shift dihapus
-  function homebaseShiftData({ closed_at, notes = '' } = {}) {
+  // Data satu shift untuk mother base: dibuat saat tutup shift, sebelum penjualan shift dipindah ke riwayat
+  function shiftData({ closed_at, notes = '' } = {}) {
     const shift = getShift();
     if (!shift) fail('Tidak ada shift aktif.');
     const sum = shiftSummary();
@@ -1380,14 +1589,15 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   return {
-    ensureStoreId, regenerateStoreId, storeInfo, ensureShiftUid, homebaseSnapshotData, homebaseShiftData,
+    ensureShiftUid, shiftData, masterLocked,
+    mbConfig, mbSaveConfig, mbStatus, mbState, mbSetState, mbQueueHistory, mbBatch, mbAck, mbApplyMaster, mbMasterSince,
     needsSetup, listUsers, saveUser, deleteUser, authCache, verifyLogin,
     listLabelDesigns, getLabelDesign, saveLabelDesign, deleteLabelDesign, setDefaultLabelDesign, labelItemsFromReception,
     meta, getSettings, getSettingsRaw, saveSettings,
     getProduct, listProducts, categories, findByCode, searchProducts, saveProduct, deleteProduct, importRows,
     stockSnapshot, lowStock,
     getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, shiftSalesRows,
-    archiveShift, pruneShiftHistory, listShiftHistory, shiftHistoryReport,
+    archiveShift, pruneShiftHistory, listShiftHistory, shiftHistoryReport, pendingShiftEmails, markShiftEmail,
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
     createReception, listReceptions, getReception, importReceptions,

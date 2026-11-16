@@ -17,22 +17,15 @@ const { ROLE_LABEL } = require('./auth');
 const crypto = require('crypto');
 const { seedDemo, DEMO_ACCOUNTS } = require('./demo');
 const { createDraftStore } = require('./drafts');
-const { makePackage, dataHash } = require('./homebase-package');
-const { createOutbox } = require('./homebase-outbox');
-const { collectLegacyShifts, MARKER: HOMEBASE_MARKER } = require('./homebase-legacy');
-const { createHomebaseApp } = require('./homebase-main');
+const { createMotherbase } = require('./motherbase');
 
-// Mode HOMEBASE (Jalankan HOMEBASE.bat): pusat data yang membaca paket dari banyak toko, tanpa database POS
-const HOMEBASE = process.argv.includes('--homebase') || process.env.POS_HOMEBASE === '1';
 // Versi DEMO (Jalankan DEMO.bat): data latihan di folder terpisah; mencetak ke printer sungguhan, email tidak dikirim
-const DEMO = !HOMEBASE && (process.argv.includes('--demo') || process.env.POS_DEMO === '1');
+const DEMO = process.argv.includes('--demo') || process.env.POS_DEMO === '1';
 if (process.env.POS_DATA_DIR) app.setPath('userData', process.env.POS_DATA_DIR);
-else if (HOMEBASE) app.setPath('userData', path.join(app.getPath('appData'), 'POS Tri-Zone HOMEBASE'));
 else if (DEMO) app.setPath('userData', path.join(app.getPath('appData'), 'POS Tri-Zone DEMO'));
 const DATA_DIR = app.getPath('userData');
 const DB_FILE = path.join(DATA_DIR, 'pos.db');
 
-let homebase; // mode HOMEBASE: penyimpanan pusat + handler-nya
 let db; // hanya di mode mandiri/server
 let localSvc; // layanan dengan database lokal
 let svc; // = localSvc, atau proxy ke PC gudang (mode kasir)
@@ -42,7 +35,7 @@ let offline; // cache barang + antrian transaksi darurat (mode kasir)
 let online = true; // hasil ping terakhir ke PC gudang (mode kasir)
 let session = null; // akun yang sedang login di komputer ini: { id, name, role }
 let drafts; // draft penjualan yang ditahan (disimpan di komputer ini)
-let outbox; // paket data Homebase (hanya di PC pemilik database)
+let mb; // pengirim data ke mother base (hanya di PC pemilik database)
 let device = loadDevice(DATA_DIR);
 let win;
 let closingShift = false;
@@ -52,12 +45,6 @@ const isClient = () => !DEMO && device.mode === 'client'; // demo selalu Mandiri
 function reportsRoot() {
   if (process.env.POS_REPORTS_DIR) return process.env.POS_REPORTS_DIR;
   return DEMO ? path.join(DATA_DIR, 'Laporan-Demo') : path.join(app.getPath('documents'), 'POS-Laporan');
-}
-
-// Folder paket Homebase lokal (selalu tersedia); folder Google Drive diatur terpisah di Pengaturan
-function homebaseRoot() {
-  if (process.env.POS_HOMEBASE_DIR) return process.env.POS_HOMEBASE_DIR;
-  return DEMO ? path.join(DATA_DIR, 'Homebase-Demo') : path.join(app.getPath('documents'), 'POS-Homebase', 'Paket');
 }
 
 // Password SMTP dienkripsi dengan kunci akun Windows (DPAPI) bila tersedia.
@@ -228,56 +215,64 @@ function checkoutLocal(a) {
   return localSvc.checkout(a);
 }
 
-// Tutup shift tanpa menghitung uang laci (tidak ada uang tunai seharusnya / uang fisik / selisih)
+// Tutup shift tanpa menghitung uang laci (tidak ada uang tunai seharusnya / uang fisik / selisih).
+// Shift ditutup TANPA menunggu internet: penjualan dipindah ke Riwayat Shift dan masuk antrean mother base
+// dalam satu transaksi. Email laporan dicoba sekali; bila gagal, dicoba ulang otomatis tiap 10 menit.
 async function closeShiftLocal({ notes } = {}) {
   if (closingShift) throw userError('Proses tutup shift sedang berjalan.');
   const settings = localSvc.getSettingsRaw();
-  makeTransport(settings); // validasi pengaturan sebelum membuat file
+  makeTransport(settings); // validasi pengaturan email sebelum membuat file
   const summary = localSvc.shiftSummary();
   if (!summary.shift) throw userError('Tidak ada shift aktif.');
 
   closingShift = true;
+  let ctx;
+  let dir;
+  let files;
+  let uid;
+  const closedAt = localNow();
   try {
-    const closedAt = localNow();
     const stamp = closedAt.replace(/[-:]/g, '').replace(' ', '_');
-    const dir = path.join(reportsRoot(), `Shift_${stamp}`);
+    dir = path.join(reportsRoot(), `Shift_${stamp}`);
     fs.mkdirSync(dir, { recursive: true });
 
-    const ctx = { store: settings, summary, closedAt, notes: String(notes || '').trim(), lowStock: localSvc.lowStock({ limit: 100 }) };
-    const files = {
+    ctx = { store: settings, summary, closedAt, notes: String(notes || '').trim(), lowStock: localSvc.lowStock({ limit: 100 }) };
+    files = {
       [`Rekap_Shift_${stamp}.pdf`]: await htmlToPdf(reports.summaryHtml(ctx)),
       [`Penjualan_Shift_${stamp}.csv`]: reports.salesCsv(localSvc.shiftSalesRows()),
       [`Snapshot_Stok_${stamp}.csv`]: reports.stockCsv(localSvc.stockSnapshot()),
     };
     for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), content);
-
-    // Paket Homebase ditulis ke folder paket lokal SEBELUM email: penjualan shift tetap terarsip walau email gagal
-    const hb = writeShiftPackages({ closedAt, notes: ctx.notes, reportDir: dir });
-    const hbAttach = device.homebase_email === '0' ? [] : hb.attachments;
-
-    const info = await sendMail(settings, {
-      subject: `[${settings.store_name}] Rekap Shift ${summary.shift.cashier_name} — ${closedAt} — Omset Rp ${summary.totals.revenue.toLocaleString('id-ID')}`,
-      text: reports.summaryText({ ...ctx, homebaseFiles: hbAttach.map((a) => a.filename) }),
-      attachments: [...Object.keys(files).map((name) => ({ filename: name, path: path.join(dir, name) })), ...hbAttach],
-    });
-    const response = String(info.response || '');
-    if (!/^250\b/.test(response)) {
-      throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}). Shift TIDAK ditutup.`);
-    }
-    // Penjualan shift dipindah ke Riwayat Shift (cadangan hari ini & kemarin), bukan dihapus
-    localSvc.archiveShift({ closed_at: closedAt, notes: ctx.notes, report_dir: dir });
-    syncHomebase(); // salin ke folder Google Drive di latar (tidak menunggu)
-    return {
-      dir, response, revenue: summary.totals.revenue, receipts: summary.totals.receipts, onServer: device.mode === 'server', homebase: hb.shift.name,
-    };
+    uid = localSvc.archiveShift({ closed_at: closedAt, notes: ctx.notes, report_dir: dir }).shift_uid;
   } finally {
     closingShift = false;
   }
+
+  let response = '';
+  let emailError = '';
+  try {
+    const info = await sendMail(settings, {
+      subject: `[${settings.store_name}] Rekap Shift ${summary.shift.cashier_name} — ${closedAt} — Omset Rp ${summary.totals.revenue.toLocaleString('id-ID')}`,
+      text: reports.summaryText(ctx),
+      attachments: Object.keys(files).map((name) => ({ filename: name, path: path.join(dir, name) })),
+    });
+    response = String(info.response || '');
+    if (!/^250\b/.test(response)) throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}).`);
+  } catch (err) {
+    emailError = err.message;
+  }
+  localSvc.markShiftEmail({ shift_uid: uid, ok: !emailError, error: emailError });
+  if (mb) mb.tick().catch((err) => console.error('[mother base]', err));
+  return {
+    dir, response, emailed: !emailError, email_error: emailError,
+    revenue: summary.totals.revenue, receipts: summary.totals.receipts, onServer: device.mode === 'server',
+  };
 }
 
-// Kirim ulang laporan shift yang sudah ditutup (Riwayat Shift: hari ini & kemarin). Isi riwayat tidak pernah
+// Kirim laporan shift yang sudah ditutup dari Riwayat Shift (4 hari). Isi riwayat tidak pernah
 // dikembalikan ke layar: hasilnya hanya balasan server email dan nama file lampiran.
-async function resendReportLocal({ shift_uid } = {}) {
+// auto = email saat tutup shift gagal dan sekarang dikirim otomatis; selain itu = tombol Kirim Ulang.
+async function sendHistoryReport({ shift_uid, auto = false } = {}) {
   const settings = localSvc.getSettingsRaw();
   makeTransport(settings); // validasi pengaturan SMTP sebelum menyiapkan lampiran
   const { shift: h, byItem, sales } = localSvc.shiftHistoryReport({ shift_uid });
@@ -307,128 +302,45 @@ async function resendReportLocal({ shift_uid } = {}) {
       { filename: `Penjualan_Shift_${stamp}.csv`, content: reports.salesCsv(sales) },
     ];
   }
-  // Paket Homebase shift ini (nama dari tanda homebase.json di folder laporan), bila masih ada di folder paket
-  const hbFiles = [];
-  if (dir && outbox && device.homebase_email !== '0') {
-    try {
-      const marker = JSON.parse(fs.readFileSync(path.join(dir, HOMEBASE_MARKER), 'utf8'));
-      const name = path.basename(String(marker.package || ''));
-      const file = path.join(outbox.dir, name);
-      if (name && fs.existsSync(file)) {
-        attachments.push({ filename: name, path: file });
-        hbFiles.push(name);
-      }
-    } catch (_) { /* tanpa paket Homebase */ }
-  }
   const intro = [
-    `Laporan ini DIKIRIM ULANG pada ${localNow()}.`,
+    auto ? `Email laporan ini gagal terkirim saat tutup shift ${h.closed_at}; dikirim otomatis pada ${localNow()}.`
+      : `Laporan ini DIKIRIM ULANG pada ${localNow()}.`,
     ...(regenerated ? ['File laporan asli tidak ditemukan: Rekap PDF dan CSV penjualan dibuat ulang dari cadangan riwayat shift. Snapshot stok saat tutup shift tidak tersedia.'] : []),
     '',
   ];
   const info = await sendMail(settings, {
-    subject: `[${settings.store_name}] (Kirim Ulang) Rekap Shift ${h.cashier_name} — ${h.closed_at} — Omset Rp ${Number(h.revenue).toLocaleString('id-ID')}`,
-    text: [...intro, reports.summaryText({ ...ctx, homebaseFiles: hbFiles })].join('\n'),
+    subject: `[${settings.store_name}] ${auto ? '(Tertunda) ' : '(Kirim Ulang) '}Rekap Shift ${h.cashier_name} — ${h.closed_at} — Omset Rp ${Number(h.revenue).toLocaleString('id-ID')}`,
+    text: [...intro, reports.summaryText(ctx)].join('\n'),
     attachments,
   });
   const response = String(info.response || '');
-  if (!/^250\b/.test(response)) throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}). Laporan belum terkirim ulang.`);
+  if (!/^250\b/.test(response)) throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}). Laporan belum terkirim.`);
+  localSvc.markShiftEmail({ shift_uid, ok: true });
   return { response, to: settings.owner_email, attachments: attachments.map((a) => a.filename), regenerated };
 }
 
-// ---------------------------------------------------------------- Homebase: paket data untuk pusat data
-const MAX_EMAIL_SNAPSHOT = 8 * 1024 * 1024;
-const hbSource = (extra = {}) => ({ app_version: app.getVersion(), device_mode: device.mode, demo: DEMO, ...extra });
+const resendReportLocal = (a = {}) => sendHistoryReport({ shift_uid: a.shift_uid });
 
-// Tutup shift: paket "shift" (penjualan shift) + "snapshot" (semua data terkini, tanpa shift berjalan)
-function writeShiftPackages({ closedAt, notes, reportDir }) {
-  const store = localSvc.storeInfo();
-  const shiftPkg = makePackage({ kind: 'shift', store, source: hbSource(), created_at: closedAt, data: localSvc.homebaseShiftData({ closed_at: closedAt, notes }) });
-  const snapPkg = makePackage({ kind: 'snapshot', store, source: hbSource(), created_at: closedAt, data: localSvc.homebaseSnapshotData({ includeOpenShift: false }) });
-  let shift;
-  let snapshot;
+// Email laporan yang gagal saat tutup shift: dicoba ulang dari yang paling lama. Berhenti di kegagalan
+// pertama (biasanya internet / SMTP mati) dan dicoba lagi di putaran berikutnya.
+let retryingEmails = false;
+async function retryShiftEmails() {
+  if (retryingEmails || !localSvc || isClient()) return;
+  retryingEmails = true;
   try {
-    shift = outbox.write(shiftPkg);
-    snapshot = outbox.write(snapPkg, { hash: dataHash(snapPkg.data) });
-    // Tanda di folder laporan: penjualan folder ini sudah ada di paket shift (tidak diambil lagi sebagai riwayat lama)
-    fs.writeFileSync(path.join(reportDir, HOMEBASE_MARKER), JSON.stringify({ shift_uid: shiftPkg.data.shift.shift_uid, package: shift.name }, null, 2));
+    for (const h of localSvc.pendingShiftEmails()) {
+      try {
+        await sendHistoryReport({ shift_uid: h.shift_uid, auto: true });
+      } catch (err) {
+        localSvc.markShiftEmail({ shift_uid: h.shift_uid, ok: false, error: err.message });
+        break;
+      }
+    }
   } catch (err) {
-    throw userError(`Paket data Homebase gagal disimpan di ${outbox.dir} (${err.message}). Shift TIDAK ditutup.`);
+    console.error('[email tertunda]', err);
+  } finally {
+    retryingEmails = false;
   }
-  const attachments = [{ filename: shift.name, content: shift.buffer }];
-  if (snapshot.size <= MAX_EMAIL_SNAPSHOT) attachments.push({ filename: snapshot.name, content: snapshot.buffer });
-  return { shift, snapshot, attachments };
-}
-
-// Snapshot berkala: hanya ditulis bila datanya berubah sejak snapshot terakhir (atau dipaksa)
-function writeSnapshot({ force = false } = {}) {
-  if (!outbox || isClient() || closingShift) return null;
-  const pkg = makePackage({ kind: 'snapshot', store: localSvc.storeInfo(), source: hbSource(), created_at: localNow(), data: localSvc.homebaseSnapshotData() });
-  const hash = dataHash(pkg.data);
-  if (!force && hash === outbox.lastSnapshotHash()) return null;
-  return outbox.write(pkg, { hash });
-}
-
-function syncHomebase() {
-  if (!outbox) return Promise.resolve(null);
-  return outbox.syncTo(device.homebase_sync_dir || '').catch((err) => {
-    console.error('[homebase]', err);
-    return null;
-  });
-}
-
-function homebaseStatus() {
-  if (isClient()) return { client: true };
-  const store = localSvc.storeInfo();
-  return {
-    client: false, demo: DEMO, store_id: store.id, store_name: store.name,
-    sync_dir: device.homebase_sync_dir || '', email: device.homebase_email !== '0', reports_dir: reportsRoot(),
-    ...outbox.status(device.homebase_sync_dir),
-  };
-}
-
-async function saveHomebaseConfig({ sync_dir, email } = {}) {
-  requireLocalDb();
-  const patch = {};
-  if (sync_dir !== undefined) {
-    const d = String(sync_dir || '').trim();
-    if (d && !(fs.existsSync(d) && fs.statSync(d).isDirectory())) throw userError(`Folder tidak ditemukan: ${d}`);
-    patch.homebase_sync_dir = d;
-  }
-  if (email !== undefined) patch.homebase_email = email ? '1' : '0';
-  device = saveDevice(DATA_DIR, patch);
-  await syncHomebase();
-  return homebaseStatus();
-}
-
-async function sendHomebaseNow() {
-  requireLocalDb();
-  if (closingShift) throw userError('Sedang proses tutup shift. Coba lagi sebentar.');
-  const written = writeSnapshot({ force: true });
-  const sync = await syncHomebase();
-  return { package: written ? written.name : '', sync, status: homebaseStatus() };
-}
-
-// Riwayat penjualan sebelum ada Homebase: dari CSV di folder laporan tutup shift
-async function exportLegacyHistory() {
-  requireLocalDb();
-  const store = localSvc.storeInfo();
-  const r = collectLegacyShifts(reportsRoot(), { storeId: store.id });
-  const createdAt = localNow();
-  for (const s of r.shifts) {
-    outbox.write(makePackage({ kind: 'shift', store, source: hbSource({ legacy: true }), created_at: createdAt, data: { shift: s.shift, sales: s.sales } }));
-  }
-  if (r.shifts.length) await syncHomebase();
-  return {
-    shifts: r.shifts.length,
-    receipts: r.shifts.reduce((n, s) => n + s.shift.receipts, 0),
-    revenue: r.shifts.reduce((n, s) => n + s.shift.revenue, 0),
-    scanned: r.scanned, covered: r.covered, errors: r.errors, reports_dir: reportsRoot(), status: homebaseStatus(),
-  };
-}
-
-async function pickFolder(title) {
-  const r = await dialog.showOpenDialog(win, { title, properties: ['openDirectory', 'createDirectory'] });
-  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 }
 
 async function testEmailLocal() {
@@ -448,7 +360,9 @@ const SERVER_MAIN = {
   'main.testEmail': testEmailLocal,
 };
 const REMOTE_BLOCKED = new Set([
-  'getSettingsRaw', 'archiveShift', 'pruneShiftHistory', 'shiftHistoryReport', 'checkout', 'regenerateStoreId', 'homebaseSnapshotData', 'homebaseShiftData',
+  'getSettingsRaw', 'archiveShift', 'pruneShiftHistory', 'shiftHistoryReport', 'checkout', 'shiftData', 'pendingShiftEmails', 'markShiftEmail',
+  // Mother base: kunci toko & antrean kiriman hanya di PC pemilik database (mbStatus boleh, tanpa rahasia)
+  'mbConfig', 'mbSaveConfig', 'mbState', 'mbSetState', 'mbQueueHistory', 'mbBatch', 'mbAck', 'mbApplyMaster', 'mbMasterSince',
 ]);
 
 function serverCall(method, args) {
@@ -814,14 +728,20 @@ const handlers = {
   'db:restore': () => restoreDatabase(),
   'db:openFolder': () => shell.openPath(DATA_DIR),
 
-  // Homebase (hanya Admin; dijalankan di PC pemilik database)
-  'homebase:status': () => homebaseStatus(),
-  'homebase:saveConfig': (a) => saveHomebaseConfig(a),
-  'homebase:pickFolder': () => pickFolder('Pilih folder Google Drive untuk paket Homebase'),
-  'homebase:sendNow': () => sendHomebaseNow(),
-  'homebase:legacy': () => exportLegacyHistory(),
-  'homebase:openFolder': () => { requireLocalDb(); fs.mkdirSync(outbox.dir, { recursive: true }); return shell.openPath(outbox.dir); },
-  'homebase:newStoreId': () => { requireLocalDb(); localSvc.regenerateStoreId(); return homebaseStatus(); },
+  // Mother base (hanya Admin; pengiriman berjalan di PC pemilik database)
+  'mb:status': async () => ({ ...(await svc.mbStatus()), client: isClient(), demo: DEMO }),
+  'mb:save': (a) => { requireLocalDb(); return { ...localSvc.mbSaveConfig(a), client: false, demo: DEMO }; },
+  'mb:test': () => { requireLocalDb(); return mb.tes(); },
+  'mb:sendNow': async () => {
+    requireLocalDb();
+    const result = await mb.kirim({ force: true });
+    return { result, status: { ...localSvc.mbStatus(), client: false, demo: DEMO } };
+  },
+  'mb:pullMaster': async () => {
+    requireLocalDb();
+    const result = await mb.ambilMaster({ full: true });
+    return { result, status: { ...localSvc.mbStatus(), client: false, demo: DEMO } };
+  },
   'device:get': () => deviceInfo(),
   'device:test': (a) => testConnection(a),
   'device:save': (a) => saveDeviceMode(a),
@@ -924,11 +844,10 @@ const handlers = {
 };
 
 ipcMain.handle('api', async (_e, channel, args) => {
-  const h = (homebase ? homebase.handlers : handlers)[channel];
+  const h = handlers[channel];
   if (!h) return { ok: false, error: `Perintah tidak dikenal: ${channel}` };
   try {
-    if (homebase) homebase.checkAccess(channel);
-    else checkAccess(channel);
+    checkAccess(channel);
     return { ok: true, data: await h(args || {}) };
   } catch (err) {
     if (!err.userFacing) console.error(`[${channel}]`, err);
@@ -947,7 +866,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 680,
     backgroundColor: '#0f1115',
-    title: HOMEBASE ? 'POS Tri-Zone — HOMEBASE (pusat data)' : DEMO ? 'POS Tri-Zone — DEMO (data latihan)' : 'POS Tri-Zone',
+    title: DEMO ? 'POS Tri-Zone — DEMO (data latihan)' : 'POS Tri-Zone',
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -976,7 +895,7 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // Hanya muat ulang halaman aplikasi sendiri (setelah login / keluar) yang diizinkan
   win.webContents.on('will-navigate', (e, url) => { if (url !== win.webContents.getURL()) e.preventDefault(); });
-  win.loadFile(path.join(__dirname, 'renderer', HOMEBASE ? 'homebase.html' : 'index.html'));
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
 async function openLocalDatabase() {
@@ -984,8 +903,9 @@ async function openLocalDatabase() {
   db.backup(path.join(DATA_DIR, 'backup'));
   localSvc = createServices(db, secrets);
   svc = localSvc;
-  outbox = createOutbox(homebaseRoot(), { stateFile: path.join(DATA_DIR, 'homebase-status.json') });
   if (DEMO && localSvc.needsSetup()) seedDemo(localSvc);
+  mb = createMotherbase({ svc: localSvc, appVersion: app.getVersion(), demo: DEMO });
+  localSvc.mbQueueHistory(); // shift di Riwayat Shift yang ditutup sebelum ada mother base
   // Migrasi sekali: pengaturan printer lama di database → device.json komputer ini
   if (!device._exists) {
     const old = localSvc.getSettings();
@@ -997,13 +917,6 @@ async function openLocalDatabase() {
 
 async function startup() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (HOMEBASE) {
-    homebase = await createHomebaseApp({
-      dataDir: DATA_DIR, dialog, shell, getWin: () => win, saveWorkbook, appVersion: app.getVersion(), documentsDir: app.getPath('documents'),
-    });
-    homebase.start();
-    return;
-  }
   drafts = createDraftStore(DATA_DIR);
   if (isClient()) {
     remote = createRemoteClient({ host: device.server_host, port: Number(device.server_port) || DEFAULT_PORT, key: device.pair_key });
@@ -1015,20 +928,20 @@ async function startup() {
     return;
   }
   await openLocalDatabase();
-  // Riwayat shift lebih lama dari kemarin dihapus saat start & tiap jam (juga setiap tutup shift).
-  // Homebase: snapshot otomatis (bila data berubah) saat start & tiap jam; salin ulang yang tertunda tiap 10 menit.
+  // Riwayat shift lebih lama dari 4 hari dihapus saat start & tiap jam (juga setiap tutup shift).
   const pruneHistory = () => {
     try { localSvc.pruneShiftHistory(); } catch (err) { console.error('[riwayat shift]', err); }
   };
   pruneHistory();
-  const homebaseTick = () => {
-    pruneHistory();
-    try { writeSnapshot(); } catch (err) { console.error('[homebase]', err); }
-    syncHomebase();
-  };
-  setTimeout(homebaseTick, 20 * 1000);
-  setInterval(homebaseTick, 60 * 60 * 1000);
-  setInterval(syncHomebase, 10 * 60 * 1000);
+  setInterval(pruneHistory, 60 * 60 * 1000);
+  // Mother base: kirim data tiap 5 menit bila ada yang menunggu / berubah; master barang tiap jam.
+  // Email laporan yang tertunda dicoba ulang tiap 10 menit. Semua berjalan di latar dan tidak menghentikan kasir.
+  const mbTick = (pullMaster) => mb.tick({ pullMaster }).catch((err) => console.error('[mother base]', err));
+  setTimeout(() => mbTick(true), 20 * 1000);
+  setInterval(() => mbTick(false), 5 * 60 * 1000);
+  setInterval(() => mbTick(true), 60 * 60 * 1000);
+  setTimeout(retryShiftEmails, 60 * 1000);
+  setInterval(retryShiftEmails, 10 * 60 * 1000);
   if (device.mode === 'server' && !DEMO) {
     if (!device.server_pair_key) device = saveDevice(DATA_DIR, { server_pair_key: newPairKey() });
     const port = Number(process.env.POS_SERVER_PORT || device.server_port) || DEFAULT_PORT;
@@ -1062,7 +975,7 @@ if (!app.requestSingleInstanceLock()) {
     try {
       await startup();
     } catch (err) {
-      dialog.showErrorBox('Database gagal dibuka', `${HOMEBASE ? path.join(DATA_DIR, 'homebase.db') : DB_FILE}\n\n${err.message}`);
+      dialog.showErrorBox('Database gagal dibuka', `${DB_FILE}\n\n${err.message}`);
       app.quit();
       return;
     }
@@ -1072,8 +985,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => {
     if (server) server.close();
-    if (homebase) homebase.stop();
   });
 }
 
-module.exports = { getServices: () => localSvc || svc, getHomebase: () => homebase };
+module.exports = { getServices: () => localSvc || svc, getMotherbase: () => mb };

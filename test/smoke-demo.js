@@ -62,9 +62,8 @@ app.on('browser-window-created', (_e, win) => {
       console.log('tutup shift demo:', JSON.stringify(close.data && close.data.response || close.error));
       if (!close.ok || !/DEMO/.test(close.data.response)) throw new Error('tutup shift demo gagal');
       if (!fs.readdirSync(path.join(dataDir, 'Laporan-Demo')).length) throw new Error('laporan demo tidak dibuat');
-      const hbDemo = fs.readdirSync(path.join(dataDir, 'Homebase-Demo'));
-      console.log('paket homebase demo:', hbDemo.join(', '), '· shift setelah tutup:', svc.getShift());
-      if (!hbDemo.some((f) => /_shift_/.test(f)) || svc.getShift()) throw new Error('tutup shift demo: paket homebase / hapus data shift tidak sesuai');
+      console.log('shift setelah tutup:', svc.getShift(), '· email demo terkirim:', close.data.emailed);
+      if (svc.getShift() || !close.data.emailed) throw new Error('tutup shift demo: data shift / status email tidak sesuai');
 
       // Riwayat shift: penjualan tersimpan sebagai cadangan, isinya tidak bisa dilihat, laporannya bisa dikirim ulang
       const hist = svc.listShiftHistory();
@@ -92,8 +91,7 @@ app.on('browser-window-created', (_e, win) => {
       if (!/dikirim ulang/.test(toastText)) throw new Error('kirim ulang lewat tombol gagal');
       const resend = await run(`window.posBridge.call('shift:resendReport', { shift_uid: ${uid} })`);
       console.log('kirim ulang:', JSON.stringify(resend.data || resend.error));
-      if (!resend.ok || resend.data.regenerated || resend.data.attachments.filter((f) => /\.(pdf|csv)$/.test(f)).length !== 3
-        || !resend.data.attachments.some((f) => /_shift_.*\.json\.gz$/.test(f))) throw new Error('lampiran kirim ulang tidak lengkap');
+      if (!resend.ok || resend.data.regenerated || resend.data.attachments.filter((f) => /\.(pdf|csv)$/.test(f)).length !== 3) throw new Error('lampiran kirim ulang tidak lengkap');
       // File laporan asli hilang → Rekap PDF & CSV penjualan dibuat ulang dari cadangan riwayat
       const repDir = path.join(dataDir, 'Laporan-Demo');
       for (const d of fs.readdirSync(repDir)) for (const f of fs.readdirSync(path.join(repDir, d))) if (/\.(pdf|csv)$/.test(f)) fs.unlinkSync(path.join(repDir, d, f));

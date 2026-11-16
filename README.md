@@ -32,20 +32,17 @@ Klik dua kali **`Jalankan DEMO.bat`**. Versi ini untuk latihan kasir dan mencoba
 - Versi demo selalu berjalan **Mandiri**; mode Server/Kasir hanya di aplikasi asli.
 - Uji otomatis: `npm run smoke:demo`.
 
-## Homebase (pusat data banyak toko)
+## Mother Base (pusat data kantor)
 
-Klik dua kali **`Jalankan HOMEBASE.bat`** di PC owner (rumah / kantor). Homebase menyimpan data dari semua toko di `%APPDATA%\POS Tri-Zone HOMEBASE\homebase.db`.
+PC Gudang / Mandiri mengirim data toko langsung ke **mother base** (database Supabase milik kantor) lewat internet. Kode dan cara pasang mother base ada di folder [`motherbase/`](motherbase/README.md).
 
-- **Isi Homebase:** riwayat penjualan (tidak hilang setelah tutup shift), stok terakhir 4 zona per toko, penerimaan, mutasi, dan stok opname. Bisa disaring per toko dan diekspor ke Excel.
-- **Kirim dari toko:** PC Gudang / Mandiri membuat **paket data** (`TRZ_….json.gz`) saat tutup shift dan tiap jam bila ada perubahan. Paket dikirim lewat **folder Google Drive** dan/atau **lampiran email tutup shift**. Atur di **Pengaturan → Homebase (Pusat Data)**.
-- **Tidak ikut:** password dan akun SMTP, PIN, kode pasangan.
-- **Penjualan lama** (sebelum ada Homebase): **Pengaturan → Homebase → Sertakan Riwayat Penjualan Lama…** membacanya dari CSV di folder laporan.
-- Panduan pemasangan, daftar semua data, format paket, dan skema database: [docs/HOMEBASE.md](docs/HOMEBASE.md).
-- Uji otomatis: `npm run smoke:homebase`.
-
-## Mother Base (pusat data kantor, Supabase)
-
-Folder [`motherbase/`](motherbase/README.md) berisi pusat data PT kantor yang membaca paket Homebase yang sama dari Google Drive / email ke database Supabase, ditambah pencocokan surat jalan Accurate, stok seharusnya per zona, dan usulan beli. Uji: `node motherbase/test/uji.js`.
+- **Yang dikirim:** penjualan setiap tutup shift, penerimaan, mutasi, stok opname, transaksi mode darurat, daftar barang, dan stok 4 zona. Shift yang masih berjalan juga ikut, jadi omset hari ini sudah terlihat di kantor.
+- **Tanpa internet:** toko tetap jalan. Penjualan shift masuk antrean di `pos.db` dalam transaksi yang sama dengan tutup shift, dan dokumen ditandai terkirim hanya setelah mother base membalas. Pengiriman dicoba otomatis tiap 5 menit; kiriman ulang tidak membuat data dobel.
+- **Pengaturan:** **Pengaturan → Mother Base** (Admin, di PC Gudang / Mandiri): alamat mother base, anon key, kode toko 3 huruf, dan kunci toko dari kantor. Tombol **Tes Koneksi**, **Kirim Sekarang**, **Ambil Master Barang**.
+- **Kunci daftar barang:** bila dicentang, barang baru, nama, barcode, merk, kategori, harga, dan satuan masuk hanya berubah lewat master barang dari mother base (diambil otomatis tiap jam). Batas minimum display toko tetap bisa diubah di toko. Stok tidak pernah diubah oleh master barang.
+- **Tidak ikut:** password dan akun SMTP, email owner, PIN, kode pasangan.
+- Versi DEMO tidak mengirim data.
+- Uji otomatis: `node test/motherbase.test.js` (dengan mother base tiruan) dan `node motherbase/test/uji.js` (dengan PostgreSQL).
 
 ## Mengedit program dari komputer lain (git)
 
@@ -68,7 +65,6 @@ Kode program ada di repo git (`main`). Data toko **tidak** ikut, karena ada di `
 npm test          # tes Node: logika bisnis, nota, label, database, jaringan, mode darurat
 npm run smoke:lan # uji dua komputer (gudang + kasir), termasuk MODE DARURAT & sinkron ulang
 npm run smoke     # uji UI Electron + screenshot (database sementara)
-npm run smoke:homebase # uji aplikasi Homebase: paket 2 toko → ringkasan, penjualan, stok, dokumen, Excel, PIN
 ```
 
 ## Struktur
@@ -81,13 +77,10 @@ npm run smoke:homebase # uji aplikasi Homebase: paket 2 toko → ringkasan, penj
 | `src/main.js` | Proses utama Electron: IPC, import/template Excel, PDF, email SMTP, tutup shift |
 | `src/remote.js` | RPC HTTP LAN antara PC Gudang (server) dan PC Kasir (klien) |
 | `src/offline.js` | Mode darurat PC Kasir: cache barang + antrian transaksi OFF- dan sinkron ulang |
-| `src/reports.js` | CSV penjualan, CSV snapshot stok, HTML rekap (→ PDF), pembaca CSV penjualan lama |
-| `src/homebase-package.js` | Format paket data Homebase (v1): buat, gzip, baca & validasi |
-| `src/homebase-outbox.js` | Folder paket lokal di toko + salin ke folder Google Drive |
-| `src/homebase-legacy.js` | Riwayat penjualan lama dari CSV laporan tutup shift |
-| `src/homebase-store.js` | Database Homebase: impor paket (aman diulang), laporan, ekspor Excel |
-| `src/homebase-main.js` | Mode HOMEBASE di proses utama: pindai folder masuk, dialog, PIN |
-| `src/renderer/` | Antarmuka POS (`index.html`, `app.js`), Homebase (`homebase.html`, `homebase.js`), utilitas bersama (`common.js`), gaya (`style.css`, gelap/terang) |
+| `src/reports.js` | CSV penjualan, CSV snapshot stok, HTML rekap (→ PDF) |
+| `src/motherbase.js` | Kirim data ke mother base (RPC `terima_data`) dan ambil master barang (`ambil_master`) |
+| `src/renderer/` | Antarmuka POS (`index.html`, `app.js`), utilitas bersama (`common.js`), gaya (`style.css`, gelap/terang) |
+| `motherbase/` | Mother base: skema Supabase, pembaca laporan Accurate, alert harian, uji ujung ke ujung |
 
 ## Pencarian barang
 
@@ -111,7 +104,7 @@ Kolom scan / cari barang (Kasir, Mutasi, Penerimaan, Cetak Barcode) menampilkan 
 
 ## Tampilan (tema & ukuran)
 
-Di kiri bawah sidebar (POS dan Homebase):
+Di kiri bawah sidebar:
 - **☾ Gelap / ☀ Terang**: tema warna.
 - **A− · 100% · A+**: ukuran tampilan. Seluruh aplikasi (huruf, tombol, tabel, modal) diperbesar atau diperkecil, pilihannya 80–200%. Klik angka persen untuk kembali ke 100%.
 - Pintasan keyboard: **Ctrl + =** (atau Ctrl + +) memperbesar, **Ctrl + −** memperkecil, **Ctrl + 0** kembali ke 100%.
@@ -148,11 +141,11 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
 - Database: `%APPDATA%\POS Tri-Zone\pos.db` (backup harian di subfolder `backup/`, 14 terakhir). Path persisnya tampil di **Pengaturan → Informasi**.
 - Laporan tutup shift: `Dokumen\POS-Laporan\Shift_YYYYMMDD_HHMMSS\`
 - **Riwayat Shift (cadangan):** tutup shift tidak lagi menghapus penjualan. Penjualan shift yang sudah ditutup dipindah ke tabel riwayat di database.
-  - Riwayat disimpan **hari ini + kemarin**. Yang ditutup sebelum kemarin 00:00 dihapus otomatis saat tutup shift, saat aplikasi dibuka, dan tiap jam. Jadi selalu ada cadangan minimal 1 hari penuh.
+  - Riwayat disimpan **4 hari** (hari ini + 3 hari sebelumnya). Yang lebih lama dihapus otomatis saat tutup shift, saat aplikasi dibuka, dan tiap jam.
   - **Isi riwayat tidak bisa dibuka di aplikasi.** Di **Laporan Shift → Kirim Ulang Laporan Shift** hanya tampil kasir dan waktu shift, dengan tombol **Kirim Ulang Laporan**.
-  - Kirim ulang mengirim file laporan asli (Rekap PDF, CSV penjualan, CSV snapshot stok) dan paket Homebase shift itu ke email owner. Bila file laporan asli hilang, Rekap PDF dan CSV penjualan dibuat ulang dari cadangan riwayat.
-  - Shift tetap hanya ditutup setelah email laporan terkirim (250 OK).
-- Paket data Homebase: `Dokumen\POS-Homebase\Paket\` (disalin ke folder Google Drive bila diatur)
+  - Kirim ulang mengirim file laporan asli (Rekap PDF, CSV penjualan, CSV snapshot stok) ke email owner. Bila file laporan asli hilang, Rekap PDF dan CSV penjualan dibuat ulang dari cadangan riwayat.
+  - **Tutup shift tidak menunggu internet.** Shift langsung ditutup; bila email laporan gagal, shift ditandai **Email menunggu** dan email dikirim otomatis tiap 10 menit (subjek "(Tertunda)") sampai terkirim. Penjualannya tetap masuk antrean mother base.
+- Antrean mother base: tabel `mb_outbox_shift` di `pos.db` (tidak ikut dihapus bersama Riwayat Shift sampai diterima mother base).
 
 ## Login & hak akses
 

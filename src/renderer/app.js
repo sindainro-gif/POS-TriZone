@@ -1390,6 +1390,7 @@ views.opname = (() => {
 views.products = (() => {
   let rows = [];
   let t;
+  let locked = false;
   $('#pdSearch').addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 200); });
   $('#pdFilter').addEventListener('change', load);
 
@@ -1400,7 +1401,7 @@ views.products = (() => {
         <td><div class="pname">${esc(p.name)}</div><div class="psub">1 ${esc(p.pack_unit)} = ${num(p.pack_ratio)} Biji · min toko ${num(p.min_floor_alert)}</div></td>
         <td>${esc(p.brand)}</td><td>${esc(p.category)}</td><td class="r">${num(p.unit_price)}</td>
         <td class="c">${floorBadge(p)}</td><td class="c">${whBadge(p)}</td><td class="c">${bsBadge(p)}</td><td class="c">${shpBadge(p)}</td>
-        <td>${canEditProducts() ? `<div class="btn-row"><button class="btn sm ghost" data-label="${esc(p.sku)}" title="Tambah ke antrian cetak barcode">Barcode</button><button class="btn sm" data-edit="${esc(p.sku)}">Ubah</button><button class="btn sm danger" data-del="${esc(p.sku)}">Hapus</button></div>` : ''}</td></tr>`).join('')
+        <td>${canEditProducts() ? `<div class="btn-row"><button class="btn sm ghost" data-label="${esc(p.sku)}" title="Tambah ke antrian cetak barcode">Barcode</button><button class="btn sm" data-edit="${esc(p.sku)}">Ubah</button>${locked ? '' : `<button class="btn sm danger" data-del="${esc(p.sku)}">Hapus</button>`}</div>` : ''}</td></tr>`).join('')
       : '<tr><td colspan="11" class="empty-row">Tidak ada barang. Tambah barang baru atau import dari Excel.</td></tr>';
     const tot = rows.reduce((a, p) => ({ f: a.f + p.floor_stock, w: a.w + p.warehouse_stock, d: a.d + p.damaged_stock, s: a.s + p.shopee_stock }), { f: 0, w: 0, d: 0, s: 0 });
     $('#pdCount').style.marginTop = '10px';
@@ -1504,7 +1505,13 @@ views.products = (() => {
     } catch (e) { toast(e.message, 'err', 7000); }
   });
 
-  function show() {
+  async function show() {
+    const m = await api('meta').catch(() => ({}));
+    locked = !!m.master_locked;
+    $('#pdLocked').classList.toggle('hidden', !locked);
+    // Pakai style, bukan kelas .hidden: kelas itu juga dipakai untuk menyembunyikan tombol menurut peran
+    $('#pdImport').style.display = locked ? 'none' : '';
+    $('#pdAdd').style.display = locked ? 'none' : '';
     load();
     setTimeout(() => $('#pdSearch').focus(), 30);
   }
@@ -2003,7 +2010,7 @@ views.shift = (() => {
     });
   }
 
-  // Shift yang sudah ditutup hari ini & kemarin: isinya TIDAK ditampilkan, laporannya hanya bisa dikirim ulang ke owner
+  // Shift yang sudah ditutup 4 hari terakhir: isinya TIDAK ditampilkan, laporannya hanya bisa dikirim ulang ke owner
   async function renderHistory() {
     const box = $('#shHistory');
     if (!box) return;
@@ -2011,12 +2018,12 @@ views.shift = (() => {
     try { rows = await api('shift:history'); } catch (e) { box.innerHTML = ''; return; }
     box.innerHTML = `<div class="card">
         <div class="card-head"><h2>Kirim Ulang Laporan Shift</h2>
-          <span class="muted small">Shift yang ditutup hari ini &amp; kemarin. Isinya tidak ditampilkan di sini; laporannya bisa dikirim ulang ke email owner.</span></div>
+          <span class="muted small">Shift yang ditutup 4 hari terakhir. Isinya tidak ditampilkan di sini; laporannya bisa dikirim ulang ke email owner.</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Kasir</th><th>Mulai</th><th>Tutup</th><th></th></tr></thead>
         <tbody id="shHistoryBody">${rows.length ? rows.map((h) => `<tr>
-            <td><b>${esc(h.cashier_name)}</b></td><td class="muted">${fmtTime(h.shift_start)}</td><td>${fmtTime(h.closed_at)}</td>
+            <td><b>${esc(h.cashier_name)}</b>${h.email_terkirim ? '' : ' <span class="badge floor low">Email menunggu</span>'}</td><td class="muted">${fmtTime(h.shift_start)}</td><td>${fmtTime(h.closed_at)}</td>
             <td class="r"><button class="btn sm" data-h="${esc(h.shift_uid)}" data-name="${esc(h.cashier_name)}" data-at="${esc(h.closed_at)}">Kirim Ulang Laporan</button></td></tr>`).join('')
-          : '<tr><td colspan="4" class="empty-row">Belum ada shift yang ditutup hari ini atau kemarin.</td></tr>'}</tbody></table></div>
+          : '<tr><td colspan="4" class="empty-row">Belum ada shift yang ditutup 4 hari terakhir.</td></tr>'}</tbody></table></div>
       </div>`;
     $('#shHistoryBody').addEventListener('click', async (e) => {
       const b = e.target.closest('[data-h]');
@@ -2129,19 +2136,22 @@ views.shift = (() => {
       if (views.checkout.hasItems()) { toast('Masih ada barang di keranjang kasir. Selesaikan atau kosongkan dulu.', 'err'); return; }
       const draftCount = (await api('drafts:list').catch(() => [])).length;
       const ok = await confirmDialog('Tutup Shift', `Tutup shift <b>${esc(sh.cashier_name)}</b> dengan omset <b>${rp(s.totals.revenue)}</b>?<br><br>
-        Laporan akan dikirim ke email owner. Setelah email terkirim (250 OK), shift ditutup dan penjualannya disimpan sebagai cadangan
-        sampai akhir hari berikutnya (laporannya bisa dikirim ulang), lalu dihapus otomatis. Master barang dan stok tidak berubah.
+        Shift langsung ditutup, walau tanpa internet. Laporan dikirim ke email owner dan penjualannya ke mother base; bila internet mati,
+        keduanya dikirim otomatis saat internet tersambung. Penjualan shift disimpan sebagai cadangan 4 hari (laporannya bisa dikirim ulang).
+        Master barang dan stok tidak berubah.
         ${draftCount ? `<br><br><span class="badge bs">Perhatian</span> Masih ada <b>${draftCount} draft penjualan</b> belum dibayar di komputer ini (tidak ikut dihitung di laporan).` : ''}`, { okLabel: 'Tutup Shift & Kirim' });
       if (!ok) return;
-      const prog = modal({ title: 'Menutup Shift…', body: '<p>Membuat laporan PDF & CSV, lalu mengirim email ke owner. Mohon tunggu, jangan tutup aplikasi.</p>', dismissable: false });
+      const prog = modal({ title: 'Menutup Shift…', body: '<p>Membuat laporan PDF & CSV, menutup shift, lalu mengirim email ke owner. Mohon tunggu, jangan tutup aplikasi.</p>', dismissable: false });
       try {
         const r = await api('shift:close', { notes: $('#shNotes').value });
         prog.close();
         await refreshShift();
         modal({
           title: 'Shift Berhasil Ditutup',
-          body: `<div class="alert ok">Laporan terkirim ke owner. Server email membalas: <code>${esc(r.response)}</code></div>
-            <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Laporannya bisa dikirim ulang dari <b>Laporan Shift → Kirim Ulang Laporan Shift</b> sampai akhir besok.</p>
+          body: `${r.emailed
+            ? `<div class="alert ok">Laporan terkirim ke owner. Server email membalas: <code>${esc(r.response)}</code></div>`
+            : `<div class="alert warn">Shift sudah ditutup, tetapi email laporan <b>belum terkirim</b>: ${esc(r.email_error)}<br>Email dicoba lagi otomatis tiap 10 menit saat internet tersambung.</div>`}
+            <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Laporannya bisa dikirim ulang dari <b>Laporan Shift → Kirim Ulang Laporan Shift</b> selama 4 hari.</p>
             <p class="muted small">Salinan laporan tersimpan di${r.onServer ? ' <b>PC gudang</b>' : ''}:<br><code>${esc(r.dir)}</code></p>`,
           actions: [
             { label: 'Buka Folder', kind: 'ghost', onClick: () => api('app:openPath', { dir: r.dir }) },
@@ -2152,7 +2162,7 @@ views.shift = (() => {
         prog.close();
         modal({
           title: 'Tutup Shift Gagal',
-          body: `<div class="alert danger">${esc(e.message)}</div><p>Shift <b>belum ditutup</b>; semua penjualan shift masih ada. Periksa koneksi internet atau menu Pengaturan, lalu coba lagi.</p>`,
+          body: `<div class="alert danger">${esc(e.message)}</div><p>Shift <b>belum ditutup</b>; semua penjualan shift masih ada. Periksa menu Pengaturan, lalu coba lagi.</p>`,
           actions: [{ label: 'Buka Pengaturan', kind: 'ghost', onClick: ({ close }) => { close(); go('settings'); } }, { label: 'Tutup', kind: 'primary' }],
         });
       }
@@ -2231,96 +2241,90 @@ const modeCard = (() => {
   return { load };
 })();
 
-// ================================================================ Homebase (paket data untuk pusat data)
-const homebaseCard = (() => {
+// ================================================================ Mother base (pusat data kantor)
+const mbCard = (() => {
   let st = null;
-  const KIND = { shift: 'paket shift', snapshot: 'snapshot semua data' };
 
   function render() {
     const client = !!(st && st.client);
-    $('#hbClient').classList.toggle('hidden', !client);
-    $('#hbBody').classList.toggle('hidden', client);
-    const badge = $('#hbBadge');
-    if (!st || client) { badge.className = 'badge wh'; badge.textContent = client ? 'Di PC Gudang' : '-'; return; }
-    // Error hanya relevan untuk folder yang sedang diatur (bukan folder lama yang sudah dikosongkan)
-    const err = st.sync_dir && st.last_sync && st.last_sync.dir === st.sync_dir ? st.last_sync.error : '';
-    if (!st.sync_dir) { badge.className = 'badge wh'; badge.textContent = 'Folder belum diatur'; }
-    else if (err) { badge.className = 'badge bs'; badge.textContent = 'Gagal kirim'; }
-    else if (st.pending) { badge.className = 'badge floor low'; badge.textContent = `${num(st.pending)} menunggu`; }
+    const demo = !!(st && st.demo);
+    $('#mbClient').classList.toggle('hidden', !client);
+    $('#mbDemo').classList.toggle('hidden', !demo || client);
+    ['#mbUrl', '#mbKode', '#mbAnon', '#mbKunci', '#mbLock', '#mbSave', '#mbTest', '#mbSend', '#mbPull'].forEach((s) => { $(s).disabled = client || demo; });
+    const badge = $('#mbBadge');
+    if (!st) { badge.className = 'badge wh'; badge.textContent = '-'; return; }
+    const pendingDocs = Object.values(st.pending_docs || {}).reduce((a, n) => a + n, 0);
+    if (!st.ready) { badge.className = 'badge wh'; badge.textContent = 'Belum diatur'; }
+    else if (st.last_error) { badge.className = 'badge bs'; badge.textContent = 'Gagal kirim'; }
+    else if (st.pending_shifts) { badge.className = 'badge floor low'; badge.textContent = `${num(st.pending_shifts)} shift menunggu`; }
     else { badge.className = 'badge floor ok'; badge.textContent = 'Terkirim'; }
-    $('#hbStoreId').textContent = st.store_id;
-    $('#hbLast').innerHTML = st.last_package
-      ? `${fmtTime(st.last_package.at)} · ${KIND[st.last_package.kind] || esc(st.last_package.kind)}<br><span class="muted">${num(st.files)} file di folder paket (${num(st.shift_files)} paket shift)</span>`
-      : 'Belum ada paket';
-    const ls = st.last_sync && st.last_sync.dir === st.sync_dir ? st.last_sync : null;
-    $('#hbSync').innerHTML = !st.sync_dir ? '<span class="muted">Folder belum diatur</span>'
-      : ls && ls.at ? `${fmtTime(ls.at)} · ${num(ls.copied || 0)} file disalin${st.pending ? ` · <b>${num(st.pending)} menunggu</b>` : ''}` : 'Belum pernah';
-    $('#hbDir').value = st.sync_dir || '';
-    $('#hbEmail').checked = !!st.email;
-    $('#hbOutbox').textContent = st.dir;
-    $('#hbError').classList.toggle('hidden', !err);
-    $('#hbError').textContent = err ? `${err} — dicoba lagi otomatis tiap 10 menit.` : '';
+
+    const r = st.last_result;
+    $('#mbLast').innerHTML = st.last_ok_at
+      ? `${fmtTime(st.last_ok_at)}${r ? `<br><span class="muted">${num(r.shift)} shift · ${num(r.penerimaan)} penerimaan · ${num(r.mutasi)} mutasi · ${num(r.opname)} opname${r.snapshot ? ' · stok' : ''}</span>` : ''}`
+      : 'Belum pernah';
+    $('#mbPending').innerHTML = `${num(st.pending_shifts)} shift${st.oldest_pending ? ` (tertua ${fmtTime(st.oldest_pending)})` : ''}<br><span class="muted">${num(pendingDocs)} dokumen stok</span>`;
+    const m = st.master_result;
+    $('#mbMaster').innerHTML = st.master_at
+      ? `${fmtTime(st.master_at)}${m ? `<br><span class="muted">${num(m.baru)} baru · ${num(m.diubah)} diubah${m.dilewati ? ` · <b>${num(m.dilewati)} dilewati</b>` : ''}</span>` : ''}`
+      : (st.master_locked ? 'Belum pernah diambil' : '<span class="muted">Tidak dikunci</span>');
+    const err = [st.last_error && `Kiriman: ${st.last_error}`, st.master_error && `Master barang: ${st.master_error}`].filter(Boolean).join('\n');
+    $('#mbError').classList.toggle('hidden', !err);
+    $('#mbError').textContent = err ? `${err}\nDicoba lagi otomatis tiap 5 menit.` : '';
+    $('#mbError').style.whiteSpace = 'pre-line';
+    if (document.activeElement !== $('#mbUrl')) $('#mbUrl').value = st.url || '';
+    if (document.activeElement !== $('#mbKode')) $('#mbKode').value = st.kode_toko || '';
+    $('#mbAnon').placeholder = st.anon_key_set ? 'Tersimpan (isi untuk mengganti)' : 'Belum diisi';
+    $('#mbKunci').placeholder = st.has_kunci ? 'Tersimpan (isi untuk mengganti)' : 'Belum diisi';
+    $('#mbLock').checked = !!st.master_locked;
   }
 
   async function load() {
     if (role() !== 'admin') return;
-    try { st = await api('homebase:status'); } catch (e) { st = null; toast(e.message, 'err'); }
+    try { st = await api('mb:status'); } catch (e) { st = null; toast(e.message, 'err'); }
     render();
   }
 
-  async function saveConfig(patch) {
-    try { st = await api('homebase:saveConfig', patch); render(); return true; } catch (e) { toast(e.message, 'err', 8000); return false; }
+  async function busy(btn, fn) {
+    btn.disabled = true;
+    try { await fn(); } catch (e) { toast(e.message, 'err', 9000); await load(); } finally { btn.disabled = false; }
   }
 
-  $('#hbPick').addEventListener('click', async () => {
-    const dir = await api('homebase:pickFolder').catch((e) => { toast(e.message, 'err'); return null; });
-    if (dir && (await saveConfig({ sync_dir: dir }))) toast('Folder Google Drive disimpan. Paket disalin ke sana.', 'ok', 5000);
-  });
-  $('#hbClear').addEventListener('click', async () => {
-    if (st && st.sync_dir && (await saveConfig({ sync_dir: '' }))) toast('Folder Google Drive dikosongkan. Paket tetap disimpan di komputer ini.', 'ok');
-  });
-  $('#hbEmail').addEventListener('change', () => saveConfig({ email: $('#hbEmail').checked }));
-  $('#hbSend').addEventListener('click', async () => {
-    const btn = $('#hbSend');
-    btn.disabled = true;
-    try {
-      const r = await api('homebase:sendNow');
-      st = r.status;
-      render();
-      const s = r.sync || {};
-      if (s.error) toast(`Paket dibuat, tetapi belum terkirim: ${s.error}`, 'err', 8000);
-      else if (!st.sync_dir) toast(`Paket dibuat: ${r.package}. Atur folder Google Drive agar terkirim otomatis.`, 'ok', 7000);
-      else toast(`Paket dibuat dan disalin ke folder Google Drive (${num(s.copied || 0)} file).`, 'ok', 6000);
-    } catch (e) { toast(e.message, 'err', 8000); } finally { btn.disabled = false; }
-  });
-  $('#hbLegacy').addEventListener('click', async () => {
-    if (!(await confirmDialog('Sertakan Riwayat Penjualan Lama',
-      `Penjualan dari laporan tutup shift lama (file CSV di folder laporan) dijadikan paket shift untuk Homebase.
-       Struk yang tercatat di beberapa folder (tutup shift yang email-nya gagal) hanya dihitung sekali.
-       Aman dijalankan ulang: Homebase tidak menghitungnya dua kali.`, { okLabel: 'Buat Paket Riwayat' }))) return;
-    try {
-      const r = await api('homebase:legacy');
-      st = r.status;
-      render();
+  $('#mbSave').addEventListener('click', () => busy($('#mbSave'), async () => {
+    const patch = { url: $('#mbUrl').value.trim(), kode_toko: $('#mbKode').value.trim(), kunci_master: $('#mbLock').checked };
+    if ($('#mbAnon').value.trim()) patch.anon_key = $('#mbAnon').value.trim();
+    if ($('#mbKunci').value.trim()) patch.kunci = $('#mbKunci').value.trim();
+    st = await api('mb:save', patch);
+    $('#mbAnon').value = '';
+    $('#mbKunci').value = '';
+    render();
+    toast(st.ready ? 'Pengaturan mother base disimpan.' : 'Disimpan. Lengkapi alamat, anon key, kode toko, dan kunci toko agar data terkirim.', 'ok', 6000);
+  }));
+  $('#mbTest').addEventListener('click', () => busy($('#mbTest'), async () => {
+    const r = await api('mb:test');
+    toast(`Terhubung ke mother base sebagai toko ${r.kode_toko}.`, 'ok', 6000);
+  }));
+  $('#mbSend').addEventListener('click', () => busy($('#mbSend'), async () => {
+    const r = await api('mb:sendNow');
+    st = r.status;
+    render();
+    const x = r.result;
+    toast(`Terkirim: ${num(x.shift)} shift, ${num(x.penerimaan)} penerimaan, ${num(x.mutasi)} mutasi, ${num(x.opname)} opname${x.snapshot ? ', stok terkini' : ''}.`, 'ok', 7000);
+  }));
+  $('#mbPull').addEventListener('click', () => busy($('#mbPull'), async () => {
+    const r = await api('mb:pullMaster');
+    st = r.status;
+    render();
+    const x = r.result;
+    if (x.dilewati.length) {
       modal({
-        title: 'Riwayat Penjualan Lama',
-        body: `<div class="kv"><span>Folder laporan</span><code>${esc(r.reports_dir)}</code></div>
-          <div class="kv"><span>Folder shift dibaca</span><b>${num(r.scanned)}</b></div>
-          <div class="kv"><span>Sudah ada di paket shift (dilewati)</span><b>${num(r.covered)}</b></div>
-          <div class="kv"><span>Paket riwayat dibuat</span><b>${num(r.shifts)} shift · ${num(r.receipts)} struk · ${rp(r.revenue)}</b></div>
-          ${r.errors.length ? `<p class="small" style="margin-top:10px">File yang tidak terbaca:</p>${errorList(r.errors)}` : ''}`,
+        title: 'Master Barang Diambil',
+        body: `<p>${num(x.jumlah)} barang dari mother base: ${num(x.baru)} baru, ${num(x.diubah)} diubah, ${num(x.sama)} sama.</p>
+          <p class="small">${num(x.dilewati.length)} barang dilewati:</p>${errorList(x.dilewati)}`,
         actions: [{ label: 'Tutup', kind: 'primary' }],
       });
-    } catch (e) { toast(e.message, 'err', 8000); }
-  });
-  $('#hbOpen').addEventListener('click', () => api('homebase:openFolder').catch((e) => toast(e.message, 'err')));
-  $('#hbNewId').addEventListener('click', async () => {
-    if (!(await confirmDialog('Ganti ID Toko',
-      `Gunakan hanya bila database ini <b>disalin dari toko lain</b> (mis. membuka cabang baru dari cadangan toko lama).
-       Setelah diganti, Homebase menganggap komputer ini sebagai <b>toko baru</b>. Paket lama tetap tercatat dengan ID lama.`,
-      { okLabel: 'Ganti ID Toko', danger: true }))) return;
-    try { st = await api('homebase:newStoreId'); render(); toast('ID toko baru dibuat.', 'ok'); } catch (e) { toast(e.message, 'err'); }
-  });
+    } else toast(`Master barang: ${num(x.baru)} baru, ${num(x.diubah)} diubah, ${num(x.sama)} sama.`, 'ok', 7000);
+  }));
 
   return { load };
 })();
@@ -2560,7 +2564,7 @@ views.settings = (() => {
   async function show() {
     modeCard.load();
     usersCard.load();
-    homebaseCard.load();
+    mbCard.load();
     const s = await api('settings:get');
     state.settings = s;
     await loadPrinters(s.printer_name);

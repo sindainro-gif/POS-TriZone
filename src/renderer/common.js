@@ -1,7 +1,7 @@
 'use strict';
 /* global window, document */
-// Utilitas tampilan bersama: aplikasi POS (index.html) dan Homebase (homebase.html).
-// Dimuat sebelum app.js / homebase.js; deklarasi di sini terlihat oleh skrip berikutnya.
+// Utilitas tampilan bersama untuk aplikasi POS (index.html).
+// Dimuat sebelum app.js; deklarasi di sini terlihat oleh skrip berikutnya.
 
 // ================================================================ Utilitas
 const $ = (s, r = document) => r.querySelector(s);

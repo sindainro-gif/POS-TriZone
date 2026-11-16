@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS active_shift (
     initial_cash INTEGER DEFAULT 0
 );
 
--- Riwayat shift yang sudah ditutup (cadangan hari ini & kemarin; yang lebih lama dihapus otomatis)
+-- Riwayat shift yang sudah ditutup (cadangan 4 hari kalender; yang lebih lama dihapus otomatis)
 CREATE TABLE IF NOT EXISTS shift_history (
     shift_uid TEXT PRIMARY KEY,
     cashier_name TEXT,
@@ -155,8 +155,21 @@ CREATE TABLE IF NOT EXISTS shift_history (
     revenue INTEGER NOT NULL DEFAULT 0,
     cash_sales INTEGER NOT NULL DEFAULT 0,
     by_method TEXT,            -- JSON [{method, receipts, total}]
-    report_dir TEXT            -- folder laporan tutup shift (PDF / CSV)
+    report_dir TEXT,           -- folder laporan tutup shift (PDF / CSV)
+    email_sent_at DATETIME,    -- kosong = email laporan belum terkirim (dicoba ulang otomatis)
+    email_error TEXT
 );
+
+-- Antrean kiriman shift ke mother base. Diisi di transaksi yang sama dengan tutup shift,
+-- jadi penjualan shift tidak bisa hilang walau internet mati atau riwayat shift sudah dihapus.
+CREATE TABLE IF NOT EXISTS mb_outbox_shift (
+    shift_uid TEXT PRIMARY KEY,
+    closed_at DATETIME NOT NULL,
+    payload TEXT NOT NULL,     -- JSON { shift, sales }
+    created_at DATETIME NOT NULL,
+    sent_at DATETIME           -- kosong = belum diterima mother base
+);
+CREATE INDEX IF NOT EXISTS idx_mb_outbox_pending ON mb_outbox_shift(sent_at, closed_at);
 
 CREATE TABLE IF NOT EXISTS shift_history_sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,7 +254,8 @@ const REQUIRED_TABLES = ['products', 'inventory', 'settings'];
 const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfers', 'doc_id', 'INTEGER'],
   ['stock_opname_docs', 'count_at', 'DATETIME'], ['stock_opname_items', 'before_qty', 'INTEGER'],
   ['inventory', 'shopee_stock', 'INTEGER DEFAULT 0'],
-  ['active_shift', 'shift_uid', 'TEXT']]; // ID unik shift untuk paket Homebase
+  ['active_shift', 'shift_uid', 'TEXT'], // ID unik shift (kunci data shift di mother base)
+  ['shift_history', 'email_sent_at', 'DATETIME'], ['shift_history', 'email_error', 'TEXT']];
 
 // Tabel lama punya CHECK zona tanpa Gudang Shopee. SQLite tidak bisa mengubah CHECK,
 // jadi tabelnya dibangun ulang dari definisi lamanya (kolom tambahan ikut) dengan daftar zona baru.
@@ -278,7 +292,10 @@ function widenZoneChecks(sqlDb) {
 function migrate(sqlDb) {
   for (const [table, col, type] of ADDED_COLUMNS) {
     const cols = (sqlDb.exec(`PRAGMA table_info(${table})`)[0]?.values || []).map((r) => r[1]);
-    if (!cols.includes(col)) sqlDb.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+    if (cols.includes(col)) continue;
+    sqlDb.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+    // Riwayat dari versi lama: shift hanya bisa ditutup setelah email terkirim, jadi semuanya sudah terkirim
+    if (table === 'shift_history' && col === 'email_sent_at') sqlDb.exec('UPDATE shift_history SET email_sent_at = closed_at');
   }
   widenZoneChecks(sqlDb);
   sqlDb.exec('CREATE INDEX IF NOT EXISTS idx_transfers_doc ON stock_transfers(doc_id)');
@@ -298,7 +315,7 @@ function posError(msg) {
 }
 
 class Database {
-  // Bawaan: skema POS. Homebase memakai pembungkus yang sama dengan skemanya sendiri ({ schema, migrate }).
+  // Bawaan: skema POS. Skema lain bisa memakai pembungkus yang sama ({ schema, migrate }).
   static async open(file, { schema = SCHEMA, migrate: migrateFn = migrate } = {}) {
     const SQL = await loadSql();
     const db = file && fs.existsSync(file) ? new SQL.Database(fs.readFileSync(file)) : new SQL.Database();

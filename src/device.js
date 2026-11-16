@@ -16,8 +16,6 @@ const DEFAULTS = {
   paper_width: '58',
   auto_print: '1',
   label_printer_name: '',
-  homebase_sync_dir: '', // folder Google Drive tujuan paket Homebase (PC pemilik database)
-  homebase_email: '1', // lampirkan paket Homebase di email tutup shift
 };
 
 function loadDevice(dir) {

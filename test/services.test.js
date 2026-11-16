@@ -269,7 +269,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     // Daftar riwayat untuk layar hanya kasir & waktu: omset, struk, dan barang tidak bisa dilihat
     const hist = svc.listShiftHistory();
     assert.strictEqual(hist.length, 1);
-    assert.deepStrictEqual(Object.keys(hist[0]).sort(), ['cashier_name', 'closed_at', 'shift_start', 'shift_uid']);
+    assert.deepStrictEqual(Object.keys(hist[0]).sort(), ['cashier_name', 'closed_at', 'email_terkirim', 'shift_start', 'shift_uid']);
     assert.deepStrictEqual([hist[0].shift_uid, hist[0].cashier_name], [uid, 'Rina']);
     // Data lengkap hanya untuk mengirim ulang laporan (proses utama)
     const rep = svc.shiftHistoryReport({ shift_uid: uid });
@@ -285,7 +285,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(svc.shiftHistoryDetail, undefined);
   });
 
-  await t('riwayat shift: hari ini & kemarin disimpan, sebelum kemarin dihapus otomatis', () => {
+  await t('riwayat shift: 4 hari disimpan, yang lebih lama dihapus otomatis', () => {
     const dayOf = (n) => {
       const d = new Date(`${localNow().slice(0, 10)}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() + n);
@@ -297,13 +297,13 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
       db.run(`INSERT INTO shift_history_sales(shift_uid, receipt_no, sku, product_name, qty_sold, unit_price, line_total, payment_method, created_at)
               VALUES(?, 'INV-LAMA-1', 'MNM-001', 'Air', 1, 1000, 1000, 'Tunai', ?)`, [uid, closed]);
     });
-    add('kemarin', `${dayOf(-1)} 00:00:00`);
-    add('dua-hari-lalu', `${dayOf(-2)} 23:59:59`);
+    add('kemarin', `${dayOf(-3)} 00:00:00`);
+    add('dua-hari-lalu', `${dayOf(-4)} 23:59:59`);
     assert.strictEqual(svc.pruneShiftHistory(), 1);
     let uids = svc.listShiftHistory().map((h) => h.shift_uid);
     assert.ok(uids.includes('kemarin') && !uids.includes('dua-hari-lalu'));
     assert.strictEqual(db.get("SELECT COUNT(*) AS n FROM shift_history_sales WHERE shift_uid = 'dua-hari-lalu'").n, 0);
-    // Besok: riwayat kemarin (sudah 2 hari lalu) dihapus, shift yang ditutup hari ini tetap ada
+    // Besok: riwayat 3 hari lalu (jadi 4 hari lalu) dihapus, shift yang ditutup hari ini tetap ada
     assert.strictEqual(svc.pruneShiftHistory({ today: dayOf(1) }), 1);
     uids = svc.listShiftHistory().map((h) => h.shift_uid);
     assert.deepStrictEqual(uids.length, 1);
