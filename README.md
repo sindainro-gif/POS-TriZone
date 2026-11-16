@@ -43,6 +43,10 @@ Klik dua kali **`Jalankan HOMEBASE.bat`** di PC owner (rumah / kantor). Homebase
 - Panduan pemasangan, daftar semua data, format paket, dan skema database: [docs/HOMEBASE.md](docs/HOMEBASE.md).
 - Uji otomatis: `npm run smoke:homebase`.
 
+## Mother Base (pusat data kantor, Supabase)
+
+Folder [`motherbase/`](motherbase/README.md) berisi pusat data PT kantor yang membaca paket Homebase yang sama dari Google Drive / email ke database Supabase, ditambah pencocokan surat jalan Accurate, stok seharusnya per zona, dan usulan beli. Uji: `node motherbase/test/uji.js`.
+
 ## Mengedit program dari komputer lain (git)
 
 Kode program ada di repo git (`main`). Data toko **tidak** ikut, karena ada di `%APPDATA%\POS Tri-Zone`. `node_modules`, `dist`, dan cadangan database juga diabaikan lewat `.gitignore`.
