@@ -221,7 +221,8 @@ function checkoutLocal(a) {
 async function closeShiftLocal({ notes } = {}) {
   if (closingShift) throw userError('Proses tutup shift sedang berjalan.');
   const settings = localSvc.getSettingsRaw();
-  makeTransport(settings); // validasi pengaturan email sebelum membuat file
+  // Email belum diatur TIDAK menghalangi tutup shift: data tetap masuk antrean mother base, dan email
+  // ditandai menunggu (dicoba ulang otomatis tiap 10 menit, terkirim setelah SMTP diatur di Pengaturan).
   const summary = localSvc.shiftSummary();
   if (!summary.shift) throw userError('Tidak ada shift aktif.');
 
