@@ -74,6 +74,7 @@ app.on('browser-window-created', (_e, win) => {
       await wait(1500);
       const zReload = await zoomOf();
       if (Math.abs(zReload.f - 1.1) > 0.001 || zReload.lbl !== '110%') throw new Error(`ukuran tampilan tidak bertahan setelah muat ulang: ${JSON.stringify(zReload)}`);
+      if (!win.isVisible()) throw new Error('jendela aplikasi tidak tampil (ready-to-show tidak terpicu?)');
       await run(`document.querySelector('#zoomCtl [data-zoom="0"]').click()`); // kembali 100% untuk langkah berikutnya
       await wait(300);
 

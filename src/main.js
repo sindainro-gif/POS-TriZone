@@ -957,7 +957,18 @@ function createWindow() {
       sandbox: true,
     },
   });
-  win.once('ready-to-show', () => { win.maximize(); win.show(); });
+  // Tampilkan jendela sekali saja. Cadangan bila ready-to-show tidak terpicu (mis. zoom halaman diubah sebelum
+  // gambar pertama): setelah halaman selesai dimuat, atau paling lambat 5 detik setelah dibuat.
+  let shown = false;
+  const showWindow = () => {
+    if (shown || win.isDestroyed()) return;
+    shown = true;
+    win.maximize();
+    win.show();
+  };
+  win.once('ready-to-show', showWindow);
+  win.webContents.once('did-finish-load', () => setTimeout(showWindow, 300));
+  setTimeout(showWindow, 5000);
   win.webContents.on('before-input-event', (_e, input) => {
     // Alat pengembang: Ctrl+Shift+I (F12 dipakai kasir untuk Uang Diterima)
     if (input.type === 'keyDown' && input.control && input.shift && input.key.toLowerCase() === 'i') win.webContents.toggleDevTools();
