@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi

@@ -34,7 +34,7 @@ Klik dua kali **`Jalankan DEMO.bat`**. Versi ini untuk latihan kasir dan mencoba
 
 ## Mother Base (pusat data kantor)
 
-PC Gudang / Mandiri mengirim data toko langsung ke **mother base** (database Supabase milik kantor) lewat internet. Kode dan cara pasang mother base ada di folder [`motherbase/`](motherbase/README.md).
+PC Gudang / Mandiri mengirim data toko langsung ke **mother base** (database Supabase milik kantor) lewat internet. Kantor memakai aplikasi web mother base (penjualan, surat jalan Accurate, stok opname, master barang, pembelian, asisten AI). Kode dan cara pasang ada di folder [`motherbase/`](motherbase/README.md).
 
 - **Yang dikirim:** penjualan setiap tutup shift, penerimaan, mutasi, stok opname, transaksi mode darurat, daftar barang, dan stok 4 zona. Shift yang masih berjalan juga ikut, jadi omset hari ini sudah terlihat di kantor.
 - **Tanpa internet:** toko tetap jalan. Penjualan shift masuk antrean di `pos.db` dalam transaksi yang sama dengan tutup shift, dan dokumen ditandai terkirim hanya setelah mother base membalas. Pengiriman dicoba otomatis tiap 5 menit; kiriman ulang tidak membuat data dobel.
@@ -80,7 +80,7 @@ npm run smoke     # uji UI Electron + screenshot (database sementara)
 | `src/reports.js` | CSV penjualan, CSV snapshot stok, HTML rekap (→ PDF) |
 | `src/motherbase.js` | Kirim data ke mother base (RPC `terima_data`) dan ambil master barang (`ambil_master`) |
 | `src/renderer/` | Antarmuka POS (`index.html`, `app.js`), utilitas bersama (`common.js`), gaya (`style.css`, gelap/terang) |
-| `motherbase/` | Mother base: skema Supabase, pembaca laporan Accurate, alert harian, uji ujung ke ujung |
+| `motherbase/` | Mother base: aplikasi web kantor, skema Supabase, Edge Function asisten AI, pembaca laporan Accurate, server dev, uji |
 
 ## Pencarian barang
 

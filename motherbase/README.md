@@ -1,107 +1,173 @@
 # Mother Base
 
-Pusat data PT kantor di atas Supabase untuk 9 toko POS Tri-Zone. Trizone (PC Gudang / Mandiri)
-mengirim data langsung ke database lewat internet; mother base menambahkan surat jalan dari Accurate
-dan pencocokannya, stok seharusnya per zona, master barang & harga, dan usulan beli.
+Pusat data PT kantor untuk toko POS Tri-Zone: database Supabase, aplikasi web kantor, dan asisten AI.
+Trizone (PC Gudang / Mandiri) mengirim data langsung ke database lewat internet; kantor memakai
+aplikasi web untuk melihat penjualan, mencocokkan surat jalan Accurate, mereview stok opname,
+mengelola master barang & harga, dan menyetujui pembelian.
 
 ```
- Toko (Trizone, src/motherbase.js)                 Mother base (Supabase)
- ┌────────────────────────────────┐   HTTPS        ┌──────────────────────────────────┐
- │ pos.db: antrean shift,         ├─ terima_data ─►│ penjualan, shift, stok 4 zona,   │
- │ penanda dokumen terkirim       │                │ penerimaan, mutasi, opname       │
- │ daftar barang (terkunci)       │◄─ ambil_master ┤ master barang & harga jual       │
- └────────────────────────────────┘                │                                  │
- Kantor (Accurate)                                 │                                  │
- Rincian Pengiriman Pesanan.xlsx ── accurate-do.js ┼─ import_surat_jalan ─────────────►│
-                     └─► Penerimaan_<pelanggan>.xlsx → import penerimaan di Trizone   │
- Apps Script (09.00 WIB) ◄──────── laporan_belum_masuk ───────────────────────────────┘
+ Toko (Trizone)                    Supabase                              Kantor (browser / HP)
+ ┌───────────────────┐  terima_data  ┌──────────────────────────┐  login  ┌──────────────────────┐
+ │ src/motherbase.js ├──────────────►│ PostgreSQL + RLS         │◄────────┤ web/ (aplikasi)      │
+ │ antrean di pos.db │◄──────────────┤ RPC, view laporan        │         │ upload Accurate      │
+ └───────────────────┘  ambil_master │ Edge Function "asisten" ─┼──► Claude (Anthropic API)      │
+                                     └──────────────────────────┘         └──────────────────────┘
 ```
 
 ## Isi folder
 
 | Path | Isi |
 |---|---|
-| `supabase/migrations/20261116000001_mother_base.sql` | Skema: tabel, RPC, view hitungan, Row Level Security, audit |
-| `supabase/seed.sql` | Data awal: 9 toko, pemetaan pelanggan Accurate, pengaturan |
-| `supabase/tests/stub_supabase.sql` | Peniru `auth.uid()` dan peran Supabase untuk uji di PostgreSQL biasa |
-| `apps-script/Code.gs` | Alert harian pukul 09.00: toko yang belum menutup shift kemarin |
-| `accurate/accurate-do.js` | Pembaca laporan Accurate "Rincian Pengiriman Pesanan" |
-| `test/uji.js` | Uji ujung ke ujung: Trizone asli → `src/motherbase.js` → PostgreSQL |
+| `web/` | Aplikasi web kantor (HTML/JS tanpa proses build). `config.js` diisi alamat project. |
+| `web/lib/accurate.js` | Pembaca laporan Accurate "Rincian Pengiriman Pesanan" (dipakai web & baris perintah) |
+| `supabase/migrations/` | Skema database: `…01_mother_base.sql` (data & protokol Trizone), `…02_aplikasi.sql` (laporan, PO, SO, pengguna, AI) |
+| `supabase/seed.sql` | Data awal: 9 toko, pemetaan pelanggan Accurate |
+| `supabase/functions/asisten/` | Edge Function asisten AI (`index.ts` untuk Deno, inti di `asisten.mjs`) |
+| `apps-script/Code.gs` | Alert email harian pukul 09.00 (opsional) |
+| `accurate/accurate-do.js` | Pembaca Accurate versi baris perintah |
+| `dev/` | Server pengembangan: tiruan Supabase lokal untuk mencoba & menguji (bukan untuk produksi) |
+| `test/` | Uji: asisten AI, ujung ke ujung dengan Trizone, dan browser |
 
-## Protokol dengan Trizone
+## Modul aplikasi web
 
-Trizone memanggil RPC dengan **anon key** Supabase ditambah **kode toko** dan **kunci toko**. Kunci
-dibuat di mother base, disimpan sebagai sha256 di tabel `toko_kunci` (tidak terbaca lewat API), dan
-di Trizone disimpan terenkripsi.
-
-| RPC | Arah | Isi |
+| Menu | Untuk | Isi |
 |---|---|---|
-| `terima_data(p)` | toko → kantor | `{protokol: 1, kode_toko, kunci, app_version, dikirim_at, shifts: [{shift, sales}], dokumen: {receptions, transfers, opnames}, snapshot: {created_at, products, inventory, reception_drafts, offline_sales, current_shift}}`. Satu panggilan = satu transaksi. Balasan berisi `shift_diterima`; Trizone baru menandai terkirim setelah balasan. |
-| `ambil_master(p)` | kantor → toko | `{kode_toko, kunci, sejak}` → barang yang berubah sejak `sejak` (SKU, barcode, nama, merk, kategori, harga jual, satuan masuk, rasio isi). |
+| Ringkasan | semua | Omzet, transaksi, grafik harian, per toko, daftar yang perlu ditindaklanjuti |
+| Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari; unduh CSV |
+| Stok & Opname | semua | Review & persetujuan SO (kantor), selisih stok Trizone vs hitungan mother base, cari stok, stok lambat |
+| Surat Jalan | kantor | Upload Excel Accurate di browser, unduh file import penerimaan Trizone per toko, simpan, status pencocokan |
+| Pembelian | kantor | Usulan beli per principal → usulan PO dengan alasan per baris → owner ubah qty & setujui → tandai dikirim → terima barang (stok gudang & harga beli diperbarui) |
+| Master Barang | kantor | Barcode, harga jual, satuan & isi, principal; harga beli / pricelist; markup (owner) |
+| Principal | kantor | Lead time (perkiraan & aktual), periode order, minimum order; tombol Wawancara AI |
+| Toko | kantor | Koneksi tiap toko, buat / ganti kunci toko (owner), pemetaan pelanggan Accurate |
+| Asisten AI | semua | Tanya jawab data dengan Claude; percakapan tersimpan per pengguna |
+| Pengguna | owner | Peran: owner, admin kantor, gudang, purchasing, pemilik toko (hanya tokonya) |
 
-Aturan penerapan:
-- Penjualan disimpan per shift. Data tutup shift menggantikan potongan shift berjalan, dan shift yang sudah tertutup tidak bisa dibuka lagi oleh data yang lebih lama.
-- Snapshot yang lebih lama dari yang sudah ada dilewati, jadi stok tidak mundur.
-- Penerimaan, mutasi, dan stok opname ditambah atau diperbarui, tidak pernah dihapus. SO baru atau berubah masuk antrean review.
-- Kiriman ulang selalu aman: tidak ada data yang dobel.
+Hak akses dijaga di database (Row Level Security), bukan hanya di menu: pemilik toko hanya melihat
+data tokonya, juga saat bertanya ke asisten AI.
+
+## Asisten AI
+
+- Model: Claude Opus 5.5 (`claude-opus-5-5`), effort `medium`, fallback server-side aktif
+  (`fallbacks: "default"`) supaya permintaan yang ditolak filter keamanan dialihkan otomatis.
+- Claude hanya memakai alat yang memanggil fungsi laporan di database dengan token pengguna yang login.
+  Angka selalu dari database; Claude menjelaskan dan menyarankan.
+- Satu-satunya alat yang menulis adalah `simpan_principal`, hanya di mode **wawancara principal**
+  dan hanya untuk pengguna kantor.
+- Biaya mengikuti pemakaian API Anthropic (per token). Setiap pertanyaan biasanya 2–3 panggilan
+  ke Claude (memanggil alat, lalu menjawab).
 
 ## Pasang
 
-1. **Supabase.** Buat project, jalankan migrasi lalu `seed.sql` (SQL Editor atau `supabase db push`).
-2. **Markup harga jual ke toko** (tidak disimpan di repo karena repo ini publik):
-   `insert into pengaturan values ('markup_jual_ke_toko', '0.06');` (ganti angkanya).
-3. **Kunci toko**, sekali per toko: `select buat_kunci_toko('KRP');`. Kunci hanya tampil sekali; jalankan
-   lagi untuk mengganti (kunci lama langsung tidak berlaku).
-4. **Di Trizone** (PC Gudang / Mandiri, login Admin): **Pengaturan → Mother Base**. Isi alamat project
-   (`https://<project>.supabase.co`), anon key, kode toko, dan kunci toko, lalu **Simpan** dan **Tes Koneksi**.
-   Shift di Riwayat Shift (4 hari terakhir) ikut terkirim.
-5. **Master barang** (saat siap mengunci daftar barang): `select isi_master_dari_toko('KRP');` mengisi
-   master dari daftar barang satu toko. Rapikan harga dan barcode di tabel `produk`, lalu centang
-   **Kunci daftar barang** di Trizone dan tekan **Ambil Master Barang**.
-6. **Alert harian.** Buka script.google.com dengan akun kantor, tempel `apps-script/Code.gs`, isi Script
-   Properties `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `EMAIL_ALERT`, lalu jalankan `setup()` sekali.
+### 1. Supabase
+
+1. Buat project di supabase.com.
+2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
+   `migrations/20261116000002_aplikasi.sql`, lalu `seed.sql`
+   (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
+3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
+   `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`
+   Nanti bisa diubah owner di Master Barang → Markup.
+4. **Owner pertama:** Authentication → Users → Add user (email + kata sandi), lalu di SQL Editor:
+   `select jadikan_owner('email@owner', 'Nama Owner');`
+   Pengguna lain: buat akunnya di Authentication → Add user, lalu atur perannya di menu **Pengguna**.
+5. Authentication → Providers → Email: matikan **Allow new users to sign up** supaya hanya akun
+   yang dibuat owner yang bisa login.
+
+### 2. Asisten AI (Edge Function)
+
+```bash
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+```
+
+```bash
+supabase functions deploy asisten
+```
+
+Opsional: `supabase secrets set ASISTEN_ALLOWED_ORIGIN=https://alamat-aplikasi-anda` untuk
+membatasi asal permintaan.
+
+### 3. Aplikasi web
+
+1. Isi `web/config.js` dengan alamat project dan anon key (Project Settings → API).
+2. Upload isi folder `web/` ke hosting statis, mis. Netlify, Cloudflare Pages, atau Vercel
+   (tanpa perintah build; folder publikasi = `motherbase/web`). Bisa dibuka dari PC dan HP.
+
+### 4. Toko
+
+1. Di aplikasi: **Toko → Buat kunci** untuk tiap toko (owner). Kunci hanya tampil sekali.
+2. Di Trizone PC Gudang: **Pengaturan → Mother Base**, isi alamat, anon key, kode toko, dan kunci,
+   lalu **Tes Koneksi**.
+3. Saat master barang kantor sudah rapi: **Master Barang → Isi dari toko**, rapikan harga & barcode,
+   lalu centang **Kunci daftar barang** di Trizone.
+
+### 5. Alert harian (opsional)
+
+`apps-script/Code.gs` mengirim email pukul 09.00 bila ada toko yang belum menutup shift kemarin.
+Tempel di script.google.com, isi Script Properties `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`,
+`EMAIL_ALERT`, lalu jalankan `setup()` sekali.
+
+## Mencoba di komputer sendiri
+
+Butuh Node.js dan PostgreSQL 15+ lokal. Dari folder repo:
+
+```bash
+npm install
+```
+
+```bash
+cd motherbase && npm install
+```
+
+```bash
+MB_DATABASE_URL=postgresql://postgres@localhost/mb_dev npm run dev
+```
+
+Perintah terakhir membuat ulang database `mb_dev` berisi data contoh (3 toko, 5 minggu penjualan)
+lalu membuka server di http://127.0.0.1:54321 dengan akun `owner@contoh.local` / `owner123`,
+`admin@contoh.local` / `admin123`, dan `tropodo@contoh.local` / `toko123`. Asisten AI memakai
+Claude tiruan; isi `ANTHROPIC_API_KEY` sebelum `npm run dev` untuk Claude sungguhan.
+
+Server dev meniru bagian Supabase yang dipakai (REST, RPC, login, Edge Function) di atas
+PostgreSQL, dengan peran dan Row Level Security yang sama. Jangan dipakai di internet.
 
 ## Surat jalan dari Accurate
 
-1. Di Accurate, ekspor laporan **Rincian Pengiriman Pesanan** ke Excel.
-2. Dari folder repo (setelah `npm install`):
-   ```bash
-   node motherbase/accurate/accurate-do.js "Rincian Pengiriman Pesanan.xlsx" --out hasil
-   ```
-   Hasilnya `surat_jalan.json` dan satu `Penerimaan_<pelanggan>.xlsx` per pelanggan.
-3. Kirim `Penerimaan_<pelanggan>.xlsx` ke toko. Staf toko mengimpornya di **Penerimaan Barang → Import**
-   Trizone, menyesuaikan jumlah dengan hitungan fisik, lalu menyimpan.
-4. Masukkan surat jalan ke mother base: tambahkan `--kirim` (env `SUPABASE_URL` dan `SUPABASE_KEY`), atau
-   panggil RPC `import_surat_jalan` dengan isi `surat_jalan.json`.
+Di aplikasi: **Surat Jalan → Upload dari Accurate**. Dari baris perintah:
 
-Satuan: `Pcs`/`Biji` = 1 Biji. Satuan kemasan (`Coly`, `Dus`) ditulis `Dus` di file Trizone dan dikali
-**Rasio Isi** satuan masuk barang itu di Trizone. Mother base memakai rasio yang sama, jadi isi satuan
-di Trizone harus sama dengan di Accurate.
+```bash
+node motherbase/accurate/accurate-do.js "Rincian Pengiriman Pesanan.xlsx" --out hasil
+```
 
-Nama pelanggan Accurate dipetakan ke kode toko di tabel `pelanggan_accurate` ("X Special" = toko yang
-sama dengan "X"). Surat jalan untuk pelanggan yang belum dipetakan berstatus `PELANGGAN_BELUM_DIPETAKAN`.
+Satuan: `Pcs`/`Biji` = 1 Biji. Satuan kemasan (`Coly`, `Dus`) ditulis `Dus` di file import Trizone
+dan dikali **isi per satuan masuk** barang itu. Isi di Trizone & master harus sama dengan isi satu
+Coly di Accurate. "X Special" di Accurate dipetakan ke toko yang sama dengan "X".
 
-## View utama
+## Protokol dengan Trizone
 
-| View | Isi |
-|---|---|
-| `v_ringkasan_harian` | Omzet, transaksi, Tunai/QRIS/Transfer per toko per tanggal |
-| `v_penjualan_kasir`, `v_permintaan_harian` | Per kasir; permintaan kasir + terjual di Shopee |
-| `v_pencocokan_sj` | Status setiap surat jalan: `COCOK`, `MENUNGGU`, `BELUM_DIINPUT`, `SELISIH_QTY`, `BARANG_SALAH`, `SATUAN_BELUM_JELAS`, `PELANGGAN_BELUM_DIPETAKAN` |
-| `v_sj_tidak_dikenal` | Penerimaan toko yang nomornya tidak ada di data kantor |
-| `v_stok_seharusnya`, `v_selisih_snapshot` | Stok per zona sejak SO yang disetujui, dan selisihnya terhadap stok Trizone |
-| `v_selisih_so` | Selisih SO dan nilai rupiahnya |
-| `v_usulan_beli` | Usulan beli per produk ke principal |
+Trizone memanggil RPC dengan anon key + kode toko + kunci toko. Kunci disimpan sebagai sha256 di
+`toko_kunci` (tidak terbaca lewat API).
+
+| RPC | Arah | Isi |
+|---|---|---|
+| `terima_data(p)` | toko → kantor | `{protokol: 1, kode_toko, kunci, app_version, dikirim_at, shifts: [{shift, sales}], dokumen: {receptions, transfers, opnames}, snapshot}`. Satu panggilan = satu transaksi; balasan berisi `shift_diterima`. Kiriman ulang aman. |
+| `ambil_master(p)` | kantor → toko | `{kode_toko, kunci, sejak}` → barang yang berubah sejak `sejak` |
 
 ## Uji
 
 ```bash
-npm install
-node motherbase/test/uji.js
+cd motherbase && node test/asisten.test.js
 ```
 
-Dengan PostgreSQL 15+ lokal (membuat database `mb_uji` baru):
+Dengan PostgreSQL lokal (database yang disebut dibuat ulang):
 
 ```bash
 MB_PSQL="psql -h localhost -U postgres" node motherbase/test/uji.js
 ```
+
+```bash
+MB_DATABASE_URL=postgresql://postgres@localhost/mb_web_uji node motherbase/test/web.test.js
+```
+
+`uji.js` menjalankan toko Trizone sungguhan yang mengirim lewat `src/motherbase.js`;
+`web.test.js` memakai aplikasi web di Chromium (Playwright) seperti pengguna.

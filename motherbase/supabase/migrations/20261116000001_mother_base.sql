@@ -1028,7 +1028,7 @@ rata as (
   from jual j left join kosong k using (kode_toko, sku) group by j.sku
 ),
 hitung as (
-  select p.sku, p.nama, pr.nama as principal, p.isi_dus,
+  select p.sku, p.nama, p.principal_id, pr.nama as principal, p.isi_dus,
          coalesce(pr.minimum_order_qty, 0) as minimum_order_qty,
          coalesce(r.rata_harian, 0) as rata_harian,
          coalesce(pr.lead_time_hari, 7) as lead_time, coalesce(pr.periode_order_hari, 7) as periode_order,

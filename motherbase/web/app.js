@@ -1,0 +1,1147 @@
+'use strict';
+/* global supabase, XLSX, MbAccurate */
+// Mother Base — aplikasi web kantor. Tanpa proses build: satu file, supabase-js & SheetJS dari CDN.
+// Semua data dibaca dengan login pengguna; Row Level Security di database yang membatasi akses.
+
+const CFG = window.MB_CONFIG || {};
+const sb = CFG.url && !/GANTI/.test(CFG.url) ? supabase.createClient(CFG.url, CFG.anonKey) : null;
+const S = { profil: null, toko: [], periode: null, mulaiWawancara: null, menu: false };
+
+// ================================================================ Utilitas
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (v, d = 0) => (v === null || v === undefined || v === '' ? '-' : new Intl.NumberFormat('id-ID', { maximumFractionDigits: d }).format(Number(v)));
+const rp = (v) => (v === null || v === undefined || v === '' ? '-' : `Rp ${new Intl.NumberFormat('id-ID').format(Math.round(Number(v)))}`);
+const hariIni = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+const geser = (t, n) => { const d = new Date(`${t}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const selisihHari = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 864e5);
+const fmtTgl = (s) => (s ? new Date(String(s).length === 10 ? `${s}T00:00:00Z` : s).toLocaleDateString('id-ID',
+  { day: 'numeric', month: 'short', year: 'numeric', timeZone: String(s).length === 10 ? 'UTC' : 'Asia/Jakarta' }) : '-');
+const fmtWaktu = (s) => (s ? new Date(s).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }) : '-');
+function relatif(s) {
+  if (!s) return 'belum pernah';
+  const m = Math.round((Date.now() - new Date(s)) / 60000);
+  if (m < 2) return 'baru saja';
+  if (m < 60) return `${m} menit lalu`;
+  if (m < 60 * 24) return `${Math.round(m / 60)} jam lalu`;
+  return `${Math.round(m / 1440)} hari lalu`;
+}
+
+function pesanError(e) {
+  const m = String((e && (e.message || e.error_description || e.msg)) || e || 'Terjadi kesalahan');
+  if (/JWT expired|invalid JWT|JWT tidak valid/i.test(m)) return 'Sesi login habis. Silakan login lagi.';
+  if (/Failed to fetch|NetworkError/i.test(m)) return 'Tidak bisa terhubung ke server. Periksa internet.';
+  if (/duplicate key|23505/.test(m)) return 'Data sudah ada (kode / barcode dipakai data lain).';
+  if (/row-level security|permission denied/i.test(m)) return 'Anda tidak punya hak untuk tindakan ini.';
+  return m;
+}
+async function q(p) {
+  const { data, error } = await p;
+  if (error) throw new Error(pesanError(error));
+  return data;
+}
+const rpc = (fn, args) => q(sb.rpc(fn, args || {}));
+
+function toast(msg, jenis = '') {
+  const t = document.createElement('div');
+  t.className = `toast ${jenis}`;
+  t.textContent = msg;
+  $('#toasts').append(t);
+  while ($('#toasts').children.length > 3) $('#toasts').firstElementChild.remove();
+  setTimeout(() => t.remove(), jenis === 'bad' ? 8000 : 3500);
+}
+
+function modal({ judul, isi, aksi = [], lebar = false, onBuka }) {
+  const latar = document.createElement('div');
+  latar.className = 'modal-latar';
+  latar.innerHTML = `<div class="modal ${lebar ? 'lebar' : ''}" role="dialog" aria-modal="true" aria-label="${esc(judul)}">
+    <div class="modal-head"><h3>${esc(judul)}</h3><button class="btn ghost sm tutup" aria-label="Tutup">✕</button></div>
+    <div class="modal-isi">${isi}</div>
+    ${aksi.length ? `<div class="modal-kaki">${aksi.map((a, i) => `<button class="btn ${a.kelas || ''}" data-i="${i}">${esc(a.label)}</button>`).join('')}</div>` : ''}
+  </div>`;
+  const tutup = () => { latar.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') tutup(); };
+  document.addEventListener('keydown', onKey);
+  latar.addEventListener('click', async (e) => {
+    if (e.target === latar || e.target.closest('.tutup')) return tutup();
+    const b = e.target.closest('.modal-kaki [data-i]');
+    if (!b) return;
+    const a = aksi[Number(b.dataset.i)];
+    if (!a.onClick) return tutup();
+    b.disabled = true;
+    try { await a.onClick({ tutup, el: latar }); } catch (err) { toast(pesanError(err), 'bad'); } finally { b.disabled = false; }
+  });
+  document.body.append(latar);
+  const f = latar.querySelector('input, select, textarea, .modal-kaki .primary');
+  if (f) f.focus();
+  if (onBuka) onBuka(latar);
+  return { el: latar, tutup };
+}
+function konfirmasi(judul, isi, okLabel = 'Ya', bahaya = false) {
+  return new Promise((resolve) => {
+    const m = modal({ judul, isi: `<p style="margin:0">${isi}</p>`, aksi: [
+      { label: 'Batal', onClick: ({ tutup }) => { tutup(); resolve(false); } },
+      { label: okLabel, kelas: bahaya ? 'danger' : 'primary', onClick: ({ tutup }) => { tutup(); resolve(true); } },
+    ] });
+    m.el.addEventListener('click', (e) => { if (e.target === m.el || e.target.closest('.tutup')) resolve(false); });
+  });
+}
+
+// kolom: [{ k, judul, num, fmt(v, row), lebar }]
+function tabel(kolom, baris, { klik, kosong = 'Tidak ada data.', kunci } = {}) {
+  if (!baris || !baris.length) return `<div class="tbl-wrap"><div class="kosong">${esc(kosong)}</div></div>`;
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr>${kolom.map((c) => `<th class="${c.num ? 'num' : ''}">${esc(c.judul)}</th>`).join('')}</tr></thead>
+    <tbody>${baris.map((r, i) => `<tr ${klik ? `class="klik" data-i="${i}"${kunci ? ` data-k="${esc(r[kunci])}"` : ''} tabindex="0"` : ''}>${kolom.map((c) => {
+      const v = c.fmt ? c.fmt(r[c.k], r) : esc(r[c.k] ?? '');
+      return `<td class="${c.num ? 'num' : ''}">${v === '' || v === null || v === undefined ? '' : v}</td>`;
+    }).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+// Klik / Enter pada baris tabel. Dipasang sekali per elemen; data & aksi diganti setiap tabel dimuat ulang.
+function onBaris(el, baris, fn) {
+  el._baris = { baris, fn };
+  if (el._barisPasang) return;
+  el._barisPasang = true;
+  const pilih = (tr) => { const b = el._baris.baris[Number(tr.dataset.i)]; if (b) el._baris.fn(b); };
+  el.addEventListener('click', (e) => { const tr = e.target.closest('tr.klik'); if (tr && !e.target.closest('button, input, select, a')) pilih(tr); });
+  el.addEventListener('keydown', (e) => { const tr = e.target.closest('tr.klik'); if (tr && e.key === 'Enter') pilih(tr); });
+}
+
+function unduhCsv(nama, kolom, baris) {
+  const sel = (v) => { const s = String(v ?? ''); return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const isi = '﻿' + [kolom.map((c) => c.judul), ...baris.map((r) => kolom.map((c) => r[c.k]))].map((r) => r.map(sel).join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([isi], { type: 'text/csv;charset=utf-8' }));
+  a.download = nama;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+async function salin(teks) {
+  try { await navigator.clipboard.writeText(teks); toast('Disalin.'); } catch (_) { toast('Salin manual: pilih teksnya lalu Ctrl+C.'); }
+}
+
+async function sibuk(btn, fn) {
+  btn.disabled = true;
+  try { return await fn(); } catch (e) { toast(pesanError(e), 'bad'); return undefined; } finally { btn.disabled = false; }
+}
+
+const peran = () => S.profil && S.profil.peran;
+const isOwner = () => peran() === 'owner';
+const isKantor = () => ['owner', 'admin_kantor', 'gudang', 'purchasing'].includes(peran());
+const LABEL_PERAN = { owner: 'Owner', admin_kantor: 'Admin kantor', gudang: 'Gudang', purchasing: 'Purchasing', pemilik_toko: 'Pemilik toko' };
+const namaToko = (k) => { const t = S.toko.find((x) => x.kode === k); return t ? t.nama : k || '-'; };
+const head = (judul, ket, kanan = '') => `<div class="page-head"><div><h1>${esc(judul)}</h1>${ket ? `<p>${ket}</p>` : ''}</div>${kanan ? `<div class="row">${kanan}</div>` : ''}</div>`;
+const pilihToko = (id, nilai = '', semua = 'Semua toko') => `<select id="${id}" aria-label="Toko">${semua ? `<option value="">${esc(semua)}</option>` : ''}${S.toko.map((t) =>
+  `<option value="${esc(t.kode)}" ${t.kode === nilai ? 'selected' : ''}>${esc(t.kode)} · ${esc(t.nama)}</option>`).join('')}</select>`;
+
+// Periode bersama semua halaman laporan
+function periode() {
+  if (!S.periode) S.periode = { dari: geser(hariIni(), -6), sampai: hariIni(), pilihan: '7' };
+  return S.periode;
+}
+function kontrolPeriode() {
+  const p = periode();
+  return `<select id="perPilih" aria-label="Periode">
+      <option value="hari" ${p.pilihan === 'hari' ? 'selected' : ''}>Hari ini</option>
+      <option value="7" ${p.pilihan === '7' ? 'selected' : ''}>7 hari terakhir</option>
+      <option value="30" ${p.pilihan === '30' ? 'selected' : ''}>30 hari terakhir</option>
+      <option value="bulan" ${p.pilihan === 'bulan' ? 'selected' : ''}>Bulan ini</option>
+      <option value="bulanlalu" ${p.pilihan === 'bulanlalu' ? 'selected' : ''}>Bulan lalu</option>
+      <option value="atur" ${p.pilihan === 'atur' ? 'selected' : ''}>Pilih tanggal…</option>
+    </select>
+    <input type="date" id="perDari" value="${p.dari}" aria-label="Dari tanggal"> <span class="muted">s/d</span>
+    <input type="date" id="perSampai" value="${p.sampai}" aria-label="Sampai tanggal">`;
+}
+function pasangPeriode(el, onUbah) {
+  const p = periode();
+  $('#perPilih', el).addEventListener('change', (e) => {
+    const v = e.target.value;
+    const h = hariIni();
+    p.pilihan = v;
+    if (v === 'hari') { p.dari = h; p.sampai = h; }
+    if (v === '7') { p.dari = geser(h, -6); p.sampai = h; }
+    if (v === '30') { p.dari = geser(h, -29); p.sampai = h; }
+    if (v === 'bulan') { p.dari = `${h.slice(0, 8)}01`; p.sampai = h; }
+    if (v === 'bulanlalu') { const awal = `${h.slice(0, 8)}01`; p.sampai = geser(awal, -1); p.dari = `${p.sampai.slice(0, 8)}01`; }
+    $('#perDari', el).value = p.dari;
+    $('#perSampai', el).value = p.sampai;
+    onUbah();
+  });
+  for (const id of ['#perDari', '#perSampai']) {
+    $(id, el).addEventListener('change', () => {
+      p.dari = $('#perDari', el).value || p.dari;
+      p.sampai = $('#perSampai', el).value || p.sampai;
+      if (p.dari > p.sampai) [p.dari, p.sampai] = [p.sampai, p.dari];
+      p.pilihan = 'atur';
+      $('#perPilih', el).value = 'atur';
+      onUbah();
+    });
+  }
+}
+
+function tabs(id, daftar, aktif) {
+  return `<div class="tabs" id="${id}" role="tablist">${daftar.map(([k, l]) => `<button role="tab" data-t="${k}" class="${k === aktif ? 'aktif' : ''}" aria-selected="${k === aktif}">${esc(l)}</button>`).join('')}</div>`;
+}
+function pasangTabs(el, id, onPilih) {
+  $(`#${id}`, el).addEventListener('click', (e) => {
+    const b = e.target.closest('[data-t]');
+    if (!b) return;
+    $$(`#${id} button`, el).forEach((x) => { x.classList.toggle('aktif', x === b); x.setAttribute('aria-selected', x === b); });
+    onPilih(b.dataset.t);
+  });
+}
+
+const STATUS_SJ = {
+  COCOK: ['ok', 'Cocok'], MENUNGGU: ['info', 'Menunggu'], BELUM_DIINPUT: ['bad', 'Belum diinput'], SELISIH_QTY: ['warn', 'Selisih qty'],
+  BARANG_SALAH: ['bad', 'Barang salah'], SATUAN_BELUM_JELAS: ['warn', 'Satuan belum jelas'], PELANGGAN_BELUM_DIPETAKAN: ['warn', 'Pelanggan belum dipetakan'],
+};
+const STATUS_PO = { USULAN: ['warn', 'Usulan'], DISETUJUI: ['info', 'Disetujui'], DIKIRIM: ['info', 'Dikirim ke principal'], SEBAGIAN: ['warn', 'Diterima sebagian'], SELESAI: ['ok', 'Selesai'], BATAL: ['', 'Batal'] };
+const pill = (map, v) => { const [k, l] = map[v] || ['', v]; return `<span class="pill ${k}">${esc(l)}</span>`; };
+
+// ================================================================ Halaman
+const HALAMAN = [
+  { id: 'ringkasan', judul: 'Ringkasan', ikon: '◧', untuk: 'semua' },
+  { id: 'penjualan', judul: 'Penjualan', ikon: '▤', untuk: 'semua' },
+  { id: 'stok', judul: 'Stok & Opname', ikon: '▦', untuk: 'semua' },
+  { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
+  { id: 'pembelian', judul: 'Pembelian', ikon: '⊕', untuk: 'kantor' },
+  { id: 'barang', judul: 'Master Barang', ikon: '☰', untuk: 'kantor' },
+  { id: 'principal', judul: 'Principal', ikon: '◎', untuk: 'kantor' },
+  { id: 'toko', judul: 'Toko', ikon: '⌂', untuk: 'kantor' },
+  { id: 'asisten', judul: 'Asisten AI', ikon: '✦', untuk: 'semua' },
+  { id: 'pengguna', judul: 'Pengguna', ikon: '☺', untuk: 'owner' },
+];
+const boleh = (h) => h.untuk === 'semua' || (h.untuk === 'kantor' && isKantor()) || (h.untuk === 'owner' && isOwner());
+
+// ---------------------------------------------------------------- Ringkasan
+async function hRingkasan(el) {
+  el.innerHTML = `${head('Ringkasan', 'Penjualan toko dan hal yang perlu ditindaklanjuti.', kontrolPeriode())}
+    <div class="grid g4" id="rkStat"></div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card"><div class="card-head"><h2>Omzet harian</h2><span class="muted small" id="rkChartKet"></span></div><div id="rkChart"></div></div>
+      <div class="card"><h2>Perlu perhatian</h2><ul class="daftar-perhatian" id="rkPerhatian"><li class="muted">Memuat…</li></ul></div>
+    </div>
+    <div class="card"><div class="card-head"><h2>Per toko</h2><button class="btn sm" id="rkCsv">Unduh CSV</button></div><div id="rkToko"></div></div>`;
+  pasangPeriode(el, () => muat());
+  let tokoRows = [];
+  const kolomToko = [
+    { k: 'kode_toko', judul: 'Toko', fmt: (v) => `<b>${esc(v)}</b> <span class="muted">${esc(namaToko(v))}</span>` },
+    { k: 'omzet', judul: 'Omzet', num: true, fmt: rp },
+    { k: 'jumlah_transaksi', judul: 'Transaksi', num: true, fmt: (v) => num(v) },
+    { k: 'tunai', judul: 'Tunai', num: true, fmt: rp }, { k: 'qris', judul: 'QRIS', num: true, fmt: rp }, { k: 'transfer', judul: 'Transfer', num: true, fmt: rp },
+    { k: 'kiriman', judul: 'Data terakhir masuk', fmt: (v) => esc(relatif(v)) },
+  ];
+  $('#rkCsv', el).addEventListener('click', () => unduhCsv(`ringkasan_${periode().dari}_${periode().sampai}.csv`, kolomToko, tokoRows));
+
+  async function muat() {
+    const p = periode();
+    const [rk, harian] = await Promise.all([
+      rpc('laporan_ringkasan', { p_dari: p.dari, p_sampai: p.sampai }),
+      rpc('laporan_harian', { p_dari: p.dari, p_sampai: p.sampai }),
+    ]);
+    const omzet = rk.reduce((a, r) => a + Number(r.omzet), 0);
+    const trx = rk.reduce((a, r) => a + Number(r.jumlah_transaksi), 0);
+    const hari = selisihHari(p.dari, p.sampai) + 1;
+    $('#rkStat', el).innerHTML = [
+      ['Omzet', rp(omzet), `${num(hari)} hari · ${fmtTgl(p.dari)} – ${fmtTgl(p.sampai)}`],
+      ['Transaksi', num(trx), `${num(trx / hari, 1)} per hari`],
+      ['Rata-rata per struk', trx ? rp(omzet / trx) : '-', 'omzet ÷ transaksi'],
+      ['Toko berjualan', `${num(rk.filter((r) => Number(r.omzet) > 0).length)} / ${num(S.toko.length)}`, 'toko dengan penjualan di periode ini'],
+    ].map(([l, v, s]) => `<div class="card stat"><div class="label">${l}</div><div class="nilai">${v}</div><div class="sub">${s}</div></div>`).join('');
+    $('#rkChart', el).innerHTML = grafikHarian(harian, p);
+    $('#rkChartKet', el).textContent = 'semua toko';
+    const status = Object.fromEntries(S.toko.map((t) => [t.kode, t]));
+    tokoRows = S.toko.map((t) => ({ kode_toko: t.kode, omzet: 0, jumlah_transaksi: 0, tunai: 0, qris: 0, transfer: 0, ...(rk.find((r) => r.kode_toko === t.kode) || {}),
+      kiriman: status[t.kode] && status[t.kode].kiriman_terakhir_at }));
+    $('#rkToko', el).innerHTML = tabel(kolomToko, tokoRows);
+  }
+
+  async function perhatian() {
+    const li = [];
+    if (isKantor()) {
+      const kemarin = geser(hariIni(), -1);
+      const [belum, sj, so, po] = await Promise.all([
+        rpc('laporan_belum_masuk', { p_tanggal: kemarin }),
+        q(sb.from('v_pencocokan_sj').select('status').in('status', ['BELUM_DIINPUT', 'SELISIH_QTY', 'BARANG_SALAH', 'SATUAN_BELUM_JELAS', 'PELANGGAN_BELUM_DIPETAKAN']).limit(2000)),
+        q(sb.from('stok_opname_review').select('no_op').eq('status', 'BARU').limit(2000)),
+        q(sb.from('po').select('no_po').eq('status', 'USULAN').limit(500)),
+      ]);
+      if (belum.length) li.push(['bad', `${belum.length} toko belum menutup shift ${fmtTgl(kemarin)}`, belum.map((b) => b.kode).join(', '), 'toko']);
+      if (sj.length) li.push(['warn', `${sj.length} surat jalan perlu dicek`, '', 'kiriman']);
+      if (so.length) li.push(['warn', `${so.length} stok opname menunggu review`, '', 'stok']);
+      if (po.length) li.push([isOwner() ? 'warn' : 'info', `${po.length} usulan PO ${isOwner() ? 'menunggu persetujuan Anda' : 'menunggu persetujuan owner'}`, '', 'pembelian']);
+    }
+    const lambat = S.toko.filter((t) => !t.kiriman_terakhir_at || Date.now() - new Date(t.kiriman_terakhir_at) > 26 * 3600e3);
+    if (lambat.length && isKantor()) li.push(['info', `${lambat.length} toko belum mengirim data lebih dari sehari`, lambat.map((t) => t.kode).join(', '), 'toko']);
+    $('#rkPerhatian', el).innerHTML = li.length ? li.map(([k, t, s, hal]) =>
+      `<li><span class="pill ${k}">${k === 'bad' ? 'Penting' : k === 'warn' ? 'Cek' : 'Info'}</span><span>${esc(t)}${s ? ` <span class="muted small">${esc(s)}</span>` : ''}</span><a href="#${hal}" class="small">Buka</a></li>`).join('')
+      : '<li class="muted">Tidak ada yang perlu ditindaklanjuti.</li>';
+  }
+
+  await Promise.all([muat(), perhatian().catch((e) => { $('#rkPerhatian', el).innerHTML = `<li class="muted">${esc(pesanError(e))}</li>`; })]);
+}
+
+function grafikHarian(rows, p) {
+  const n = selisihHari(p.dari, p.sampai) + 1;
+  if (n > 120) return '<div class="kosong">Grafik ditampilkan untuk periode sampai 120 hari.</div>';
+  const peta = Object.fromEntries(rows.map((r) => [r.tanggal, Number(r.omzet)]));
+  const data = Array.from({ length: n }, (_, i) => { const t = geser(p.dari, i); return { t, v: peta[t] || 0 }; });
+  const max = Math.max(...data.map((d) => d.v), 1);
+  const W = 700; const H = 180; const kiri = 64; const bawah = 22; const atas = 8;
+  const lebar = (W - kiri - 4) / n;
+  const y = (v) => atas + (H - atas - bawah) * (1 - v / max);
+  const ticks = [0, max / 2, max];
+  const label = (v) => (v >= 1e6 ? `${num(v / 1e6, 1)} jt` : v >= 1e3 ? `${num(v / 1e3)} rb` : num(v));
+  const tLabel = (t) => new Date(`${t}T00:00:00Z`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const idxLabel = n <= 8 ? data.map((_, i) => i) : [0, Math.floor((n - 1) / 2), n - 1];
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Grafik omzet harian">
+    ${ticks.map((v) => `<line class="grid-l" x1="${kiri}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text x="${kiri - 6}" y="${y(v) + 4}" text-anchor="end">${label(v)}</text>`).join('')}
+    ${data.map((d, i) => { const libur = [0, 6].includes(new Date(`${d.t}T00:00:00Z`).getUTCDay());
+      return `<rect class="bar${libur ? ' libur' : ''}" x="${kiri + i * lebar + lebar * 0.15}" y="${y(d.v)}" width="${Math.max(lebar * 0.7, 1)}" height="${H - bawah - y(d.v)}" rx="2"><title>${tLabel(d.t)}: ${rp(d.v)}</title></rect>`; }).join('')}
+    ${idxLabel.map((i) => `<text x="${kiri + i * lebar + lebar / 2}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}">${tLabel(data[i].t)}</text>`).join('')}
+  </svg>`;
+}
+
+// ---------------------------------------------------------------- Penjualan
+async function hPenjualan(el) {
+  let tab = 'produk';
+  el.innerHTML = `${head('Penjualan', 'Penjualan per produk, tren, analisa ABC, dan per kasir.', `${kontrolPeriode()}${pilihToko('pjToko')}`)}
+    ${tabs('pjTab', [['produk', 'Per produk'], ['tren', 'Naik / turun'], ['abc', 'Analisa ABC'], ['kasir', 'Per kasir'], ['harian', 'Per hari']], tab)}
+    <div class="card"><div class="card-head"><h2 id="pjJudul"></h2><div class="row"><select id="pjUrut" aria-label="Urutkan"><option value="nilai">Urut nilai</option><option value="qty">Urut qty</option></select>
+    <button class="btn sm" id="pjCsv">Unduh CSV</button></div></div><div id="pjIsi"><div class="kosong">Memuat…</div></div></div>`;
+  let kolom = []; let baris = [];
+  pasangPeriode(el, muat);
+  pasangTabs(el, 'pjTab', (t) => { tab = t; muat(); });
+  $('#pjToko', el).addEventListener('change', muat);
+  $('#pjUrut', el).addEventListener('change', muat);
+  $('#pjCsv', el).addEventListener('click', () => unduhCsv(`penjualan_${tab}_${periode().dari}_${periode().sampai}.csv`, kolom, baris));
+
+  async function muat() {
+    const p = periode();
+    const toko = $('#pjToko', el).value || null;
+    $('#pjUrut', el).classList.toggle('hidden', tab !== 'produk');
+    const isi = $('#pjIsi', el);
+    isi.innerHTML = '<div class="kosong">Memuat…</div>';
+    try {
+      if (tab === 'produk') {
+        $('#pjJudul', el).textContent = 'Penjualan per produk';
+        baris = await rpc('laporan_penjualan_produk', { p_dari: p.dari, p_sampai: p.sampai, p_kode_toko: toko, p_urut: $('#pjUrut', el).value, p_batas: 500 });
+        kolom = [{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+          { k: 'qty', judul: 'Qty (Biji)', num: true, fmt: (v) => num(v) }, { k: 'nilai', judul: 'Nilai', num: true, fmt: rp },
+          { k: 'jumlah_toko', judul: 'Toko', num: true, fmt: (v) => num(v) }];
+      } else if (tab === 'tren') {
+        const len = selisihHari(p.dari, p.sampai) + 1;
+        const db = geser(p.dari, -len); const sb2 = geser(p.dari, -1);
+        $('#pjJudul', el).textContent = `${fmtTgl(p.dari)} – ${fmtTgl(p.sampai)} dibanding ${fmtTgl(db)} – ${fmtTgl(sb2)}`;
+        baris = await rpc('laporan_tren_produk', { p_dari: p.dari, p_sampai: p.sampai, p_dari_banding: db, p_sampai_banding: sb2, p_kode_toko: toko, p_batas: 200 });
+        kolom = [{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+          { k: 'qty_periode', judul: 'Periode ini', num: true, fmt: (v) => num(v) }, { k: 'qty_banding', judul: 'Pembanding', num: true, fmt: (v) => num(v) },
+          { k: 'selisih', judul: 'Selisih', num: true, fmt: (v) => `<span class="pill ${Number(v) > 0 ? 'ok' : Number(v) < 0 ? 'bad' : ''}">${Number(v) > 0 ? '▲ ' : Number(v) < 0 ? '▼ ' : ''}${num(Math.abs(v))}</span>` },
+          { k: 'persen', judul: '%', num: true, fmt: (v) => (v === null ? 'baru' : `${num(v, 1)}%`) }];
+      } else if (tab === 'abc') {
+        $('#pjJudul', el).textContent = 'Analisa ABC (A = penyumbang 80% omzet pertama)';
+        baris = await rpc('laporan_abc', { p_dari: p.dari, p_sampai: p.sampai, p_kode_toko: toko });
+        kolom = [{ k: 'kelas', judul: 'Kelas', fmt: (v) => `<span class="pill ${v === 'A' ? 'ok' : v === 'B' ? 'info' : ''}">${esc(v)}</span>` },
+          { k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+          { k: 'nilai', judul: 'Nilai', num: true, fmt: rp }, { k: 'persen', judul: '% omzet', num: true, fmt: (v) => `${num(v, 1)}%` },
+          { k: 'persen_kumulatif', judul: '% kumulatif', num: true, fmt: (v) => `${num(v, 1)}%` }];
+      } else if (tab === 'kasir') {
+        $('#pjJudul', el).textContent = 'Penjualan per kasir dan metode bayar';
+        let qy = sb.from('v_penjualan_kasir').select('*').gte('tanggal', p.dari).lte('tanggal', p.sampai).limit(5000);
+        if (toko) qy = qy.eq('kode_toko', toko);
+        const rows = await q(qy);
+        const g = new Map();
+        for (const r of rows) {
+          const k = `${r.kode_toko}|${r.kasir}`;
+          if (!g.has(k)) g.set(k, { kode_toko: r.kode_toko, kasir: r.kasir, TUNAI: 0, QRIS: 0, TRANSFER: 0, total: 0, struk: 0 });
+          const x = g.get(k);
+          x[r.metode] = (x[r.metode] || 0) + Number(r.nilai);
+          x.total += Number(r.nilai);
+          x.struk += Number(r.jumlah_struk);
+        }
+        baris = [...g.values()].sort((a, b) => b.total - a.total);
+        kolom = [{ k: 'kode_toko', judul: 'Toko' }, { k: 'kasir', judul: 'Kasir' }, { k: 'struk', judul: 'Struk', num: true, fmt: (v) => num(v) },
+          { k: 'TUNAI', judul: 'Tunai', num: true, fmt: rp }, { k: 'QRIS', judul: 'QRIS', num: true, fmt: rp }, { k: 'TRANSFER', judul: 'Transfer', num: true, fmt: rp },
+          { k: 'total', judul: 'Total', num: true, fmt: rp }];
+      } else {
+        $('#pjJudul', el).textContent = 'Penjualan per hari';
+        baris = await rpc('laporan_harian', { p_dari: p.dari, p_sampai: p.sampai, p_kode_toko: toko });
+        kolom = [{ k: 'tanggal', judul: 'Tanggal', fmt: (v) => esc(fmtTgl(v)) }, { k: 'jumlah_transaksi', judul: 'Transaksi', num: true, fmt: (v) => num(v) },
+          { k: 'omzet', judul: 'Omzet', num: true, fmt: rp }];
+      }
+      isi.innerHTML = tabel(kolom, baris, { kosong: 'Tidak ada penjualan di periode ini.' });
+    } catch (e) { isi.innerHTML = `<div class="kosong">${esc(pesanError(e))}</div>`; }
+  }
+  await muat();
+}
+
+// ---------------------------------------------------------------- Stok & opname
+async function hStok(el) {
+  const daftar = isKantor() ? [['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone'], ['cari', 'Cari stok'], ['lambat', 'Stok lambat']] : [['cari', 'Cari stok'], ['lambat', 'Stok lambat']];
+  let tab = daftar[0][0];
+  el.innerHTML = `${head('Stok & Opname', 'Stok terkini tiap toko (dari Trizone), review stok opname, dan selisih stok.')}
+    ${tabs('stTab', daftar, tab)}<div id="stIsi"></div>`;
+  pasangTabs(el, 'stTab', (t) => { tab = t; tampil(); });
+  const isi = $('#stIsi', el);
+
+  async function tampil() {
+    isi.innerHTML = '<div class="card"><div class="kosong">Memuat…</div></div>';
+    isi.onclick = null;
+    try {
+      if (tab === 'so') return await reviewSo();
+      if (tab === 'selisih') return await selisih();
+      if (tab === 'cari') return await cari();
+      return await lambat();
+    } catch (e) { isi.innerHTML = `<div class="card"><div class="kosong">${esc(pesanError(e))}</div></div>`; }
+  }
+
+  async function reviewSo() {
+    const rows = await q(sb.from('v_selisih_so').select('*').eq('status', 'BARU').order('kode_toko').order('no_op').limit(3000));
+    const g = new Map();
+    for (const r of rows) {
+      const k = `${r.kode_toko}|${r.no_op}`;
+      if (!g.has(k)) g.set(k, { kode_toko: r.kode_toko, no_op: r.no_op, zona: r.zona, waktu: r.waktu, baris: [] });
+      g.get(k).baris.push(r);
+    }
+    const ZONA = { floor: 'Display Toko', warehouse: 'Gudang Utama', damaged: 'Gudang BS', shopee: 'Gudang Shopee' };
+    isi.innerHTML = `<div class="alert" style="margin-bottom:14px">SO yang disetujui menjadi patokan <b>stok seharusnya</b>. Setelah itu selisih stok Trizone terhadap hitungan mother base terlihat di tab Selisih vs Trizone.</div>` +
+      (g.size ? [...g.values()].map((d, i) => {
+        const beda = d.baris.filter((b) => Number(b.selisih) !== 0);
+        const nilai = beda.reduce((a, b) => a + Number(b.nilai_selisih || 0), 0);
+        return `<div class="card" data-so="${i}"><div class="card-head"><div><h2>${esc(d.kode_toko)} · <span class="mono">${esc(d.no_op)}</span></h2>
+          <div class="muted small">${esc(ZONA[d.zona] || d.zona)} · ${esc(fmtWaktu(d.waktu))} · ${num(d.baris.length)} barang dihitung, ${num(beda.length)} selisih · nilai selisih ${rp(nilai)}</div></div>
+          <div class="row"><button class="btn sm danger" data-aksi="DITOLAK">Tolak</button><button class="btn sm primary" data-aksi="DISETUJUI">Setujui</button></div></div>
+          ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+            { k: 'stok_sistem', judul: 'Sistem', num: true, fmt: (v) => num(v) }, { k: 'fisik', judul: 'Fisik', num: true, fmt: (v) => num(v) },
+            { k: 'selisih', judul: 'Selisih', num: true, fmt: (v) => `<span class="pill ${Number(v) < 0 ? 'bad' : Number(v) > 0 ? 'warn' : ''}">${num(v)}</span>` },
+            { k: 'nilai_selisih', judul: 'Nilai', num: true, fmt: (v) => (v === null ? '<span class="muted">harga belum ada</span>' : rp(v)) }], beda.length ? beda : d.baris)}</div>`;
+      }).join('') : '<div class="card"><div class="kosong">Tidak ada stok opname yang menunggu review.</div></div>');
+    const docs = [...g.values()];
+    isi.onclick = async (e) => {
+      const b = e.target.closest('[data-aksi]');
+      if (!b) return;
+      const d = docs[Number(b.closest('[data-so]').dataset.so)];
+      const setuju = b.dataset.aksi === 'DISETUJUI';
+      modal({
+        judul: `${setuju ? 'Setujui' : 'Tolak'} ${d.no_op}`,
+        isi: `<label class="f">Catatan (opsional)<textarea id="soCat" rows="3" placeholder="${setuju ? 'mis. sudah dicek ulang bersama kepala toko' : 'alasan penolakan'}"></textarea></label>`,
+        aksi: [{ label: 'Batal' }, { label: setuju ? 'Setujui' : 'Tolak', kelas: setuju ? 'primary' : 'danger', onClick: async ({ tutup, el: m }) => {
+          await rpc('review_so', { p_kode_toko: d.kode_toko, p_no_op: d.no_op, p_status: b.dataset.aksi, p_catatan: $('#soCat', m).value || null });
+          tutup(); toast(`${d.no_op} ${setuju ? 'disetujui' : 'ditolak'}.`); tampil();
+        } }],
+      });
+    };
+  }
+
+  async function selisih() {
+    const rows = await q(sb.from('v_selisih_snapshot').select('*').order('kode_toko').limit(2000));
+    const ZONA = { floor: 'Display', warehouse: 'Gudang', damaged: 'BS', shopee: 'Shopee' };
+    isi.innerHTML = `<div class="card"><div class="card-head"><h2>Stok Trizone berbeda dari stok seharusnya</h2></div>
+      <p class="muted small" style="margin-top:-4px">Hanya barang yang punya SO patokan yang sudah disetujui. Selisih positif = stok di Trizone lebih banyak.</p>
+      ${tabel([{ k: 'kode_toko', judul: 'Toko' }, { k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` },
+        { k: 'zona', judul: 'Zona', fmt: (v) => esc(ZONA[v] || v) }, { k: 'stok_trizone', judul: 'Trizone', num: true, fmt: (v) => num(v) },
+        { k: 'stok_seharusnya', judul: 'Seharusnya', num: true, fmt: (v) => num(v) }, { k: 'selisih', judul: 'Selisih', num: true, fmt: (v) => `<span class="pill ${Number(v) < 0 ? 'bad' : 'warn'}">${num(v)}</span>` },
+        { k: 'so_patokan', judul: 'SO patokan', fmt: (v) => `<span class="mono small">${esc(v)}</span>` }, { k: 'per_waktu', judul: 'Stok per', fmt: (v) => esc(fmtWaktu(v)) }],
+      rows, { kosong: 'Tidak ada selisih. Stok Trizone sama dengan hitungan mother base.' })}</div>`;
+  }
+
+  async function cari() {
+    isi.innerHTML = `<div class="card"><div class="card-head"><div class="row"><input id="stCari" placeholder="Cari nama, SKU, atau barcode" style="min-width:240px">
+      ${S.toko.length > 1 ? pilihToko('stToko') : ''}</div><button class="btn sm" id="stCsv">Unduh CSV</button></div><div id="stHasil"></div></div>`;
+    let rows = [];
+    const kolom = [{ k: 'kode_toko', judul: 'Toko' }, { k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+      { k: 'display', judul: 'Display', num: true, fmt: (v, r) => `<span class="${Number(v) <= Number(r.min_display || 0) ? 'pill warn' : ''}">${num(v)}</span>` },
+      { k: 'gudang', judul: 'Gudang', num: true, fmt: (v) => num(v) }, { k: 'bs', judul: 'BS', num: true, fmt: (v) => num(v) },
+      { k: 'shopee', judul: 'Shopee', num: true, fmt: (v) => num(v) }, { k: 'per_waktu', judul: 'Stok per', fmt: (v) => esc(fmtWaktu(v)) }];
+    let t;
+    const muat = async () => {
+      rows = await rpc('laporan_stok_produk', { p_cari: $('#stCari', isi).value.trim() || null, p_kode_toko: ($('#stToko', isi) || {}).value || null, p_batas: 500 });
+      $('#stHasil', isi).innerHTML = tabel(kolom, rows, { kosong: 'Tidak ada barang yang cocok.' });
+    };
+    $('#stCari', isi).addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => muat().catch((e) => toast(pesanError(e), 'bad')), 250); });
+    if ($('#stToko', isi)) $('#stToko', isi).addEventListener('change', muat);
+    $('#stCsv', isi).addEventListener('click', () => unduhCsv('stok.csv', kolom, rows));
+    await muat();
+  }
+
+  async function lambat() {
+    isi.innerHTML = `<div class="card"><div class="card-head"><div class="row"><label class="row small muted">Tidak terjual selama
+      <select id="slHari"><option>30</option><option>60</option><option>90</option></select> hari</label>${S.toko.length > 1 ? pilihToko('slToko') : ''}</div></div><div id="slHasil"></div></div>`;
+    const muat = async () => {
+      const rows = await rpc('laporan_stok_lambat', { p_hari: Number($('#slHari', isi).value), p_kode_toko: ($('#slToko', isi) || {}).value || null, p_batas: 500 });
+      $('#slHasil', isi).innerHTML = tabel([{ k: 'kode_toko', judul: 'Toko' }, { k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` },
+        { k: 'nama', judul: 'Nama' }, { k: 'stok', judul: 'Stok', num: true, fmt: (v) => num(v) },
+        { k: 'terakhir_terjual', judul: 'Terakhir terjual', fmt: (v) => esc(v ? fmtTgl(v) : 'belum pernah') }], rows, { kosong: 'Tidak ada stok lambat.' });
+    };
+    $('#slHari', isi).addEventListener('change', muat);
+    if ($('#slToko', isi)) $('#slToko', isi).addEventListener('change', muat);
+    await muat();
+  }
+  await tampil();
+}
+
+// ---------------------------------------------------------------- Surat jalan (Accurate)
+async function hKiriman(el) {
+  el.innerHTML = `${head('Surat Jalan', 'Upload laporan Accurate <b>Rincian Pengiriman Pesanan</b>, kirim file import penerimaan ke toko, lalu pantau pencocokannya.')}
+    <div class="card"><div class="card-head"><h2>Upload dari Accurate</h2></div>
+      <div class="row"><input type="file" id="kjFile" accept=".xlsx,.xls" aria-label="File Excel Accurate"><span class="muted small">Ekspor laporan Rincian Pengiriman Pesanan dari Accurate ke Excel.</span></div>
+      <div id="kjPratinjau"></div></div>
+    <div class="card"><div class="card-head"><h2>Pencocokan surat jalan</h2>
+      <div class="row"><select id="kjStatus" aria-label="Status"><option value="masalah">Perlu dicek</option><option value="">Semua status</option>
+      ${Object.entries(STATUS_SJ).map(([k, [, l]]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>${pilihToko('kjToko')}</div></div>
+      <div id="kjDaftar"><div class="kosong">Memuat…</div></div></div>`;
+  let pelanggan = [];
+
+  $('#kjFile', el).addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const box = $('#kjPratinjau', el);
+    box.innerHTML = '<div class="kosong">Membaca file…</div>';
+    try {
+      const hasil = MbAccurate.bacaFile(await f.arrayBuffer());
+      pelanggan = await q(sb.from('pelanggan_accurate').select('*'));
+      const petaPel = Object.fromEntries(pelanggan.map((p) => [p.nama, p.kode_toko]));
+      const kelompok = new Map();
+      for (const d of hasil.do) {
+        const kode = petaPel[d.pelanggan] || null;
+        const k = kode || `?${d.pelanggan}`;
+        if (!kelompok.has(k)) kelompok.set(k, { kode, pelanggan: new Set(), do: [] });
+        kelompok.get(k).pelanggan.add(d.pelanggan);
+        kelompok.get(k).do.push(d);
+      }
+      const grup = [...kelompok.values()];
+      const nBaris = hasil.do.reduce((a, d) => a + d.items.length, 0);
+      box.innerHTML = `<div style="margin-top:12px" class="grid">
+        <div class="${hasil.masalah.length ? 'alert bad' : 'alert ok'}"><b>${esc(f.name)}</b>: ${esc(hasil.perusahaan || '')} · ${esc(hasil.periode || '')} ·
+          ${num(hasil.do.length)} DO, ${num(nBaris)} baris barang${hasil.masalah.length ? `<br><b>${num(hasil.masalah.length)} masalah:</b><br>${hasil.masalah.slice(0, 20).map(esc).join('<br>')}` : ''}</div>
+        ${tabel([{ k: 'toko', judul: 'Toko', fmt: (v, r) => (r.kode ? `<b>${esc(r.kode)}</b> ${esc(namaToko(r.kode))}` : '<span class="pill warn">Belum dipetakan</span>') },
+          { k: 'pel', judul: 'Pelanggan Accurate' }, { k: 'jml', judul: 'DO', num: true }, { k: 'aksi', judul: '', fmt: (v, r) => `<button class="btn sm" data-unduh="${r.i}">Unduh file import Trizone</button>` }],
+        grup.map((g2, i) => ({ i, kode: g2.kode, pel: [...g2.pelanggan].join(', '), jml: g2.do.length })))}
+        <div class="row end"><span class="muted small">Pelanggan yang belum dipetakan bisa diatur di halaman Toko.</span>
+          <button class="btn primary" id="kjSimpan" ${hasil.masalah.length ? 'disabled' : ''}>Simpan ${num(hasil.do.length)} surat jalan ke mother base</button></div></div>`;
+      box.onclick = (ev) => {
+        const b = ev.target.closest('[data-unduh]');
+        if (!b) return;
+        const g2 = grup[Number(b.dataset.unduh)];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(MbAccurate.barisImportTrizone({ ...hasil, do: g2.do })), 'Penerimaan');
+        XLSX.writeFile(wb, `Penerimaan_${g2.kode || [...g2.pelanggan][0].replace(/\W+/g, '_')}_${hariIni()}.xlsx`);
+      };
+      $('#kjSimpan', box).addEventListener('click', (ev) => sibuk(ev.target, async () => {
+        const r = await rpc('import_surat_jalan', { p: MbAccurate.payloadMotherBase(hasil, f.name) });
+        toast(`${num(r.do_baru)} surat jalan baru, ${num(r.do_diganti)} diperbarui.${r.pelanggan_belum_dipetakan.length ? ` Belum dipetakan: ${r.pelanggan_belum_dipetakan.join(', ')}` : ''}`);
+        daftar();
+      }));
+    } catch (err) { box.innerHTML = `<div class="alert bad" style="margin-top:12px">${esc(pesanError(err))}</div>`; }
+  });
+
+  async function daftar() {
+    const st = $('#kjStatus', el).value;
+    const toko = $('#kjToko', el).value;
+    let qy = sb.from('v_pencocokan_sj').select('*').order('tanggal_kirim', { ascending: false }).order('no_sj', { ascending: false }).limit(300);
+    if (st === 'masalah') qy = qy.in('status', ['BELUM_DIINPUT', 'SELISIH_QTY', 'BARANG_SALAH', 'SATUAN_BELUM_JELAS', 'PELANGGAN_BELUM_DIPETAKAN']);
+    else if (st) qy = qy.eq('status', st);
+    if (toko) qy = qy.eq('kode_toko', toko);
+    const rows = await q(qy);
+    const box = $('#kjDaftar', el);
+    box.innerHTML = tabel([{ k: 'no_sj', judul: 'No. DO', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'tanggal_kirim', judul: 'Tanggal', fmt: (v) => esc(fmtTgl(v)) },
+      { k: 'pelanggan', judul: 'Pelanggan' }, { k: 'kode_toko', judul: 'Toko' }, { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_SJ, v) },
+      { k: 'baris_kirim', judul: 'Baris', num: true }, { k: 'baris_selisih_qty', judul: 'Selisih', num: true }, { k: 'barang_kurang', judul: 'Kurang', num: true },
+      { k: 'barang_lebih', judul: 'Lebih', num: true }, { k: 'batas_input', judul: 'Batas input', fmt: (v) => esc(fmtTgl(v)) },
+      { k: 'diinput_at', judul: 'Diinput toko', fmt: (v) => esc(v ? fmtWaktu(v) : '-') }], rows, { klik: true, kosong: st === 'masalah' ? 'Tidak ada surat jalan yang perlu dicek.' : 'Belum ada surat jalan.' });
+    onBaris(box, rows, detailSj);
+  }
+  $('#kjStatus', el).addEventListener('change', daftar);
+  $('#kjToko', el).addEventListener('change', daftar);
+  await daftar();
+}
+
+async function detailSj(sj) {
+  const rows = await q(sb.from('v_sj_banding').select('*').eq('no_sj', sj.no_sj).order('sku'));
+  modal({
+    judul: `${sj.no_sj} · ${sj.pelanggan}`, lebar: true,
+    isi: `<p class="muted" style="margin-top:0">${esc(fmtTgl(sj.tanggal_kirim))} · toko ${esc(sj.kode_toko || 'belum dipetakan')} · ${pill(STATUS_SJ, sj.status)}</p>
+      ${tabel([{ k: 'sku', judul: 'Kode', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+        { k: 'qty_kirim', judul: 'Dikirim', num: true, fmt: (v, r) => (v === null ? '-' : `${num(v)} ${esc(r.satuan || '')}`) },
+        { k: 'kirim_biji', judul: 'Dikirim (Biji)', num: true, fmt: (v) => (v === null ? '<span class="muted">?</span>' : num(v)) },
+        { k: 'terima_biji', judul: 'Diterima (Biji)', num: true, fmt: (v) => (v === null ? '<span class="muted">-</span>' : num(v)) },
+        { k: 'selisih_biji', judul: 'Selisih', num: true, fmt: (v) => `<span class="pill ${Number(v) === 0 ? 'ok' : 'bad'}">${num(v)}</span>` }], rows)}
+      <p class="muted small">Bila toko salah input, koreksi di Trizone. Bila memang kurang / lebih kirim, koreksi nota di Accurate.</p>`,
+    aksi: [{ label: 'Tutup', kelas: 'primary' }],
+  });
+}
+
+// ---------------------------------------------------------------- Master barang
+async function hBarang(el) {
+  el.innerHTML = `${head('Master Barang', 'Kode, barcode, harga jual, dan satuan yang dipakai semua toko. Toko dengan daftar barang terkunci mengambilnya otomatis tiap jam.',
+    `<button class="btn" id="brIsi">Isi dari toko…</button><button class="btn" id="brHarga">Catat harga beli…</button>${isOwner() ? '<button class="btn" id="brMarkup">Markup…</button>' : ''}<button class="btn primary" id="brTambah">+ Barang</button>`)}
+    <div class="card"><div class="card-head"><div class="row"><input id="brCari" placeholder="Cari nama atau SKU" style="min-width:220px"><select id="brPr" aria-label="Principal"><option value="">Semua principal</option></select></div>
+    <span class="muted small" id="brJumlah"></span></div><div id="brIsiTabel"></div></div>`;
+  const [principal, markupRow] = await Promise.all([
+    q(sb.from('principal').select('id,nama').order('nama')),
+    q(sb.from('pengaturan').select('nilai').eq('kunci', 'markup_jual_ke_toko')),
+  ]);
+  const markup = markupRow.length ? Number(markupRow[0].nilai) : null;
+  $('#brPr', el).insertAdjacentHTML('beforeend', principal.map((p) => `<option value="${p.id}">${esc(p.nama)}</option>`).join(''));
+  const prNama = Object.fromEntries(principal.map((p) => [p.id, p.nama]));
+  let rows = [];
+
+  async function muat() {
+    const cari = $('#brCari', el).value.trim();
+    let qy = sb.from('produk').select('*').order('nama').limit(1000);
+    if (cari) qy = /^[A-Za-z0-9-]+$/.test(cari) && cari.length <= 20 ? qy.ilike('sku', `%${cari}%`) : qy.ilike('nama', `%${cari}%`);
+    if ($('#brPr', el).value) qy = qy.eq('principal_id', $('#brPr', el).value);
+    let [produk, harga] = await Promise.all([q(qy), q(sb.from('v_harga_produk').select('sku,harga_beli_dasar,sumber,harga_jual_ke_toko').limit(5000))]);
+    if (cari && !produk.length && /^[A-Za-z0-9-]+$/.test(cari)) produk = await q(sb.from('produk').select('*').ilike('nama', `%${cari}%`).order('nama').limit(1000));
+    const h = Object.fromEntries(harga.map((x) => [x.sku, x]));
+    rows = produk.map((p) => ({ ...p, ...(h[p.sku] || {}) }));
+    $('#brJumlah', el).textContent = `${num(rows.length)} barang${markup !== null ? ` · markup ke toko ${num(markup * 100, 1)}%` : ''}`;
+    const box = $('#brIsiTabel', el);
+    box.innerHTML = tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama', fmt: (v, r) => `${esc(v)}${r.aktif ? '' : ' <span class="pill">nonaktif</span>'}` },
+      { k: 'barcode', judul: 'Barcode', fmt: (v) => `<span class="mono small">${esc(v || '-')}</span>` }, { k: 'principal_id', judul: 'Principal', fmt: (v) => esc(prNama[v] || '-') },
+      { k: 'harga_jual_konsumen', judul: 'Harga jual', num: true, fmt: rp }, { k: 'satuan_masuk', judul: 'Satuan masuk', fmt: (v, r) => `1 ${esc(v)} = ${num(r.rasio_isi)} Biji` },
+      { k: 'harga_beli_dasar', judul: 'Harga beli', num: true, fmt: (v, r) => (v === null || v === undefined ? '<span class="muted">-</span>' : `${rp(v)} <span class="muted small">${r.sumber === 'PRICELIST' ? 'pricelist' : 'beli'}</span>`) },
+      { k: 'harga_jual_ke_toko', judul: 'Harga ke toko', num: true, fmt: rp }], rows, { klik: true, kosong: 'Belum ada barang. Isi dari daftar barang salah satu toko atau tambah manual.' });
+    onBaris(box, rows, formBarang);
+  }
+
+  function formBarang(p) {
+    const baru = !p;
+    p = p || { aktif: true, satuan_masuk: 'Dus', rasio_isi: 1, isi_dus: 1 };
+    modal({
+      judul: baru ? 'Tambah barang' : `Ubah ${p.sku}`,
+      isi: `<form class="form" id="fBr" onsubmit="return false">
+        <div class="grid g2"><label class="f">SKU<input id="fSku" value="${esc(p.sku || '')}" ${baru ? '' : 'readonly'} required></label>
+          <label class="f">Barcode<input id="fBarcode" value="${esc(p.barcode || '')}" required></label></div>
+        <label class="f">Nama barang<input id="fNama" value="${esc(p.nama || '')}" required></label>
+        <div class="grid g2"><label class="f">Merk<input id="fMerk" value="${esc(p.merk || '')}"></label><label class="f">Kategori<input id="fKat" value="${esc(p.kategori || '')}"></label></div>
+        <div class="grid g2"><label class="f">Harga jual di toko (Rp)<input id="fHarga" type="number" min="0" step="100" value="${esc(p.harga_jual_konsumen ?? '')}" required></label>
+          <label class="f">Principal<select id="fPr"><option value="">-</option>${principal.map((x) => `<option value="${x.id}" ${x.id === p.principal_id ? 'selected' : ''}>${esc(x.nama)}</option>`).join('')}</select></label></div>
+        <div class="grid g2"><label class="f">Satuan masuk (kiriman ke toko)<input id="fSatuan" value="${esc(p.satuan_masuk || 'Dus')}"></label>
+          <label class="f">Isi per satuan masuk (Biji)<input id="fRasio" type="number" min="1" value="${esc(p.rasio_isi || 1)}"></label></div>
+        <div class="grid g2"><label class="f">Isi dus dari principal (pembulatan PO)<input id="fIsiDus" type="number" min="1" value="${esc(p.isi_dus || 1)}"></label>
+          <label class="f">Status<select id="fAktif"><option value="1" ${p.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${p.aktif ? '' : 'selected'}>Nonaktif</option></select></label></div>
+        <p class="muted small" style="margin:0">Isi per satuan masuk harus sama dengan isi satu Coly / Dus di Accurate, karena dipakai untuk mencocokkan surat jalan.</p></form>`,
+      aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+        const v = (id) => $(id, m).value.trim();
+        const data = { nama: v('#fNama'), barcode: v('#fBarcode') || null, merk: v('#fMerk') || null, kategori: v('#fKat') || null,
+          harga_jual_konsumen: v('#fHarga') === '' ? null : Number(v('#fHarga')), principal_id: v('#fPr') ? Number(v('#fPr')) : null,
+          satuan_masuk: v('#fSatuan') || 'Dus', rasio_isi: Number(v('#fRasio')) || 1, isi_dus: Number(v('#fIsiDus')) || 1, aktif: v('#fAktif') === '1' };
+        if (!data.nama || (baru && !v('#fSku'))) throw new Error('SKU dan nama wajib diisi.');
+        if (baru) await q(sb.from('produk').insert({ sku: v('#fSku'), ...data }));
+        else await q(sb.from('produk').update(data).eq('sku', p.sku));
+        tutup(); toast('Barang disimpan.'); muat();
+      } }],
+    });
+  }
+
+  $('#brTambah', el).addEventListener('click', () => formBarang(null));
+  $('#brCari', el).addEventListener('input', () => { clearTimeout(S.tCari); S.tCari = setTimeout(() => muat().catch((e) => toast(pesanError(e), 'bad')), 250); });
+  $('#brPr', el).addEventListener('change', muat);
+  $('#brIsi', el).addEventListener('click', () => modal({
+    judul: 'Isi master dari daftar barang toko',
+    isi: `<p style="margin-top:0">Barang dari daftar barang Trizone toko ini yang belum ada di master ditambahkan. Barang yang sudah ada tidak diubah.</p><label class="f">Toko${pilihToko('isiToko', '', '')}</label>`,
+    aksi: [{ label: 'Batal' }, { label: 'Isi', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+      const n = await rpc('isi_master_dari_toko', { p_kode: $('#isiToko', m).value });
+      tutup(); toast(`${num(n)} barang ditambahkan ke master.`); muat();
+    } }],
+  }));
+  $('#brHarga', el).addEventListener('click', () => modal({
+    judul: 'Catat harga beli',
+    isi: `<form class="form" onsubmit="return false"><label class="f">SKU<input id="hSku" list="hSkuList" required><datalist id="hSkuList">${rows.map((r) => `<option value="${esc(r.sku)}">${esc(r.nama)}</option>`).join('')}</datalist></label>
+      <div class="grid g2"><label class="f">Berlaku mulai<input id="hTgl" type="date" value="${hariIni()}"></label><label class="f">Harga (Rp per Biji)<input id="hHarga" type="number" min="0" step="1"></label></div>
+      <div class="grid g2"><label class="f">Sumber<select id="hSumber"><option value="PRICELIST">Pricelist pabrik</option><option value="PEMBELIAN">Pembelian</option></select></label>
+      <label class="f">Referensi<input id="hRef" placeholder="mis. Pricelist Nov 2026"></label></div></form>`,
+    aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+      const sku = $('#hSku', m).value.trim();
+      const harga = Number($('#hHarga', m).value);
+      if (!sku || !(harga >= 0) || $('#hHarga', m).value === '') throw new Error('SKU dan harga wajib diisi.');
+      await q(sb.from('harga_beli').upsert({ sku, berlaku_at: $('#hTgl', m).value, harga, sumber: $('#hSumber', m).value, referensi: $('#hRef', m).value || null }, { onConflict: 'sku,berlaku_at,sumber' }));
+      tutup(); toast('Harga beli disimpan. Harga jual ke toko ikut diperbarui.'); muat();
+    } }],
+  }));
+  if ($('#brMarkup', el)) {
+    $('#brMarkup', el).addEventListener('click', () => modal({
+      judul: 'Markup harga jual ke toko',
+      isi: `<label class="f">Markup (%)<input id="mkNilai" type="number" step="0.1" min="0" value="${markup !== null ? num(markup * 100, 2).replace(',', '.') : ''}"></label>
+        <p class="muted small">Harga jual kantor ke toko = harga beli dasar × (1 + markup). Harga beli dasar = harga pembelian terakhir atau pricelist terbaru.</p>`,
+      aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+        const v = Number($('#mkNilai', m).value);
+        if (!(v >= 0)) throw new Error('Isi angka markup.');
+        await q(sb.from('pengaturan').upsert({ kunci: 'markup_jual_ke_toko', nilai: Math.round(v * 100) / 10000 }, { onConflict: 'kunci' }));
+        tutup(); toast('Markup disimpan.'); route();
+      } }],
+    }));
+  }
+  await muat();
+}
+
+// ---------------------------------------------------------------- Principal
+async function hPrincipal(el) {
+  el.innerHTML = `${head('Principal', 'Data pemasok untuk menghitung usulan beli. Lengkapi lewat wawancara dengan asisten AI atau isi langsung.', '<button class="btn primary" id="prTambah">+ Principal</button>')}
+    <div class="card" id="prDaftar"><div class="kosong">Memuat…</div></div>`;
+  async function muat() {
+    const rows = await rpc('laporan_principal');
+    const box = $('#prDaftar', el);
+    box.innerHTML = tabel([{ k: 'nama', judul: 'Principal', fmt: (v) => `<b>${esc(v)}</b>` },
+      { k: 'lead_time_hari', judul: 'Lead time', fmt: (v, r) => `${v === null ? '<span class="pill warn">belum</span>' : `${num(v)} hari`}${r.lead_time_aktual !== null ? `<div class="muted small">aktual ${num(r.lead_time_aktual, 1)} hari</div>` : ''}` },
+      { k: 'periode_order_hari', judul: 'Order', fmt: (v, r) => (v === null ? '<span class="pill warn">belum</span>' : `tiap ${num(v)} hari${r.jadwal_order ? `<div class="muted small">${esc(r.jadwal_order)}</div>` : ''}`) },
+      { k: 'minimum_order_qty', judul: 'Min. order', fmt: (v, r) => [v !== null ? `${num(v)} Biji` : '', r.minimum_order_rp !== null ? rp(r.minimum_order_rp) : ''].filter(Boolean).join('<br>') || '-' },
+      { k: 'stok_pengaman_hari', judul: 'Stok pengaman', fmt: (v) => `${num(v)} hari` }, { k: 'jumlah_produk', judul: 'Produk', num: true },
+      { k: 'diwawancara_at', judul: 'Diwawancara', fmt: (v) => esc(v ? fmtTgl(v) : '-') },
+      { k: 'id', judul: '', fmt: (v) => `<div class="row"><button class="btn sm" data-ubah="${v}">Ubah</button><button class="btn sm primary" data-ww="${v}">Wawancara AI</button></div>` }],
+    rows, { kosong: 'Belum ada principal.' });
+    box.onclick = (e) => {
+      const u = e.target.closest('[data-ubah]');
+      const w = e.target.closest('[data-ww]');
+      if (w) { S.mulaiWawancara = Number(w.dataset.ww); location.hash = 'asisten'; }
+      if (u) formPrincipal(rows.find((r) => String(r.id) === u.dataset.ubah));
+    };
+  }
+  function formPrincipal(p) {
+    const f = (id, label, v, type = 'number') => `<label class="f">${label}<input id="${id}" type="${type}" value="${esc(v ?? '')}"></label>`;
+    modal({
+      judul: `Ubah ${p.nama}`,
+      isi: `<form class="form" onsubmit="return false"><div class="grid g2">${f('pLead', 'Lead time (hari)', p.lead_time_hari)}${f('pPer', 'Periode order (hari)', p.periode_order_hari)}</div>
+        ${f('pJadwal', 'Jadwal order', p.jadwal_order, 'text')}
+        <div class="grid g2">${f('pMinQ', 'Minimum order (Biji)', p.minimum_order_qty)}${f('pMinRp', 'Minimum order (Rp)', p.minimum_order_rp)}</div>
+        ${f('pPengaman', 'Stok pengaman (hari)', p.stok_pengaman_hari)}
+        <label class="f">Catatan promo<textarea id="pPromo" rows="2">${esc(p.catatan_promo || '')}</textarea></label></form>`,
+      aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+        const n = (id) => ($(id, m).value === '' ? undefined : Number($(id, m).value));
+        await rpc('simpan_data_principal', { p_id: p.id, p: { lead_time_hari: n('#pLead'), periode_order_hari: n('#pPer'), jadwal_order: $('#pJadwal', m).value || undefined,
+          minimum_order_qty: n('#pMinQ'), minimum_order_rp: n('#pMinRp'), stok_pengaman_hari: n('#pPengaman'), catatan_promo: $('#pPromo', m).value || undefined } });
+        tutup(); toast('Principal disimpan.'); muat();
+      } }],
+    });
+  }
+  $('#prTambah', el).addEventListener('click', () => modal({
+    judul: 'Tambah principal',
+    isi: '<label class="f">Nama principal<input id="prNama" required></label>',
+    aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+      const nama = $('#prNama', m).value.trim();
+      if (!nama) throw new Error('Isi nama principal.');
+      await q(sb.from('principal').insert({ nama }));
+      tutup(); toast('Principal ditambahkan.'); muat();
+    } }],
+  }));
+  await muat();
+}
+
+// ---------------------------------------------------------------- Pembelian
+async function hPembelian(el) {
+  let tab = S.tabPembelian || 'po';
+  el.innerHTML = `${head('Pembelian', 'Usulan beli dihitung dari penjualan 9 toko, stok gudang, stok toko, dan PO yang belum datang. Owner menyetujui, admin memasukkan ke Accurate.')}
+    ${tabs('pbTab', [['po', 'Purchase order'], ['usulan', 'Usulan beli']], tab)}<div id="pbIsi"></div>`;
+  pasangTabs(el, 'pbTab', (t) => { tab = t; S.tabPembelian = t; tampil(); });
+  const isi = $('#pbIsi', el);
+  const principal = await q(sb.from('principal').select('id,nama').order('nama'));
+  const prNama = Object.fromEntries(principal.map((p) => [p.id, p.nama]));
+
+  async function tampil() {
+    isi.innerHTML = '<div class="card"><div class="kosong">Memuat…</div></div>';
+    try { await (tab === 'po' ? daftarPo() : usulan()); } catch (e) { isi.innerHTML = `<div class="card"><div class="kosong">${esc(pesanError(e))}</div></div>`; }
+  }
+
+  async function usulan() {
+    const rows = await rpc('laporan_usulan_beli');
+    const g = new Map();
+    for (const r of rows) { if (!g.has(r.principal_id)) g.set(r.principal_id, []); g.get(r.principal_id).push(r); }
+    isi.innerHTML = g.size ? [...g.entries()].map(([pid, baris]) => `<div class="card"><div class="card-head"><h2>${esc(prNama[pid] || baris[0].principal)}</h2>
+        <button class="btn primary sm" data-buat="${pid}">Buat usulan PO</button></div>
+        ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+          { k: 'rata_harian', judul: 'Jual / hari', num: true, fmt: (v) => num(v, 1) }, { k: 'lead_time', judul: 'Lead + periode', num: true, fmt: (v, r) => `${num(v)} + ${num(r.periode_order)} hr` },
+          { k: 'stok_gudang', judul: 'Stok gudang', num: true, fmt: (v) => num(v) }, { k: 'stok_toko', judul: 'Stok toko', num: true, fmt: (v) => num(v) },
+          { k: 'po_belum_datang', judul: 'PO jalan', num: true, fmt: (v) => num(v) }, { k: 'usulan_qty', judul: 'Usulan', num: true, fmt: (v) => `<b>${num(v)}</b>` }], baris)}</div>`).join('')
+      : '<div class="card"><div class="kosong">Tidak ada barang yang perlu dibeli saat ini.</div></div>';
+    isi.onclick = (e) => {
+      const b = e.target.closest('[data-buat]');
+      if (b) sibuk(b, async () => { const no = await rpc('buat_po_dari_usulan', { p_principal_id: Number(b.dataset.buat) }); toast(`Usulan ${no} dibuat.`); tab = 'po'; S.tabPembelian = 'po'; route(); });
+    };
+  }
+
+  async function daftarPo() {
+    const rows = await q(sb.from('po').select('*').order('tanggal', { ascending: false }).order('no_po', { ascending: false }).limit(200));
+    isi.innerHTML = `<div class="card">${tabel([{ k: 'no_po', judul: 'No. PO', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'tanggal', judul: 'Tanggal', fmt: (v) => esc(fmtTgl(v)) },
+      { k: 'principal_id', judul: 'Principal', fmt: (v) => esc(prNama[v] || v) }, { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_PO, v) },
+      { k: 'no_po_accurate', judul: 'No. PO Accurate', fmt: (v) => esc(v || '-') }, { k: 'disetujui_at', judul: 'Disetujui', fmt: (v) => esc(v ? fmtWaktu(v) : '-') }],
+    rows, { klik: true, kosong: 'Belum ada PO. Buat dari tab Usulan beli.' })}</div>`;
+    onBaris(isi, rows, (po) => detailPo(po, tampil));
+  }
+
+  async function detailPo(po, segarkan) {
+    const [baris, produk, terima] = await Promise.all([
+      q(sb.from('po_baris').select('*').eq('no_po', po.no_po).order('sku')),
+      q(sb.from('produk').select('sku,nama').eq('principal_id', po.principal_id)),
+      q(sb.from('penerimaan_principal').select('no_terima').eq('no_po', po.no_po)),
+    ]);
+    const nm = Object.fromEntries(produk.map((p) => [p.sku, p.nama]));
+    let sudah = {};
+    if (terima.length) {
+      const tb = await q(sb.from('penerimaan_principal_baris').select('sku,qty').in('no_terima', terima.map((t) => t.no_terima)));
+      for (const t of tb) sudah[t.sku] = (sudah[t.sku] || 0) + Number(t.qty);
+    }
+    const bisaSetujui = isOwner() && po.status === 'USULAN';
+    const total = baris.reduce((a, b) => a + Number(b.qty_disetujui ?? b.qty_usulan) * Number(b.harga || 0), 0);
+    const aksi = [{ label: 'Unduh CSV untuk Accurate', onClick: () => unduhCsv(`${po.no_po}.csv`, [{ k: 'sku', judul: 'Kode' }, { k: 'nama', judul: 'Nama' }, { k: 'qty', judul: 'Qty (Biji)' }, { k: 'harga', judul: 'Harga' }],
+      baris.map((b) => ({ sku: b.sku, nama: nm[b.sku] || '', qty: b.qty_disetujui ?? b.qty_usulan, harga: b.harga }))) }];
+    if (['USULAN', 'DISETUJUI'].includes(po.status)) aksi.push({ label: 'Batalkan PO', kelas: 'danger', onClick: async ({ tutup }) => {
+      if (!(await konfirmasi('Batalkan PO', `Batalkan ${esc(po.no_po)}?`, 'Batalkan', true))) return;
+      await rpc('ubah_status_po', { p_no_po: po.no_po, p_status: 'BATAL' }); tutup(); toast('PO dibatalkan.'); segarkan();
+    } });
+    if (po.status === 'DISETUJUI') aksi.push({ label: 'Tandai sudah dikirim ke principal', onClick: async ({ tutup, el: m }) => {
+      await rpc('ubah_status_po', { p_no_po: po.no_po, p_status: 'DIKIRIM', p_no_po_accurate: ($('#poAcc', m) || {}).value || null }); tutup(); toast('PO ditandai dikirim.'); segarkan();
+    } });
+    if (['DISETUJUI', 'DIKIRIM', 'SEBAGIAN'].includes(po.status)) aksi.push({ label: 'Terima barang…', onClick: ({ tutup }) => { tutup(); formTerima(po, baris, nm, sudah, segarkan); } });
+    if (bisaSetujui) aksi.push({ label: 'Setujui PO', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+      const p = $$('[data-qty]', m).map((i) => ({ sku: i.dataset.qty, qty: Number(i.value) }));
+      if (p.some((x) => !(x.qty >= 0))) throw new Error('Qty harus angka 0 atau lebih.');
+      await rpc('setujui_po', { p_no_po: po.no_po, p }); tutup(); toast(`${po.no_po} disetujui.`); segarkan();
+    } });
+    modal({
+      judul: `${po.no_po} · ${prNama[po.principal_id] || ''}`, lebar: true,
+      isi: `<p class="muted" style="margin-top:0">${esc(fmtTgl(po.tanggal))} · ${pill(STATUS_PO, po.status)} · perkiraan nilai ${rp(total)}${po.status === 'USULAN' && !isOwner() ? ' · menunggu persetujuan owner' : ''}</p>
+        ${po.status === 'DISETUJUI' ? '<label class="f" style="margin-bottom:12px">No. PO di Accurate (diisi setelah dimasukkan ke Accurate)<input id="poAcc"></label>' : ''}
+        ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama', fmt: (v, r) => esc(nm[r.sku] || '') },
+          { k: 'qty_usulan', judul: 'Usulan', num: true, fmt: (v) => num(v) },
+          { k: 'qty_disetujui', judul: 'Disetujui', num: true, fmt: (v, r) => (bisaSetujui ? `<input type="number" min="0" data-qty="${esc(r.sku)}" value="${esc(v ?? r.qty_usulan)}" style="width:90px;text-align:right" aria-label="Qty ${esc(r.sku)}">` : num(v)) },
+          { k: 'diterima', judul: 'Diterima', num: true, fmt: (v, r) => num(sudah[r.sku] || 0) }, { k: 'harga', judul: 'Harga', num: true, fmt: rp },
+          { k: 'alasan', judul: 'Alasan', fmt: (v) => `<span class="small muted">${esc(v || '')}</span>` }], baris)}`,
+      aksi,
+    });
+  }
+
+  function formTerima(po, baris, nm, sudah, segarkan) {
+    modal({
+      judul: `Terima barang ${po.no_po}`, lebar: true,
+      isi: `<div class="grid g2" style="margin-bottom:12px"><label class="f">No. penerimaan<input id="trNo" value="TR-${po.no_po.replace(/^PO-/, '')}-${Object.keys(sudah).length ? 2 : 1}"></label>
+        <label class="f">Tanggal<input id="trTgl" type="date" value="${hariIni()}"></label></div>
+        ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama', fmt: (v, r) => esc(nm[r.sku] || '') },
+          { k: 'sisa', judul: 'Sisa', num: true, fmt: (v, r) => num(Number(r.qty_disetujui ?? r.qty_usulan) - (sudah[r.sku] || 0)) },
+          { k: 'qty', judul: 'Diterima', num: true, fmt: (v, r) => `<input type="number" min="0" data-tq="${esc(r.sku)}" value="${Math.max(0, Number(r.qty_disetujui ?? r.qty_usulan) - (sudah[r.sku] || 0))}" style="width:90px;text-align:right">` },
+          { k: 'harga', judul: 'Harga beli / Biji', num: true, fmt: (v, r) => `<input type="number" min="0" data-th="${esc(r.sku)}" value="${esc(v ?? '')}" style="width:110px;text-align:right">` }], baris)}
+        <p class="muted small">Stok gudang kantor bertambah dan harga beli diperbarui (harga jual ke toko ikut berubah).</p>`,
+      aksi: [{ label: 'Batal' }, { label: 'Simpan penerimaan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+        const p = baris.map((b) => ({ sku: b.sku, qty: Number($(`[data-tq="${b.sku}"]`, m).value || 0), harga: $(`[data-th="${b.sku}"]`, m).value || null }));
+        const r = await rpc('terima_po', { p_no_po: po.no_po, p_no_terima: $('#trNo', m).value.trim(), p_tanggal: $('#trTgl', m).value, p });
+        tutup(); toast(`Penerimaan disimpan. Status PO: ${(STATUS_PO[r.status] || [])[1] || r.status}.`); segarkan();
+      } }],
+    });
+  }
+  await tampil();
+}
+
+// ---------------------------------------------------------------- Toko
+async function hToko(el) {
+  el.innerHTML = `${head('Toko', 'Koneksi Trizone tiap toko, kunci toko, dan pemetaan pelanggan Accurate.')}
+    <div class="card"><div class="card-head"><h2>Koneksi toko</h2></div><div id="tkDaftar"></div></div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card"><h2>Menghubungkan Trizone</h2>
+        <ol style="margin:0;padding-left:18px;display:grid;gap:6px">
+          <li>Di PC Gudang toko, login Admin lalu buka <b>Pengaturan → Mother Base</b>.</li>
+          <li>Isi alamat dan anon key di bawah, kode toko, dan <b>kunci toko</b> (dibuat owner di tabel atas).</li>
+          <li>Tekan <b>Simpan</b> lalu <b>Tes Koneksi</b>. Data terkirim otomatis tiap 5 menit dan setiap tutup shift.</li>
+        </ol>
+        <label class="f" style="margin-top:12px">Alamat mother base<div class="row"><input readonly value="${esc(CFG.url)}" style="flex:1"><button class="btn sm" data-salin="${esc(CFG.url)}">Salin</button></div></label>
+        <label class="f" style="margin-top:8px">Anon key<div class="row"><input readonly value="${esc(CFG.anonKey)}" style="flex:1"><button class="btn sm" data-salin="${esc(CFG.anonKey)}">Salin</button></div></label></div>
+      <div class="card"><h2>Pelanggan Accurate → toko</h2><p class="muted small" style="margin-top:-4px">"X Special" adalah toko yang sama dengan "X". Surat jalan pelanggan yang belum dipetakan tidak bisa dicocokkan.</p><div id="tkPel"></div></div>
+    </div>`;
+  el.addEventListener('click', (e) => { const b = e.target.closest('[data-salin]'); if (b) salin(b.dataset.salin); });
+
+  async function muat() {
+    S.toko = await rpc('status_koneksi_toko');
+    const box = $('#tkDaftar', el);
+    box.innerHTML = tabel([{ k: 'kode', judul: 'Kode', fmt: (v) => `<b class="mono">${esc(v)}</b>` }, { k: 'nama', judul: 'Toko', fmt: (v, r) => `${esc(v)}<div class="muted small">${esc(r.kota)}${r.aktif ? '' : ' · nonaktif'}</div>` },
+      { k: 'punya_kunci', judul: 'Kunci toko', fmt: (v, r) => (v ? `<span class="pill ok">Ada</span><div class="muted small">${esc(fmtTgl(r.kunci_dibuat_at))}</div>` : '<span class="pill warn">Belum</span>') },
+      { k: 'kiriman_terakhir_at', judul: 'Data terakhir masuk', fmt: (v) => `<span class="pill ${!v ? '' : Date.now() - new Date(v) > 26 * 3600e3 ? 'warn' : 'ok'}">${esc(relatif(v))}</span>` },
+      { k: 'shift_terakhir_at', judul: 'Tutup shift terakhir', fmt: (v) => esc(v ? fmtWaktu(v) : '-') }, { k: 'versi_trizone', judul: 'Versi Trizone', fmt: (v) => esc(v || '-') },
+      { k: 'batas_hari_sj', judul: 'Batas input SJ', num: true, fmt: (v) => `${num(v)} hari` },
+      { k: 'aksi', judul: '', fmt: (v, r) => (isOwner() ? `<div class="row"><button class="btn sm" data-ubah="${esc(r.kode)}">Ubah</button><button class="btn sm ${r.punya_kunci ? '' : 'primary'}" data-kunci="${esc(r.kode)}">${r.punya_kunci ? 'Ganti kunci' : 'Buat kunci'}</button></div>` : '') }],
+    S.toko);
+    box.onclick = async (e) => {
+      const k = e.target.closest('[data-kunci]');
+      const u = e.target.closest('[data-ubah]');
+      if (k) {
+        const t = S.toko.find((x) => x.kode === k.dataset.kunci);
+        if (t.punya_kunci && !(await konfirmasi('Ganti kunci toko', `Kunci lama <b>${esc(t.kode)}</b> langsung tidak berlaku. Trizone toko ini berhenti mengirim data sampai kunci baru diisi di Pengaturan → Mother Base. Lanjutkan?`, 'Ganti kunci', true))) return;
+        const kunci = await sibuk(k, () => rpc('buat_kunci_toko', { p_kode: t.kode }));
+        if (!kunci) return;
+        modal({ judul: `Kunci toko ${t.kode}`, isi: `<div class="alert warn" style="margin-bottom:12px">Kunci ini hanya ditampilkan <b>sekali</b>. Salin dan isi di Trizone toko ${esc(t.nama)} (Pengaturan → Mother Base → Kunci toko).</div>
+          <div class="kunci-box" id="kunciBox">${esc(kunci)}</div>`, aksi: [{ label: 'Salin kunci', onClick: () => salin(kunci) }, { label: 'Selesai', kelas: 'primary' }] });
+        muat();
+      }
+      if (u) {
+        const t = S.toko.find((x) => x.kode === u.dataset.ubah);
+        modal({ judul: `Ubah toko ${t.kode}`, isi: `<form class="form" onsubmit="return false"><label class="f">Nama<input id="tNama" value="${esc(t.nama)}"></label>
+          <div class="grid g2"><label class="f">Kota<input id="tKota" value="${esc(t.kota)}"></label><label class="f">Batas input surat jalan (hari)<input id="tBatas" type="number" min="1" value="${esc(t.batas_hari_sj)}"></label></div>
+          <label class="f">Status<select id="tAktif"><option value="1" ${t.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${t.aktif ? '' : 'selected'}>Nonaktif</option></select></label></form>`,
+        aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+          await q(sb.from('toko').update({ nama: $('#tNama', m).value.trim(), kota: $('#tKota', m).value.trim(), batas_hari_sj: Number($('#tBatas', m).value) || 1, aktif: $('#tAktif', m).value === '1' }).eq('kode', t.kode));
+          tutup(); toast('Toko disimpan.'); muat();
+        } }] });
+      }
+    };
+    const pel = await q(sb.from('pelanggan_accurate').select('*').order('nama'));
+    $('#tkPel', el).innerHTML = tabel([{ k: 'nama', judul: 'Pelanggan Accurate' }, { k: 'kode_toko', judul: 'Toko', fmt: (v, r) => `<select data-pel="${esc(r.nama)}" aria-label="Toko untuk ${esc(r.nama)}">
+      <option value="">— belum dipetakan —</option>${S.toko.map((t) => `<option value="${esc(t.kode)}" ${t.kode === v ? 'selected' : ''}>${esc(t.kode)} · ${esc(t.nama)}</option>`).join('')}</select>` }],
+    pel, { kosong: 'Pelanggan muncul setelah surat jalan pertama diupload.' });
+    $('#tkPel', el).onchange = async (e) => {
+      const s = e.target.closest('[data-pel]');
+      if (!s) return;
+      try { await q(sb.from('pelanggan_accurate').update({ kode_toko: s.value || null }).eq('nama', s.dataset.pel)); toast(`${s.dataset.pel} → ${s.value || 'belum dipetakan'}`); } catch (err) { toast(pesanError(err), 'bad'); }
+    };
+  }
+  await muat();
+}
+
+// ---------------------------------------------------------------- Pengguna
+async function hPengguna(el) {
+  el.innerHTML = `${head('Pengguna', 'Akun login dibuat di Supabase (Authentication → Users → Add user). Setelah itu atur nama dan perannya di sini.', '<button class="btn primary" id="pgTambah">+ Atur pengguna</button>')}
+    <div class="card" id="pgDaftar"></div>`;
+  async function muat() {
+    const rows = await rpc('daftar_pengguna');
+    const box = $('#pgDaftar', el);
+    box.innerHTML = tabel([{ k: 'nama', judul: 'Nama', fmt: (v) => `<b>${esc(v)}</b>` }, { k: 'email', judul: 'Email' }, { k: 'peran', judul: 'Peran', fmt: (v) => esc(LABEL_PERAN[v] || v) },
+      { k: 'kode_toko', judul: 'Toko', fmt: (v) => esc(v || '-') }, { k: 'aktif', judul: 'Status', fmt: (v) => `<span class="pill ${v ? 'ok' : ''}">${v ? 'Aktif' : 'Nonaktif'}</span>` }],
+    rows, { klik: true });
+    onBaris(box, rows, form);
+  }
+  function form(u) {
+    u = u || { aktif: true, peran: 'admin_kantor' };
+    modal({
+      judul: u.email ? `Ubah ${u.email}` : 'Atur pengguna',
+      isi: `<form class="form" onsubmit="return false"><label class="f">Email akun<input id="uEmail" type="email" value="${esc(u.email || '')}" ${u.email ? 'readonly' : ''}></label>
+        <label class="f">Nama<input id="uNama" value="${esc(u.nama || '')}"></label>
+        <div class="grid g2"><label class="f">Peran<select id="uPeran">${Object.entries(LABEL_PERAN).map(([k, l]) => `<option value="${k}" ${k === u.peran ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+        <label class="f" id="uTokoL">Toko${pilihToko('uToko', u.kode_toko || '', '')}</label></div>
+        <label class="f">Status<select id="uAktif"><option value="1" ${u.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${u.aktif ? '' : 'selected'}>Nonaktif</option></select></label>
+        <p class="muted small" style="margin:0">Owner: semua menu, menyetujui PO, membuat kunci toko. Admin / gudang / purchasing: semua menu kantor. Pemilik toko: hanya data tokonya.</p></form>`,
+      onBuka: (m) => { const ubah = () => $('#uTokoL', m).classList.toggle('hidden', $('#uPeran', m).value !== 'pemilik_toko'); $('#uPeran', m).addEventListener('change', ubah); ubah(); },
+      aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+        const pr = $('#uPeran', m).value;
+        await rpc('atur_pengguna', { p_email: $('#uEmail', m).value.trim(), p_nama: $('#uNama', m).value.trim(), p_peran: pr,
+          p_kode_toko: pr === 'pemilik_toko' ? $('#uToko', m).value : null, p_aktif: $('#uAktif', m).value === '1' });
+        tutup(); toast('Pengguna disimpan.'); muat();
+      } }],
+    });
+  }
+  $('#pgTambah', el).addEventListener('click', () => form(null));
+  await muat();
+}
+
+// ---------------------------------------------------------------- Asisten AI
+function markdown(teks) {
+  const baris = esc(teks).split('\n');
+  const out = [];
+  const inline = (s) => s.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[\s(])_([^_]+)_(?=[\s).,]|$)/g, '$1<i>$2</i>').replace(/(^|[\s(])\*([^*]+)\*(?=[\s).,]|$)/g, '$1<i>$2</i>');
+  for (let i = 0; i < baris.length; i++) {
+    const b = baris[i];
+    if (/^\s*\|.*\|\s*$/.test(b) && i + 1 < baris.length && /^\s*\|[\s:|-]+\|\s*$/.test(baris[i + 1])) {
+      const sel = (x) => x.trim().replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim()));
+      const h = sel(b);
+      i += 2;
+      const rows = [];
+      while (i < baris.length && /^\s*\|.*\|\s*$/.test(baris[i])) rows.push(sel(baris[i++]));
+      i--;
+      out.push(`<table><thead><tr>${h.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+    } else if (/^\s*[-*] /.test(b)) {
+      const items = [];
+      while (i < baris.length && /^\s*[-*] /.test(baris[i])) items.push(inline(baris[i++].replace(/^\s*[-*] /, '')));
+      i--;
+      out.push(`<ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul>`);
+    } else if (/^#{1,4} /.test(b)) {
+      out.push(`<p><b>${inline(b.replace(/^#+ /, ''))}</b></p>`);
+    } else if (b.trim()) {
+      out.push(`<p>${inline(b)}</p>`);
+    }
+  }
+  return out.join('');
+}
+
+function riwayatTampil(pesan) {
+  const out = [];
+  const teks = (c) => c.filter((x) => x.type === 'text').map((x) => x.text).join('\n').trim();
+  for (const m of pesan || []) {
+    if (m.role === 'user' && typeof m.content === 'string') out.push({ dari: 'pengguna', teks: m.content.replace(/^\[Konteks\][^\n]*\n\n/, '') });
+    if (m.role === 'assistant' && Array.isArray(m.content)) {
+      const t = teks(m.content);
+      if (t && !m.content.some((b) => b.type === 'tool_use')) out.push({ dari: 'asisten', teks: t });
+    }
+  }
+  return out;
+}
+
+const NAMA_ALAT = { daftar_toko: 'daftar toko', ringkasan_penjualan: 'ringkasan penjualan', penjualan_harian: 'penjualan harian', produk_terlaris: 'produk terlaris',
+  tren_produk: 'tren produk', analisa_abc: 'analisa ABC', cari_stok: 'stok', stok_lambat: 'stok lambat', usulan_beli: 'usulan beli', status_surat_jalan: 'surat jalan',
+  selisih_stok_opname: 'selisih SO', daftar_principal: 'data principal', simpan_principal: 'menyimpan data principal' };
+
+async function hAsisten(el) {
+  el.innerHTML = `${head('Asisten AI', 'Tanya tentang penjualan, stok, surat jalan, atau pembelian. Jawaban diambil dari data mother base dengan hak akses Anda.')}
+    <div class="chat-layout"><div class="card"><div class="card-head"><h2>Percakapan</h2><button class="btn sm primary" id="aiBaru">+ Baru</button></div><div class="chat-list" id="aiList"></div></div>
+    <div class="card chat-panel"><div class="chat-msgs" id="aiMsgs"></div><div class="saran" id="aiSaran"></div>
+      <form class="chat-input" id="aiForm"><textarea id="aiInput" rows="2" placeholder="Tulis pertanyaan…" aria-label="Pertanyaan"></textarea><button class="btn primary" id="aiKirim">Kirim</button></form></div></div>`;
+  let aktif = null; // { id, mode, principal_id }
+  let pending = null;
+  const SARAN = ['Produk apa yang naik minggu ini?', 'Bandingkan omzet semua toko bulan ini', 'Barang apa yang stoknya lambat di TRP?', 'Jelaskan usulan beli saat ini', 'Surat jalan mana yang bermasalah?'];
+
+  async function daftar() {
+    const rows = await q(sb.from('ai_percakapan').select('id,judul,mode,diubah_at').order('diubah_at', { ascending: false }).limit(50));
+    $('#aiList', el).innerHTML = rows.length ? rows.map((r) => `<button data-id="${r.id}" class="${aktif && aktif.id === r.id ? 'aktif' : ''}"><div>${esc(r.judul || 'Tanpa judul')}</div>
+      <div class="muted small">${r.mode === 'wawancara' ? 'Wawancara · ' : ''}${esc(relatif(r.diubah_at))}</div></button>`).join('') : '<div class="muted small">Belum ada percakapan.</div>';
+  }
+  function render(list) {
+    const box = $('#aiMsgs', el);
+    box.innerHTML = list.length ? list.map((m) => (m.dari === 'pengguna' ? `<div class="msg pengguna">${esc(m.teks)}</div>`
+      : `<div class="msg asisten">${markdown(m.teks)}${m.alat && m.alat.length ? `<div class="alat">Data: ${m.alat.map((a) => esc(NAMA_ALAT[a.nama] || a.nama) + (a.error ? ' (gagal)' : '')).join(', ')}</div>` : ''}</div>`)).join('')
+      : `<div class="kosong">${aktif && aktif.mode === 'wawancara' ? 'Memulai wawancara…' : 'Mulai dengan pertanyaan, atau pilih salah satu contoh di bawah.'}</div>`;
+    box.scrollTop = box.scrollHeight;
+    $('#aiSaran', el).innerHTML = list.length ? '' : SARAN.map((s) => `<button type="button">${esc(s)}</button>`).join('');
+  }
+  let tampilan = [];
+  async function buka(id) {
+    const [r] = await q(sb.from('ai_percakapan').select('*').eq('id', id).limit(1));
+    aktif = { id: r.id, mode: r.mode, principal_id: r.principal_id };
+    tampilan = riwayatTampil(r.pesan);
+    render(tampilan);
+    daftar();
+  }
+  async function kirim(pesan) {
+    if (pending || !pesan.trim()) return;
+    tampilan.push({ dari: 'pengguna', teks: pesan });
+    render(tampilan);
+    $('#aiMsgs', el).insertAdjacentHTML('beforeend', '<div class="msg asisten muted" id="aiTunggu">Sedang mencari jawaban…</div>');
+    $('#aiKirim', el).disabled = true;
+    pending = sb.functions.invoke('asisten', { body: { pesan, percakapan_id: aktif && aktif.id, mode: aktif ? aktif.mode : 'tanya', principal_id: aktif && aktif.principal_id } });
+    try {
+      const { data, error } = await pending;
+      if (error) {
+        let msg = error.message;
+        try { const j = await error.context.json(); msg = j.error || msg; } catch (_) { /* bukan JSON */ }
+        throw new Error(msg);
+      }
+      aktif = { id: data.percakapan_id, mode: aktif ? aktif.mode : 'tanya', principal_id: aktif && aktif.principal_id };
+      tampilan.push({ dari: 'asisten', teks: data.jawaban || '(tidak ada jawaban)', alat: data.alat });
+      render(tampilan);
+      daftar();
+    } catch (e) {
+      tampilan.pop();
+      render(tampilan);
+      $('#aiInput', el).value = pesan;
+      toast(pesanError(e), 'bad');
+    } finally {
+      pending = null;
+      $('#aiKirim', el).disabled = false;
+    }
+  }
+  $('#aiForm', el).addEventListener('submit', (e) => { e.preventDefault(); const v = $('#aiInput', el).value; $('#aiInput', el).value = ''; kirim(v); });
+  $('#aiInput', el).addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#aiForm', el).requestSubmit(); } });
+  $('#aiSaran', el).addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) kirim(b.textContent); });
+  $('#aiList', el).addEventListener('click', (e) => { const b = e.target.closest('[data-id]'); if (b) buka(b.dataset.id).catch((err) => toast(pesanError(err), 'bad')); });
+  $('#aiBaru', el).addEventListener('click', () => { aktif = null; tampilan = []; render(tampilan); daftar(); $('#aiInput', el).focus(); });
+
+  await daftar();
+  if (S.mulaiWawancara) {
+    aktif = { id: null, mode: 'wawancara', principal_id: S.mulaiWawancara };
+    S.mulaiWawancara = null;
+    tampilan = [];
+    render(tampilan);
+    kirim('Mulai wawancara.');
+  } else {
+    render(tampilan);
+  }
+}
+
+// ================================================================ Kerangka aplikasi
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, stok: hStok, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, principal: hPrincipal, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+
+function tampilLogin(pesan = '') {
+  $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
+    <h1>Masuk</h1><p class="muted" style="margin-top:0">Gunakan akun yang dibuat owner.</p>
+    <form class="form" id="lgForm"><label class="f">Email<input id="lgEmail" type="email" autocomplete="username" required></label>
+      <label class="f">Kata sandi<input id="lgPass" type="password" autocomplete="current-password" required></label>
+      <div class="alert bad ${pesan ? '' : 'hidden'}" id="lgErr">${esc(pesan)}</div>
+      <button class="btn primary" id="lgBtn">Masuk</button></form></div></div>`;
+  $('#lgForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('#lgBtn');
+    btn.disabled = true;
+    const { error } = await sb.auth.signInWithPassword({ email: $('#lgEmail').value.trim(), password: $('#lgPass').value });
+    btn.disabled = false;
+    if (error) { $('#lgErr').textContent = /invalid/i.test(error.message) ? 'Email atau kata sandi salah.' : pesanError(error); $('#lgErr').classList.remove('hidden'); return; }
+    masuk();
+  });
+  $('#lgEmail').focus();
+}
+
+async function masuk() {
+  try {
+    S.profil = await rpc('saya');
+  } catch (e) { return tampilLogin(pesanError(e)); }
+  if (!S.profil || !S.profil.aktif) {
+    await sb.auth.signOut();
+    return tampilLogin('Akun ini belum didaftarkan owner di mother base, atau sudah dinonaktifkan.');
+  }
+  S.toko = await rpc('status_koneksi_toko').catch(() => []);
+  tampilApp();
+  route();
+}
+
+function tampilApp() {
+  const p = S.profil;
+  $('#root').innerHTML = `<div class="app" id="app">
+    <aside class="side" id="side"><div class="brand"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
+      <nav class="nav" aria-label="Menu">${HALAMAN.filter(boleh).map((h) => `<a href="#${h.id}" data-h="${h.id}"><span class="ikon" aria-hidden="true">${h.ikon}</span>${esc(h.judul)}</a>`).join('')}</nav>
+      <div class="side-foot"><div><div class="akun-nama">${esc(p.nama)}</div><div class="muted small">${esc(LABEL_PERAN[p.peran] || p.peran)}${p.kode_toko ? ` · ${esc(p.kode_toko)}` : ''}</div></div>
+        <div class="row"><button class="btn sm" id="btnTema">Tema</button><button class="btn sm" id="btnKeluar">Keluar</button></div>
+        ${CFG.mode === 'dev' ? '<div class="pill warn" title="Server dev lokal, bukan Supabase">Server dev</div>' : ''}</div></aside>
+    <div style="min-width:0"><div class="topbar"><button class="btn sm" id="btnMenu" aria-label="Buka menu">☰</button><b>Mother Base</b></div>
+      <main class="main" id="isi"></main></div></div>`;
+  $('#btnKeluar').addEventListener('click', async () => { await sb.auth.signOut(); S.profil = null; location.hash = ''; tampilLogin(); });
+  $('#btnTema').addEventListener('click', () => {
+    const urut = ['', 'light', 'dark'];
+    const kini = document.documentElement.dataset.theme || '';
+    const next = urut[(urut.indexOf(kini) + 1) % urut.length];
+    if (next) document.documentElement.dataset.theme = next; else delete document.documentElement.dataset.theme;
+    try { if (next) localStorage.setItem('mb-tema', next); else localStorage.removeItem('mb-tema'); } catch (_) { /* tanpa penyimpanan */ }
+    toast(`Tema: ${next === 'light' ? 'terang' : next === 'dark' ? 'gelap' : 'ikut sistem'}`);
+  });
+  $('#btnMenu').addEventListener('click', () => menu(true));
+  $('#side').addEventListener('click', (e) => { if (e.target.closest('.nav a')) menu(false); });
+}
+
+function menu(buka) {
+  $('#app').classList.toggle('menu-buka', buka);
+  const ada = $('.scrim');
+  if (buka && !ada) { const s = document.createElement('div'); s.className = 'scrim'; s.addEventListener('click', () => menu(false)); $('#app').append(s); }
+  if (!buka && ada) ada.remove();
+}
+
+let rute = 0;
+async function route() {
+  if (!S.profil) return;
+  const id = location.hash.replace(/^#/, '') || 'ringkasan';
+  const h = HALAMAN.find((x) => x.id === id && boleh(x)) || HALAMAN[0];
+  $$('.nav a').forEach((a) => a.classList.toggle('aktif', a.dataset.h === h.id));
+  document.title = `${h.judul} · Mother Base`;
+  const el = $('#isi');
+  const ini = ++rute;
+  el.innerHTML = '<div class="kosong">Memuat…</div>';
+  try {
+    await RENDER[h.id](el);
+  } catch (e) {
+    if (ini === rute) el.innerHTML = `${head(h.judul)}<div class="card"><div class="alert bad">${esc(pesanError(e))}</div></div>`;
+  }
+}
+
+window.addEventListener('hashchange', route);
+
+(async function mulai() {
+  if (!sb) {
+    $('#root').innerHTML = `<div class="login"><div class="card"><h1>Belum diatur</h1><p>Isi alamat project Supabase dan anon key di <code>config.js</code>. Lihat motherbase/README.md.</p></div></div>`;
+    return;
+  }
+  sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT' && S.profil) { S.profil = null; tampilLogin('Sesi berakhir. Silakan login lagi.'); } });
+  const { data } = await sb.auth.getSession();
+  if (data && data.session) masuk(); else tampilLogin();
+}());

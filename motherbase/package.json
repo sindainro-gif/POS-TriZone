@@ -1,0 +1,15 @@
+{
+  "name": "mother-base",
+  "private": true,
+  "description": "Mother base Trizone: aplikasi web kantor, Edge Function asisten AI, alat Accurate, dan uji",
+  "scripts": {
+    "dev": "node dev/server.js --demo",
+    "test": "node test/asisten.test.js && node test/uji.js",
+    "test:web": "node test/web.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.4.0",
+    "@supabase/supabase-js": "2.118.0",
+    "pg": "8.23.1"
+  }
+}

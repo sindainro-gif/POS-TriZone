@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mother Base</title>
+  <meta name="description" content="Pusat data kantor untuk toko POS Trizone">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5f99'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='Arial' font-weight='700' font-size='13' fill='white'%3EMB%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    try { const t = localStorage.getItem('mb-tema'); if (t) document.documentElement.dataset.theme = t; } catch (_) {}
+  </script>
+</head>
+<body>
+  <div id="root"><div class="login"><p class="muted">Memuat…</p></div></div>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+  <!-- config.js: alamat project Supabase & anon key (lihat motherbase/README.md) -->
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="lib/accurate.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
