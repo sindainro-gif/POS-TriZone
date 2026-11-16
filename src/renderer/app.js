@@ -2136,19 +2136,25 @@ views.shift = (() => {
       if (views.checkout.hasItems()) { toast('Masih ada barang di keranjang kasir. Selesaikan atau kosongkan dulu.', 'err'); return; }
       const draftCount = (await api('drafts:list').catch(() => [])).length;
       const ok = await confirmDialog('Tutup Shift', `Tutup shift <b>${esc(sh.cashier_name)}</b> dengan omset <b>${rp(s.totals.revenue)}</b>?<br><br>
-        Shift langsung ditutup, walau tanpa internet. Laporan dikirim ke email owner dan penjualannya ke mother base; bila internet mati,
-        keduanya dikirim otomatis saat internet tersambung. Penjualan shift disimpan sebagai cadangan 4 hari (laporannya bisa dikirim ulang).
+        Penjualannya <b>langsung dikirim ke mother base</b> dan hasilnya ditampilkan; laporan juga dikirim ke email owner.
+        Bila internet mati, shift tetap ditutup dan keduanya dikirim otomatis saat internet tersambung. Penjualan shift disimpan sebagai cadangan 4 hari (laporannya bisa dikirim ulang).
         Master barang dan stok tidak berubah.
         ${draftCount ? `<br><br><span class="badge bs">Perhatian</span> Masih ada <b>${draftCount} draft penjualan</b> belum dibayar di komputer ini (tidak ikut dihitung di laporan).` : ''}`, { okLabel: 'Tutup Shift & Kirim' });
       if (!ok) return;
-      const prog = modal({ title: 'Menutup Shift…', body: '<p>Membuat laporan PDF & CSV, menutup shift, lalu mengirim email ke owner. Mohon tunggu, jangan tutup aplikasi.</p>', dismissable: false });
+      const prog = modal({ title: 'Menutup Shift…', body: '<p>Membuat laporan, menutup shift, mengirim data ke <b>mother base</b>, lalu email ke owner. Mohon tunggu, jangan tutup aplikasi.</p>', dismissable: false });
       try {
         const r = await api('shift:close', { notes: $('#shNotes').value });
         prog.close();
         await refreshShift();
-        modal({
+        const mbRes = r.motherbase || {};
+        const mbBox = (m) => (m.sent
+          ? '<div class="alert ok" id="shMbResult"><b>Data shift sudah terkirim ke mother base</b> dan dikonfirmasi diterima.</div>'
+          : `<div class="alert ${m.configured ? 'danger' : 'warn'}" id="shMbResult"><b>Data shift BELUM terkirim ke mother base:</b> ${esc(m.error || '-')}<br>
+              Data aman tersimpan di komputer ini dan dicoba lagi otomatis tiap 5 menit.
+              ${m.configured ? '<br><button class="btn sm" id="shMbRetry" style="margin-top:8px">Kirim Ulang ke Mother Base</button>' : ''}</div>`);
+        const done = modal({
           title: 'Shift Berhasil Ditutup',
-          body: `${r.emailed
+          body: `${mbBox(mbRes)}${r.emailed
             ? `<div class="alert ok">Laporan terkirim ke owner. Server email membalas: <code>${esc(r.response)}</code></div>`
             : `<div class="alert warn">Shift sudah ditutup, tetapi email laporan <b>belum terkirim</b>: ${esc(r.email_error)}<br>Email dicoba lagi otomatis tiap 10 menit saat internet tersambung.</div>`}
             <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Laporannya bisa dikirim ulang dari <b>Laporan Shift → Kirim Ulang Laporan Shift</b> selama 4 hari.</p>
@@ -2157,6 +2163,16 @@ views.shift = (() => {
             { label: 'Buka Folder', kind: 'ghost', onClick: () => api('app:openPath', { dir: r.dir }) },
             { label: 'Selesai', kind: 'primary', onClick: ({ close }) => { close(); show(); } },
           ],
+        });
+        // Kirim ulang langsung dari layar ini (mis. internet baru tersambung)
+        done.el.addEventListener('click', async (ev) => {
+          const btn = ev.target.closest('#shMbRetry');
+          if (!btn) return;
+          btn.disabled = true;
+          btn.textContent = 'Mengirim…';
+          const m = await api('shift:sendMotherbase').catch((err) => ({ sent: false, configured: true, error: err.message }));
+          $('#shMbResult', done.el).outerHTML = mbBox(m);
+          toast(m.sent ? 'Data shift terkirim ke mother base.' : `Belum terkirim: ${m.error}`, m.sent ? 'ok' : 'err', 6000);
         });
       } catch (e) {
         prog.close();

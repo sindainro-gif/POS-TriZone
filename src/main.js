@@ -249,6 +249,10 @@ async function closeShiftLocal({ notes } = {}) {
     closingShift = false;
   }
 
+  // Kirim ke mother base SEKARANG dan tunggu jawabannya (bukan hanya dijadwalkan). Gagal = shift tetap tertutup,
+  // datanya aman di antrean dan dicoba lagi otomatis tiap 5 menit.
+  const motherbase = await sendShiftToMotherbase(uid);
+
   let response = '';
   let emailError = '';
   try {
@@ -263,12 +267,31 @@ async function closeShiftLocal({ notes } = {}) {
     emailError = err.message;
   }
   localSvc.markShiftEmail({ shift_uid: uid, ok: !emailError, error: emailError });
-  if (mb) mb.tick().catch((err) => console.error('[mother base]', err));
   return {
+    motherbase,
     dir, response, emailed: !emailError, email_error: emailError,
     revenue: summary.totals.revenue, receipts: summary.totals.receipts, onServer: device.mode === 'server',
   };
 }
+
+// Kirim antrean ke mother base sekarang juga dan pastikan shift `uid` (atau semua shift) sudah diterima.
+// Tidak pernah melempar: hasilnya { sent, configured, error, pending } untuk ditampilkan ke kasir.
+async function sendShiftToMotherbase(uid) {
+  if (!mb || DEMO) return { sent: false, configured: false, error: DEMO ? 'Versi DEMO tidak mengirim ke mother base.' : 'Mother base tidak tersedia.' };
+  if (!localSvc.mbConfig().ready) {
+    return { sent: false, configured: false, error: 'Mother base belum diatur (Pengaturan → Mother Base). Data shift menunggu di antrean.' };
+  }
+  try {
+    if (mb.isRunning()) await mb.kirim().catch(() => {}); // kiriman berkala yang sedang jalan belum memuat shift ini
+    await mb.kirim();
+  } catch (err) {
+    return { sent: false, configured: true, error: err.message, pending: localSvc.mbStatus().pending_shifts };
+  }
+  const sent = uid ? localSvc.mbShiftSent(uid) : true;
+  return { sent, configured: true, error: sent ? '' : 'Mother base belum mengonfirmasi shift ini.', pending: localSvc.mbStatus().pending_shifts };
+}
+
+const sendMotherbaseLocal = () => sendShiftToMotherbase(null);
 
 // Kirim laporan shift yang sudah ditutup dari Riwayat Shift (4 hari). Isi riwayat tidak pernah
 // dikembalikan ke layar: hasilnya hanya balasan server email dan nama file lampiran.
@@ -358,6 +381,7 @@ const SERVER_MAIN = {
   'main.checkout': checkoutLocal,
   'main.closeShift': closeShiftLocal,
   'main.resendReport': resendReportLocal,
+  'main.sendMotherbase': sendMotherbaseLocal,
   'main.testEmail': testEmailLocal,
 };
 const REMOTE_BLOCKED = new Set([
@@ -690,7 +714,7 @@ const ACCESS = {
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR,
-  'shift:history': KASIR, 'shift:resendReport': KASIR,
+  'shift:history': KASIR, 'shift:resendReport': KASIR, 'shift:sendMotherbase': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'app:openPath': KASIR,
 };
 
@@ -805,6 +829,7 @@ const handlers = {
   'shift:history': () => svc.listShiftHistory(), // hanya kasir & waktu (isi riwayat tidak ditampilkan)
   'shift:resendReport': (a) => runMain('main.resendReport', a),
   'shift:close': (a) => (isClient() ? closeShiftClient(a) : runMain('main.closeShift', a)),
+  'shift:sendMotherbase': () => runMain('main.sendMotherbase'),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
   'offline:markChecked': (a) => svc.markOfflineChecked(a),
 

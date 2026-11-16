@@ -412,6 +412,7 @@ app.on('browser-window-created', (_e, win) => {
       const hist = svc.listShiftHistory();
       console.log('antrean mother base:', outbox.pending_shifts, '· email menunggu:', svc.pendingShiftEmails().length, '· baris riwayat:', salesBefore);
       if (outbox.pending_shifts !== 1 || svc.pendingShiftEmails().length !== 1 || hist[0].email_terkirim !== 0) throw new Error('antrean mother base / email menunggu tidak tercatat');
+      if (!res.data.motherbase || res.data.motherbase.sent || res.data.motherbase.configured) throw new Error(`hasil mother base saat belum diatur salah: ${JSON.stringify(res.data.motherbase)}`);
       if (hist[0].cashier_name !== 'Pemilik') throw new Error('nama kasir shift tidak diambil dari akun login');
       await wait(800);
       await shot('09-shift-ditutup-email-menunggu');
@@ -466,6 +467,43 @@ app.on('browser-window-created', (_e, win) => {
         throw new Error('alur draft → bayar tidak sesuai');
       }
 
+      // Tutup shift dengan mother base (tiruan lokal): data langsung dikirim, ditunggu, dan layar menyatakan terkirim
+      const received = [];
+      const fakeMb = require('http').createServer((req, resp) => {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          const p = JSON.parse(body || '{}').p || {};
+          if (req.url.endsWith('/rpc/terima_data')) received.push(...(p.shifts || []).map((s) => s.shift.shift_uid));
+          const reply = req.url.endsWith('/rpc/terima_data')
+            ? { ok: true, kode_toko: p.kode_toko, shift_diterima: (p.shifts || []).map((s) => s.shift.shift_uid), dokumen: {} }
+            : { ok: true, kode_toko: p.kode_toko, produk: [], server_at: new Date().toISOString() };
+          resp.writeHead(200, { 'Content-Type': 'application/json' });
+          resp.end(JSON.stringify(reply));
+        });
+      });
+      await new Promise((r) => fakeMb.listen(0, '127.0.0.1', r));
+      svc.mbSaveConfig({ url: `http://127.0.0.1:${fakeMb.address().port}`, anon_key: 'eyJuji.uji.uji', kode_toko: 'UJI', kunci: 'kunci-toko-uji' });
+      const closingUid = svc.getShift().shift_uid;
+      await run(`go('shift')`);
+      await wait(800);
+      await run(`document.querySelector('#shClose').click()`);
+      await wait(400);
+      await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`); // konfirmasi Tutup Shift
+      await wait(4000);
+      const mbShown = await run(`(document.querySelector('#shMbResult') || {}).innerText || ''`);
+      console.log('tutup shift → mother base:', mbShown.replace(/\s+/g, ' '), '· diterima:', received.length, 'shift');
+      if (!/sudah terkirim/.test(mbShown) || svc.mbStatus().pending_shifts !== 0 || !received.includes(closingUid)) {
+        throw new Error('tutup shift tidak langsung mengirim ke mother base');
+      }
+      await shot('09c-tutup-shift-terkirim-mother-base');
+      await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
+      fakeMb.close();
+      svc.mbSaveConfig({ url: '' });
+      await run(`window.posBridge.call('shift:open', {})`);
+      await run('refreshShift()');
+      await wait(300);
+
       // Tema Terang: tombol di sidebar, disimpan di komputer ini, lalu kembali ke Gelap
       await run(`document.querySelector('#themeSeg [data-theme=light]').click()`);
       const lightState = await run(`({ theme: document.documentElement.dataset.theme, saved: localStorage.getItem('pos-theme'), bg: getComputedStyle(document.body).backgroundColor })`);
@@ -487,7 +525,7 @@ app.on('browser-window-created', (_e, win) => {
       // Kartu Mother Base: belum diatur → isi lewat layar → tersimpan (kunci tidak tampil); kirim gagal tanpa server
       const mb0 = await run(`({ badge: document.querySelector('#mbBadge').textContent, pending: document.querySelector('#mbPending').innerText })`);
       console.log('kartu mother base:', JSON.stringify(mb0));
-      if (mb0.badge !== 'Belum diatur' || !/1 shift/.test(mb0.pending)) throw new Error('kartu Mother Base tidak menampilkan status');
+      if (mb0.badge !== 'Belum diatur' || !/0 shift/.test(mb0.pending)) throw new Error('kartu Mother Base tidak menampilkan status');
       await run(`document.querySelector('#mbUrl').value = 'http://127.0.0.1:9'; document.querySelector('#mbKode').value = 'krp';
         document.querySelector('#mbAnon').value = 'anon-uji'; document.querySelector('#mbKunci').value = 'kunci-uji'; document.querySelector('#mbSave').click();`);
       await wait(800);
@@ -495,7 +533,7 @@ app.on('browser-window-created', (_e, win) => {
       if (!cfg.ready || cfg.kode_toko !== 'KRP' || JSON.stringify(cfg).includes('kunci-uji')) throw new Error(`pengaturan mother base tidak tersimpan: ${JSON.stringify(cfg)}`);
       const sent = await run(`window.posBridge.call('mb:sendNow')`);
       console.log('kirim tanpa server:', JSON.stringify(sent.error));
-      if (sent.ok || !/terhubung|habis waktu/.test(sent.error) || svc.mbStatus().pending_shifts !== 1) throw new Error('kirim tanpa server seharusnya gagal dan data tetap menunggu');
+      if (sent.ok || !/terhubung|habis waktu/.test(sent.error) || svc.mbStatus().pending_shifts !== 0) throw new Error('kirim tanpa server seharusnya gagal dan data tetap menunggu');
       await run(`document.querySelector('[data-view=settings]').click()`);
       await wait(800);
       await run(`document.querySelector('#mbCard').scrollIntoView()`);

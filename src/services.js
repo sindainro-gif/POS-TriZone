@@ -1368,6 +1368,12 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     };
   }
 
+  // Sudah diterima mother base? (dipakai saat tutup shift untuk memastikan kiriman sampai)
+  function mbShiftSent(shiftUid) {
+    const r = db.get('SELECT sent_at FROM mb_outbox_shift WHERE shift_uid = ?', [shiftUid]);
+    return !!(r && r.sent_at);
+  }
+
   // Shift yang ditutup sebelum ada mother base, tapi masih di Riwayat Shift: masukkan ke antrean (sekali, aman diulang)
   function mbQueueHistory() {
     const rows = db.all(
@@ -1598,7 +1604,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   return {
     ensureShiftUid, shiftData, masterLocked,
-    mbConfig, mbSaveConfig, mbStatus, mbState, mbSetState, mbQueueHistory, mbBatch, mbAck, mbApplyMaster, mbMasterSince,
+    mbConfig, mbSaveConfig, mbStatus, mbShiftSent, mbState, mbSetState, mbQueueHistory, mbBatch, mbAck, mbApplyMaster, mbMasterSince,
     needsSetup, listUsers, saveUser, deleteUser, authCache, verifyLogin,
     listLabelDesigns, getLabelDesign, saveLabelDesign, deleteLabelDesign, setDefaultLabelDesign, labelItemsFromReception,
     meta, getSettings, getSettingsRaw, saveSettings,
