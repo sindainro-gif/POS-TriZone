@@ -139,7 +139,9 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
 ## Lokasi data
 
 - Database: `%APPDATA%\POS Tri-Zone\pos.db` (backup harian di subfolder `backup/`, 14 terakhir). Path persisnya tampil di **Pengaturan → Informasi**.
-- Laporan tutup shift: `Dokumen\POS-Laporan\Shift_YYYYMMDD_HHMMSS\` (Rekap PDF, CSV penjualan, CSV snapshot stok). File ini cadangan lokal; tidak ada lagi email laporan.
+- Laporan tutup shift: `%APPDATA%\POS Tri-Zone\Laporan\Shift_YYYYMMDD_HHMMSS\` (Rekap PDF, CSV penjualan, CSV snapshot stok). File ini cadangan lokal; tidak ada lagi email laporan.
+  - Lokasinya **tidak ditampilkan** di layar tutup shift. Hanya **Admin** yang bisa melihat dan membukanya di **Pengaturan → Informasi**.
+  - Laporan dari versi sebelum 1.9.1 tetap di `Dokumen\POS-Laporan` (tidak dipindah otomatis).
 - **Riwayat Shift (cadangan):** tutup shift tidak lagi menghapus penjualan. Penjualan shift yang sudah ditutup dipindah ke tabel riwayat di database.
   - Riwayat disimpan **4 hari** (hari ini + 3 hari sebelumnya). Yang lebih lama dihapus otomatis saat tutup shift, saat aplikasi dibuka, dan tiap jam.
   - **Isi riwayat tidak bisa dibuka di aplikasi.** Di **Laporan Shift → Kiriman ke Mother Base** hanya tampil kasir, waktu shift, dan status **Terkirim ✓ / Menunggu**. Tombol **Kirim Sekarang** muncul bila ada yang menunggu.

@@ -41,9 +41,11 @@ let closingShift = false;
 
 const isClient = () => !DEMO && device.mode === 'client'; // demo selalu Mandiri
 
+// Laporan tutup shift disimpan di folder data aplikasi (%APPDATA%, tersembunyi), bukan di Dokumen.
+// Lokasinya hanya terlihat oleh Admin (Pengaturan → Informasi); kasir tidak diberi tahu.
 function reportsRoot() {
   if (process.env.POS_REPORTS_DIR) return process.env.POS_REPORTS_DIR;
-  return DEMO ? path.join(DATA_DIR, 'Laporan-Demo') : path.join(app.getPath('documents'), 'POS-Laporan');
+  return path.join(DATA_DIR, DEMO ? 'Laporan-Demo' : 'Laporan');
 }
 
 // Kunci toko mother base dienkripsi dengan kunci akun Windows (DPAPI) bila tersedia.
@@ -199,11 +201,8 @@ async function closeShiftLocal({ notes } = {}) {
   // datanya aman di antrean dan dicoba lagi otomatis tiap 5 menit.
   const motherbase = await sendShiftToMotherbase(uid);
 
-  return {
-    motherbase,
-    dir,
-    revenue: summary.totals.revenue, receipts: summary.totals.receipts, onServer: device.mode === 'server',
-  };
+  // Lokasi file laporan sengaja TIDAK dikirim ke layar (tersimpan di shift_history.report_dir)
+  return { motherbase, revenue: summary.totals.revenue, receipts: summary.totals.receipts };
 }
 
 // Kirim antrean ke mother base sekarang juga dan pastikan shift `uid` (atau semua shift) sudah diterima.
@@ -562,7 +561,7 @@ const ACCESS = {
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR,
   'shift:history': KASIR, 'shift:sendMotherbase': KASIR,
-  'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'app:openPath': KASIR,
+  'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR,
 };
 
 function checkAccess(channel) {
@@ -590,12 +589,12 @@ const handlers = {
   'app:info': () => ({
     version: app.getVersion(),
     dbFile: isClient() ? `Di PC gudang (${device.server_host}:${device.server_port})` : DB_FILE,
-    reportsDir: isClient() ? `Di PC gudang (laporan tutup shift dibuat di sana)` : reportsRoot(),
     mode: device.mode,
   }),
+  // Hanya Admin (tidak tercantum di ACCESS): lokasi file laporan tidak boleh diketahui kasir
+  'app:reportsDir': () => (isClient() ? 'Di PC gudang (laporan tutup shift dibuat di sana)' : reportsRoot()),
   'app:status': () => connectionStatus(),
   'app:openReports': () => { requireLocalDb(); fs.mkdirSync(reportsRoot(), { recursive: true }); return shell.openPath(reportsRoot()); },
-  'app:openPath': ({ dir }) => (isClient() ? null : shell.openPath(dir)),
   'db:backup': () => backupDatabase(),
   'db:restore': () => restoreDatabase(),
   'db:openFolder': () => shell.openPath(DATA_DIR),

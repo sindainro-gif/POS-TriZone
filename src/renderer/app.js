@@ -2091,7 +2091,6 @@ views.shift = (() => {
           <div class="field"><label>Catatan Kasir <span class="muted">(opsional)</span></label><input id="shNotes" maxlength="300" placeholder="Contoh: ada uang palsu Rp 50.000"></div>
           <button class="btn primary xl" id="shClose">Tutup Shift &amp; Kirim ke Mother Base</button>
           <p class="muted small" style="margin-top:10px">Penjualan shift <b>langsung dikirim ke mother base</b> dan hasilnya ditampilkan.
-          File laporan (PDF rekap, CSV penjualan, CSV snapshot stok Display Toko / Gudang Utama / Gudang BS / Gudang Shopee) disimpan di folder laporan komputer ini.
           Penjualannya disimpan sebagai cadangan 4 hari, kemudian dihapus otomatis.</p>
         </div>
       </div>
@@ -2144,10 +2143,8 @@ views.shift = (() => {
         const done = modal({
           title: 'Shift Berhasil Ditutup',
           body: `${mbBox(mbRes)}
-            <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Status kirimnya terlihat di <b>Laporan Shift → Kiriman ke Mother Base</b>.</p>
-            <p class="muted small">File laporan (PDF &amp; CSV) tersimpan di${r.onServer ? ' <b>PC gudang</b>' : ''}:<br><code>${esc(r.dir)}</code></p>`,
+            <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Status kirimnya terlihat di <b>Laporan Shift → Kiriman ke Mother Base</b>.</p>`,
           actions: [
-            { label: 'Buka Folder', kind: 'ghost', onClick: () => api('app:openPath', { dir: r.dir }) },
             { label: 'Selesai', kind: 'primary', onClick: ({ close }) => { close(); show(); } },
           ],
         });
@@ -2577,7 +2574,7 @@ views.settings = (() => {
     const info = await api('app:info');
     $('#infoVersion').textContent = info.version;
     $('#infoDb').textContent = info.dbFile;
-    $('#infoReports').textContent = info.reportsDir;
+    $('#infoReports').textContent = await api('app:reportsDir').catch(() => '-');
   }
 
   async function save(silent) {

@@ -416,6 +416,12 @@ app.on('browser-window-created', (_e, win) => {
       if (hist[0].cashier_name !== 'Pemilik') throw new Error('nama kasir shift tidak diambil dari akun login');
       await wait(800);
       await shot('09-shift-ditutup-mother-base-menunggu');
+      // Lokasi file laporan tidak boleh tampil di layar tutup shift; hanya Admin yang bisa melihatnya di Pengaturan
+      const doneText = await run(`document.querySelector('#modalRoot').innerText`);
+      if ('dir' in res.data || doneText.includes(dirs[0]) || /Buka Folder|tersimpan di/.test(doneText)) throw new Error('lokasi file laporan masih tampil setelah tutup shift');
+      const adminDir = await run(`window.posBridge.call('app:reportsDir')`);
+      const pubInfo = await run(`window.posBridge.call('app:info')`);
+      if (!adminDir.ok || adminDir.data !== process.env.POS_REPORTS_DIR || 'reportsDir' in pubInfo.data) throw new Error('lokasi laporan untuk Admin salah / bocor lewat app:info');
       await run(`document.querySelector('#modalRoot .modal-foot .btn.primary') && document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
       await wait(600);
       await run(`document.querySelector('[data-view=shift]').click()`);
@@ -571,6 +577,10 @@ app.on('browser-window-created', (_e, win) => {
         if (nav !== want) throw new Error(`menu ${name} seharusnya ${want}`);
         const denied = await run(`window.posBridge.call('settings:save', { store_name: 'X' })`);
         if (denied.ok || !/Akses ditolak/.test(denied.error)) throw new Error('pengaturan tidak terlindungi');
+        // Lokasi file laporan hanya untuk Admin; membuka folder sembarang sudah tidak bisa
+        const repDir = await run(`window.posBridge.call('app:reportsDir')`);
+        const openPath = await run(`window.posBridge.call('app:openPath', { dir: '.' })`);
+        if (repDir.ok || openPath.ok) throw new Error(`lokasi laporan bisa dilihat / dibuka oleh ${name}`);
         await run(`go('products')`);
         await wait(800);
         const edits = await run(`document.querySelectorAll('#pdBody [data-edit]').length + (document.querySelector('#pdAdd').classList.contains('hidden') ? 0 : 1)`);

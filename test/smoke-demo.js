@@ -61,9 +61,11 @@ app.on('browser-window-created', (_e, win) => {
       const close = await run(`window.posBridge.call('shift:close', {})`);
       console.log('tutup shift demo:', JSON.stringify(close.data || close.error));
       if (!close.ok || close.data.motherbase.sent || !/DEMO/.test(close.data.motherbase.error)) throw new Error('tutup shift demo gagal');
-      const repFiles = fs.readdirSync(close.data.dir);
+      const demoRep = path.join(dataDir, 'Laporan-Demo');
+      const repDirs = fs.existsSync(demoRep) ? fs.readdirSync(demoRep).sort() : [];
+      const repFiles = repDirs.length ? fs.readdirSync(path.join(demoRep, repDirs[repDirs.length - 1])) : [];
       console.log('file laporan demo:', repFiles.join(', '));
-      if (!close.data.dir.startsWith(path.join(dataDir, 'Laporan-Demo')) || !repFiles.some((f) => /^Rekap_Shift_.*\.pdf$/.test(f))
+      if ('dir' in close.data || !repFiles.some((f) => /^Rekap_Shift_.*\.pdf$/.test(f))
         || repFiles.filter((f) => f.endsWith('.csv')).length !== 2) throw new Error('file laporan demo tidak lengkap');
       console.log('shift setelah tutup:', svc.getShift());
       if (svc.getShift()) throw new Error('tutup shift demo: shift masih terbuka');
