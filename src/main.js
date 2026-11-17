@@ -4,7 +4,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const XLSX = require('xlsx');
-const nodemailer = require('nodemailer');
 const { Database } = require('./db');
 const { createServices, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, OPNAME_TEMPLATE_HEADERS, localNow } = require('./services');
 const reports = require('./reports');
@@ -19,7 +18,7 @@ const { seedDemo, DEMO_ACCOUNTS } = require('./demo');
 const { createDraftStore } = require('./drafts');
 const { createMotherbase } = require('./motherbase');
 
-// Versi DEMO (Jalankan DEMO.bat): data latihan di folder terpisah; mencetak ke printer sungguhan, email tidak dikirim
+// Versi DEMO (Jalankan DEMO.bat): data latihan di folder terpisah; mencetak ke printer sungguhan, tidak mengirim ke mother base
 const DEMO = process.argv.includes('--demo') || process.env.POS_DEMO === '1';
 if (process.env.POS_DATA_DIR) app.setPath('userData', process.env.POS_DATA_DIR);
 else if (DEMO) app.setPath('userData', path.join(app.getPath('appData'), 'POS Tri-Zone DEMO'));
@@ -47,7 +46,7 @@ function reportsRoot() {
   return DEMO ? path.join(DATA_DIR, 'Laporan-Demo') : path.join(app.getPath('documents'), 'POS-Laporan');
 }
 
-// Password SMTP dienkripsi dengan kunci akun Windows (DPAPI) bila tersedia.
+// Kunci toko mother base dienkripsi dengan kunci akun Windows (DPAPI) bila tersedia.
 const secrets = {
   encrypt: (s) => (s && safeStorage.isEncryptionAvailable() ? 'enc:' + safeStorage.encryptString(s).toString('base64') : s),
   decrypt: (s) => {
@@ -76,56 +75,6 @@ function lanAddresses() {
   return Object.values(os.networkInterfaces()).flat()
     .filter((i) => i && i.family === 'IPv4' && !i.internal)
     .map((i) => i.address);
-}
-
-// ---------------------------------------------------------------- Email
-function makeTransport(s) {
-  if (!s.smtp_host) throw userError('Server SMTP belum diatur. Buka menu Pengaturan.');
-  if (!s.owner_email) throw userError('Email owner belum diatur. Buka menu Pengaturan.');
-  const port = Number(s.smtp_port) || 587;
-  const sec = s.smtp_security || (port === 465 ? 'ssl' : 'starttls');
-  return nodemailer.createTransport({
-    host: s.smtp_host,
-    port,
-    secure: sec === 'ssl',
-    requireTLS: sec === 'starttls',
-    ignoreTLS: sec === 'none',
-    auth: s.smtp_user ? { user: s.smtp_user, pass: s.smtp_pass } : undefined,
-    connectionTimeout: 20000,
-    greetingTimeout: 15000,
-    socketTimeout: 60000,
-  });
-}
-
-function explainSmtpError(err) {
-  const map = {
-    EAUTH: 'Login SMTP gagal — periksa username dan password (untuk Gmail gunakan App Password).',
-    ECONNECTION: 'Tidak dapat terhubung ke server SMTP — periksa koneksi internet, host, dan port.',
-    ETIMEDOUT: 'Koneksi ke server SMTP habis waktu — periksa koneksi internet.',
-    ESOCKET: 'Koneksi ke server SMTP terputus — periksa port dan jenis keamanan (SSL/STARTTLS).',
-    EDNS: 'Alamat server SMTP tidak ditemukan — periksa host dan koneksi internet.',
-    EENVELOPE: 'Alamat email pengirim/penerima ditolak server.',
-  };
-  return userError(`${map[err.code] || 'Gagal mengirim email.'} (${err.message})`);
-}
-
-async function sendMail(s, message) {
-  // Demo: selama SMTP masih contoh (demo.local / tanpa akun), email tidak dikirim sungguhan; balasan "250" agar alur
-  // tutup shift bisa dilatih sampai selesai. Bila akun SMTP asli diisi di Pengaturan demo, email dikirim sungguhan.
-  if (DEMO && (!s.smtp_user || /(^|\.)local$/i.test(String(s.smtp_host || '').trim()))) {
-    return { response: '250 OK (DEMO: email tidak benar-benar dikirim)' };
-  }
-  const transport = makeTransport(s);
-  const from = s.smtp_from || s.smtp_user;
-  if (!from) throw userError('Email pengirim belum diatur. Buka menu Pengaturan.');
-  try {
-    const info = await transport.sendMail({ from: `"POS ${s.store_name}" <${from.replace(/^.*<|>$/g, '')}>`, to: s.owner_email, ...message });
-    return info;
-  } catch (err) {
-    throw explainSmtpError(err);
-  } finally {
-    transport.close();
-  }
 }
 
 async function htmlToPdf(html) {
@@ -217,19 +166,16 @@ function checkoutLocal(a) {
 
 // Tutup shift tanpa menghitung uang laci (tidak ada uang tunai seharusnya / uang fisik / selisih).
 // Shift ditutup TANPA menunggu internet: penjualan dipindah ke Riwayat Shift dan masuk antrean mother base
-// dalam satu transaksi. Email laporan dicoba sekali; bila gagal, dicoba ulang otomatis tiap 10 menit.
+// dalam satu transaksi, lalu langsung dikirim ke mother base. File laporan (PDF/CSV) disimpan di komputer ini.
 async function closeShiftLocal({ notes } = {}) {
   if (closingShift) throw userError('Proses tutup shift sedang berjalan.');
-  const settings = localSvc.getSettingsRaw();
-  // Email belum diatur TIDAK menghalangi tutup shift: data tetap masuk antrean mother base, dan email
-  // ditandai menunggu (dicoba ulang otomatis tiap 10 menit, terkirim setelah SMTP diatur di Pengaturan).
+  const settings = localSvc.getSettings();
   const summary = localSvc.shiftSummary();
   if (!summary.shift) throw userError('Tidak ada shift aktif.');
 
   closingShift = true;
   let ctx;
   let dir;
-  let files;
   let uid;
   const closedAt = localNow();
   try {
@@ -238,7 +184,7 @@ async function closeShiftLocal({ notes } = {}) {
     fs.mkdirSync(dir, { recursive: true });
 
     ctx = { store: settings, summary, closedAt, notes: String(notes || '').trim(), lowStock: localSvc.lowStock({ limit: 100 }) };
-    files = {
+    const files = {
       [`Rekap_Shift_${stamp}.pdf`]: await htmlToPdf(reports.summaryHtml(ctx)),
       [`Penjualan_Shift_${stamp}.csv`]: reports.salesCsv(localSvc.shiftSalesRows()),
       [`Snapshot_Stok_${stamp}.csv`]: reports.stockCsv(localSvc.stockSnapshot()),
@@ -253,23 +199,9 @@ async function closeShiftLocal({ notes } = {}) {
   // datanya aman di antrean dan dicoba lagi otomatis tiap 5 menit.
   const motherbase = await sendShiftToMotherbase(uid);
 
-  let response = '';
-  let emailError = '';
-  try {
-    const info = await sendMail(settings, {
-      subject: `[${settings.store_name}] Rekap Shift ${summary.shift.cashier_name} — ${closedAt} — Omset Rp ${summary.totals.revenue.toLocaleString('id-ID')}`,
-      text: reports.summaryText(ctx),
-      attachments: Object.keys(files).map((name) => ({ filename: name, path: path.join(dir, name) })),
-    });
-    response = String(info.response || '');
-    if (!/^250\b/.test(response)) throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}).`);
-  } catch (err) {
-    emailError = err.message;
-  }
-  localSvc.markShiftEmail({ shift_uid: uid, ok: !emailError, error: emailError });
   return {
     motherbase,
-    dir, response, emailed: !emailError, email_error: emailError,
+    dir,
     revenue: summary.totals.revenue, receipts: summary.totals.receipts, onServer: device.mode === 'server',
   };
 }
@@ -293,99 +225,14 @@ async function sendShiftToMotherbase(uid) {
 
 const sendMotherbaseLocal = () => sendShiftToMotherbase(null);
 
-// Kirim laporan shift yang sudah ditutup dari Riwayat Shift (4 hari). Isi riwayat tidak pernah
-// dikembalikan ke layar: hasilnya hanya balasan server email dan nama file lampiran.
-// auto = email saat tutup shift gagal dan sekarang dikirim otomatis; selain itu = tombol Kirim Ulang.
-async function sendHistoryReport({ shift_uid, auto = false } = {}) {
-  const settings = localSvc.getSettingsRaw();
-  makeTransport(settings); // validasi pengaturan SMTP sebelum menyiapkan lampiran
-  const { shift: h, byItem, sales } = localSvc.shiftHistoryReport({ shift_uid });
-  const dir = h.report_dir || '';
-  let attachments = [];
-  if (dir) {
-    try {
-      attachments = fs.readdirSync(dir).filter((f) => /\.(pdf|csv)$/i.test(f)).sort()
-        .map((name) => ({ filename: name, path: path.join(dir, name) }));
-    } catch (_) { /* folder laporan hilang → dibuat ulang dari cadangan riwayat */ }
-  }
-  const offlineReceipts = new Set(sales.filter((r) => /^OFF-/.test(r.receipt_no)).map((r) => r.receipt_no)).size;
-  const ctx = {
-    store: settings,
-    summary: {
-      shift: { cashier_name: h.cashier_name, shift_start: h.shift_start },
-      totals: { receipts: h.receipts, qty: h.qty, revenue: h.revenue },
-      byMethod: h.by_method, byItem, cashSales: h.cash_sales, offline: { receipts: offlineReceipts, checks: [] },
-    },
-    closedAt: h.closed_at, notes: h.notes || '', lowStock: [],
-  };
-  const regenerated = !attachments.length;
-  if (regenerated) {
-    const stamp = h.closed_at.replace(/[-:]/g, '').replace(' ', '_');
-    attachments = [
-      { filename: `Rekap_Shift_${stamp}.pdf`, content: await htmlToPdf(reports.summaryHtml(ctx)) },
-      { filename: `Penjualan_Shift_${stamp}.csv`, content: reports.salesCsv(sales) },
-    ];
-  }
-  const intro = [
-    auto ? `Email laporan ini gagal terkirim saat tutup shift ${h.closed_at}; dikirim otomatis pada ${localNow()}.`
-      : `Laporan ini DIKIRIM ULANG pada ${localNow()}.`,
-    ...(regenerated ? ['File laporan asli tidak ditemukan: Rekap PDF dan CSV penjualan dibuat ulang dari cadangan riwayat shift. Snapshot stok saat tutup shift tidak tersedia.'] : []),
-    '',
-  ];
-  const info = await sendMail(settings, {
-    subject: `[${settings.store_name}] ${auto ? '(Tertunda) ' : '(Kirim Ulang) '}Rekap Shift ${h.cashier_name} — ${h.closed_at} — Omset Rp ${Number(h.revenue).toLocaleString('id-ID')}`,
-    text: [...intro, reports.summaryText(ctx)].join('\n'),
-    attachments,
-  });
-  const response = String(info.response || '');
-  if (!/^250\b/.test(response)) throw userError(`Server SMTP tidak membalas "250 OK" (balasan: ${response || '-'}). Laporan belum terkirim.`);
-  localSvc.markShiftEmail({ shift_uid, ok: true });
-  return { response, to: settings.owner_email, attachments: attachments.map((a) => a.filename), regenerated };
-}
-
-const resendReportLocal = (a = {}) => sendHistoryReport({ shift_uid: a.shift_uid });
-
-// Email laporan yang gagal saat tutup shift: dicoba ulang dari yang paling lama. Berhenti di kegagalan
-// pertama (biasanya internet / SMTP mati) dan dicoba lagi di putaran berikutnya.
-let retryingEmails = false;
-async function retryShiftEmails() {
-  if (retryingEmails || !localSvc || isClient()) return;
-  retryingEmails = true;
-  try {
-    for (const h of localSvc.pendingShiftEmails()) {
-      try {
-        await sendHistoryReport({ shift_uid: h.shift_uid, auto: true });
-      } catch (err) {
-        localSvc.markShiftEmail({ shift_uid: h.shift_uid, ok: false, error: err.message });
-        break;
-      }
-    }
-  } catch (err) {
-    console.error('[email tertunda]', err);
-  } finally {
-    retryingEmails = false;
-  }
-}
-
-async function testEmailLocal() {
-  const s = localSvc.getSettingsRaw();
-  const info = await sendMail(s, {
-    subject: `[${s.store_name}] Tes email POS Tri-Zone`,
-    text: `Email tes dari POS Tri-Zone pada ${localNow()}.\nJika email ini diterima, pengaturan SMTP sudah benar.`,
-  });
-  return { response: String(info.response || '') };
-}
-
 // Perintah yang boleh dipanggil PC kasir lewat jaringan
 const SERVER_MAIN = {
   'main.checkout': checkoutLocal,
   'main.closeShift': closeShiftLocal,
-  'main.resendReport': resendReportLocal,
   'main.sendMotherbase': sendMotherbaseLocal,
-  'main.testEmail': testEmailLocal,
 };
 const REMOTE_BLOCKED = new Set([
-  'getSettingsRaw', 'archiveShift', 'pruneShiftHistory', 'shiftHistoryReport', 'checkout', 'shiftData', 'pendingShiftEmails', 'markShiftEmail',
+  'archiveShift', 'pruneShiftHistory', 'checkout', 'shiftData',
   // Mother base: kunci toko & antrean kiriman hanya di PC pemilik database (mbStatus boleh, tanpa rahasia)
   'mbConfig', 'mbSaveConfig', 'mbState', 'mbSetState', 'mbQueueHistory', 'mbBatch', 'mbAck', 'mbApplyMaster', 'mbMasterSince',
 ]);
@@ -714,7 +561,7 @@ const ACCESS = {
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR,
-  'shift:history': KASIR, 'shift:resendReport': KASIR, 'shift:sendMotherbase': KASIR,
+  'shift:history': KASIR, 'shift:sendMotherbase': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'app:openPath': KASIR,
 };
 
@@ -784,7 +631,6 @@ const handlers = {
     if (Object.keys(shared).length) await svc.saveSettings(shared);
     return getSettings();
   },
-  'settings:testEmail': () => runMain('main.testEmail'),
 
   'products:list': (a) => svc.listProducts(a),
   'products:categories': () => svc.categories(),
@@ -826,8 +672,7 @@ const handlers = {
   },
   'shift:summary': () => svc.shiftSummary(),
   'shift:receipt': (a) => svc.receiptDetail(a),
-  'shift:history': () => svc.listShiftHistory(), // hanya kasir & waktu (isi riwayat tidak ditampilkan)
-  'shift:resendReport': (a) => runMain('main.resendReport', a),
+  'shift:history': () => svc.listShiftHistory(), // kasir, waktu & status kirim mother base (isi riwayat tidak ditampilkan)
   'shift:close': (a) => (isClient() ? closeShiftClient(a) : runMain('main.closeShift', a)),
   'shift:sendMotherbase': () => runMain('main.sendMotherbase'),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
@@ -961,13 +806,11 @@ async function startup() {
   pruneHistory();
   setInterval(pruneHistory, 60 * 60 * 1000);
   // Mother base: kirim data tiap 5 menit bila ada yang menunggu / berubah; master barang tiap jam.
-  // Email laporan yang tertunda dicoba ulang tiap 10 menit. Semua berjalan di latar dan tidak menghentikan kasir.
+  // Semua berjalan di latar dan tidak menghentikan kasir.
   const mbTick = (pullMaster) => mb.tick({ pullMaster }).catch((err) => console.error('[mother base]', err));
   setTimeout(() => mbTick(true), 20 * 1000);
   setInterval(() => mbTick(false), 5 * 60 * 1000);
   setInterval(() => mbTick(true), 60 * 60 * 1000);
-  setTimeout(retryShiftEmails, 60 * 1000);
-  setInterval(retryShiftEmails, 10 * 60 * 1000);
   if (device.mode === 'server' && !DEMO) {
     if (!device.server_pair_key) device = saveDevice(DATA_DIR, { server_pair_key: newPairKey() });
     const port = Number(process.env.POS_SERVER_PORT || device.server_port) || DEFAULT_PORT;

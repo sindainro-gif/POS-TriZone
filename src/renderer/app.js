@@ -2010,45 +2010,33 @@ views.shift = (() => {
     });
   }
 
-  // Shift yang sudah ditutup 4 hari terakhir: isinya TIDAK ditampilkan, laporannya hanya bisa dikirim ulang ke owner
+  // Shift yang sudah ditutup 4 hari terakhir: isinya TIDAK ditampilkan, hanya status kirimnya ke mother base
   async function renderHistory() {
     const box = $('#shHistory');
     if (!box) return;
     let rows;
     try { rows = await api('shift:history'); } catch (e) { box.innerHTML = ''; return; }
-    box.innerHTML = `<div class="card">
-        <div class="card-head"><h2>Kirim Ulang Laporan Shift</h2>
-          <span class="muted small">Shift yang ditutup 4 hari terakhir. Isinya tidak ditampilkan di sini; laporannya bisa dikirim ulang ke email owner.</span></div>
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Kasir</th><th>Mulai</th><th>Tutup</th><th></th></tr></thead>
+    const waiting = rows.filter((h) => !h.mb_terkirim).length;
+    box.innerHTML = `<div class="card" id="shMbCard">
+        <div class="card-head"><h2>Kiriman ke Mother Base</h2>
+          ${waiting ? '<button class="btn sm primary" id="shMbSend">Kirim Sekarang</button>' : ''}</div>
+        <p class="muted small" style="margin-top:-6px">Shift yang ditutup 4 hari terakhir. Isinya tidak ditampilkan di sini.
+          Yang masih menunggu dikirim otomatis tiap 5 menit saat internet tersambung.</p>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Kasir</th><th>Mulai</th><th>Tutup</th><th>Mother Base</th></tr></thead>
         <tbody id="shHistoryBody">${rows.length ? rows.map((h) => `<tr>
-            <td><b>${esc(h.cashier_name)}</b>${h.email_terkirim ? '' : ' <span class="badge floor low">Email menunggu</span>'}</td><td class="muted">${fmtTime(h.shift_start)}</td><td>${fmtTime(h.closed_at)}</td>
-            <td class="r"><button class="btn sm" data-h="${esc(h.shift_uid)}" data-name="${esc(h.cashier_name)}" data-at="${esc(h.closed_at)}">Kirim Ulang Laporan</button></td></tr>`).join('')
+            <td><b>${esc(h.cashier_name)}</b></td><td class="muted">${fmtTime(h.shift_start)}</td><td>${fmtTime(h.closed_at)}</td>
+            <td>${h.mb_terkirim ? '<span class="badge floor ok">Terkirim ✓</span>' : '<span class="badge floor low">Menunggu</span>'}</td></tr>`).join('')
           : '<tr><td colspan="4" class="empty-row">Belum ada shift yang ditutup 4 hari terakhir.</td></tr>'}</tbody></table></div>
       </div>`;
-    $('#shHistoryBody').addEventListener('click', async (e) => {
-      const b = e.target.closest('[data-h]');
-      if (b) resendReport(b.dataset.h, b.dataset.name, b.dataset.at);
-    });
-  }
-
-  async function resendReport(uid, cashier, closedAt) {
-    const to = state.settings.owner_email || '(email owner belum diatur)';
-    if (!(await confirmDialog('Kirim Ulang Laporan',
-      `Kirim ulang laporan shift <b>${esc(cashier)}</b> (ditutup ${fmtTime(closedAt)}) ke <b>${esc(to)}</b>?`, { okLabel: 'Kirim Ulang' }))) return;
-    const prog = modal({ title: 'Mengirim Ulang Laporan…', body: '<p>Menyiapkan lampiran dan mengirim email ke owner. Mohon tunggu.</p>', dismissable: false });
-    try {
-      const r = await api('shift:resendReport', { shift_uid: uid });
-      prog.close();
-      toast(`Laporan dikirim ulang ke ${r.to}. Balasan server: ${r.response}`, 'ok', 8000);
-    } catch (err) {
-      prog.close();
-      modal({
-        title: 'Kirim Ulang Gagal',
-        body: `<div class="alert danger">${esc(err.message)}</div><p>Periksa koneksi internet atau pengaturan email, lalu coba lagi.</p>`,
-        actions: [{ label: 'Tutup', kind: 'primary' }],
-      });
+    const btn = $('#shMbSend');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Mengirim…';
+      const m = await api('shift:sendMotherbase').catch((err) => ({ sent: false, configured: true, error: err.message }));
+      toast(m.sent ? 'Semua data shift terkirim ke mother base.' : `Belum terkirim: ${m.error}`, m.sent ? 'ok' : 'err', 6000);
       renderHistory();
-    }
+    });
   }
 
   function checksCard(checks) {
@@ -2101,9 +2089,10 @@ views.shift = (() => {
           <h2>Tutup Shift / Cetak Rekap</h2>
           <div class="kv"><span>Penjualan tunai</span><b>${rp(s.cashSales)}</b></div>
           <div class="field"><label>Catatan Kasir <span class="muted">(opsional)</span></label><input id="shNotes" maxlength="300" placeholder="Contoh: ada uang palsu Rp 50.000"></div>
-          <button class="btn primary xl" id="shClose">Tutup Shift &amp; Kirim Laporan</button>
-          <p class="muted small" style="margin-top:10px">Laporan (PDF rekap, CSV penjualan, CSV snapshot stok Display Toko / Gudang Utama / Gudang BS / Gudang Shopee) dikirim ke <b>${esc(state.settings.owner_email || '(email owner belum diatur)')}</b>.
-          Shift baru ditutup setelah server email membalas <b>250 OK</b>. Penjualannya lalu disimpan sebagai cadangan sampai akhir hari berikutnya (laporannya bisa dikirim ulang), kemudian dihapus otomatis.</p>
+          <button class="btn primary xl" id="shClose">Tutup Shift &amp; Kirim ke Mother Base</button>
+          <p class="muted small" style="margin-top:10px">Penjualan shift <b>langsung dikirim ke mother base</b> dan hasilnya ditampilkan.
+          File laporan (PDF rekap, CSV penjualan, CSV snapshot stok Display Toko / Gudang Utama / Gudang BS / Gudang Shopee) disimpan di folder laporan komputer ini.
+          Penjualannya disimpan sebagai cadangan 4 hari, kemudian dihapus otomatis.</p>
         </div>
       </div>
       ${checksCard(s.offline && s.offline.checks)}
@@ -2136,12 +2125,12 @@ views.shift = (() => {
       if (views.checkout.hasItems()) { toast('Masih ada barang di keranjang kasir. Selesaikan atau kosongkan dulu.', 'err'); return; }
       const draftCount = (await api('drafts:list').catch(() => [])).length;
       const ok = await confirmDialog('Tutup Shift', `Tutup shift <b>${esc(sh.cashier_name)}</b> dengan omset <b>${rp(s.totals.revenue)}</b>?<br><br>
-        Penjualannya <b>langsung dikirim ke mother base</b> dan hasilnya ditampilkan; laporan juga dikirim ke email owner.
-        Bila internet mati, shift tetap ditutup dan keduanya dikirim otomatis saat internet tersambung. Penjualan shift disimpan sebagai cadangan 4 hari (laporannya bisa dikirim ulang).
+        Penjualannya <b>langsung dikirim ke mother base</b> dan hasilnya ditampilkan.
+        Bila internet mati, shift tetap ditutup dan datanya dikirim otomatis saat internet tersambung. Penjualan shift disimpan sebagai cadangan 4 hari.
         Master barang dan stok tidak berubah.
         ${draftCount ? `<br><br><span class="badge bs">Perhatian</span> Masih ada <b>${draftCount} draft penjualan</b> belum dibayar di komputer ini (tidak ikut dihitung di laporan).` : ''}`, { okLabel: 'Tutup Shift & Kirim' });
       if (!ok) return;
-      const prog = modal({ title: 'Menutup Shift…', body: '<p>Membuat laporan, menutup shift, mengirim data ke <b>mother base</b>, lalu email ke owner. Mohon tunggu, jangan tutup aplikasi.</p>', dismissable: false });
+      const prog = modal({ title: 'Menutup Shift…', body: '<p>Membuat file laporan, menutup shift, lalu mengirim data ke <b>mother base</b>. Mohon tunggu, jangan tutup aplikasi.</p>', dismissable: false });
       try {
         const r = await api('shift:close', { notes: $('#shNotes').value });
         prog.close();
@@ -2154,11 +2143,9 @@ views.shift = (() => {
               ${m.configured ? '<br><button class="btn sm" id="shMbRetry" style="margin-top:8px">Kirim Ulang ke Mother Base</button>' : ''}</div>`);
         const done = modal({
           title: 'Shift Berhasil Ditutup',
-          body: `${mbBox(mbRes)}${r.emailed
-            ? `<div class="alert ok">Laporan terkirim ke owner. Server email membalas: <code>${esc(r.response)}</code></div>`
-            : `<div class="alert warn">Shift sudah ditutup, tetapi email laporan <b>belum terkirim</b>: ${esc(r.email_error)}<br>Email dicoba lagi otomatis tiap 10 menit saat internet tersambung.</div>`}
-            <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Laporannya bisa dikirim ulang dari <b>Laporan Shift → Kirim Ulang Laporan Shift</b> selama 4 hari.</p>
-            <p class="muted small">Salinan laporan tersimpan di${r.onServer ? ' <b>PC gudang</b>' : ''}:<br><code>${esc(r.dir)}</code></p>`,
+          body: `${mbBox(mbRes)}
+            <p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi. Status kirimnya terlihat di <b>Laporan Shift → Kiriman ke Mother Base</b>.</p>
+            <p class="muted small">File laporan (PDF &amp; CSV) tersimpan di${r.onServer ? ' <b>PC gudang</b>' : ''}:<br><code>${esc(r.dir)}</code></p>`,
           actions: [
             { label: 'Buka Folder', kind: 'ghost', onClick: () => api('app:openPath', { dir: r.dir }) },
             { label: 'Selesai', kind: 'primary', onClick: ({ close }) => { close(); show(); } },
@@ -2459,7 +2446,7 @@ function setupDemo(demo) {
     try { await api('demo:reset'); toast('Data demo dikembalikan ke awal. Memuat ulang…', 'ok'); } catch (e) { toast(e.message, 'err', 6000); }
   });
   const box = $('#lgDemo');
-  box.innerHTML = `<div class="demo-title"><b class="demo-tag">DEMO</b> Versi latihan: data contoh, email tidak dikirim. Nota &amp; label dicetak ke printer yang dipilih (nota bertanda DEMO).</div><b>Akun latihan</b> <span class="muted">(klik untuk mengisi)</span><table>${demo.accounts.map((a) => `<tr data-name="${esc(a.name)}" data-pin="${esc(a.pin)}">
+  box.innerHTML = `<div class="demo-title"><b class="demo-tag">DEMO</b> Versi latihan: data contoh, tidak dikirim ke mother base. Nota &amp; label dicetak ke printer yang dipilih (nota bertanda DEMO).</div><b>Akun latihan</b> <span class="muted">(klik untuk mengisi)</span><table>${demo.accounts.map((a) => `<tr data-name="${esc(a.name)}" data-pin="${esc(a.pin)}">
     <td><b>${esc(a.name)}</b></td><td class="muted">${esc(ROLE_LABEL[a.role])}</td><td class="mono">PIN ${esc(a.pin)}</td></tr>`).join('')}</table>`;
   box.classList.remove('hidden');
   box.addEventListener('click', (e) => {
@@ -2553,7 +2540,7 @@ async function refreshConnection() {
 
 // ================================================================ 6. PENGATURAN
 views.settings = (() => {
-  const F = { store_name: '#stStoreName', store_address: '#stStoreAddress', smtp_host: '#stHost', smtp_port: '#stPort', smtp_security: '#stSecurity', smtp_user: '#stUser', smtp_from: '#stFrom', owner_email: '#stOwner',
+  const F = { store_name: '#stStoreName', store_address: '#stStoreAddress',
     receipt_header: '#stHeader', receipt_footer: '#stFooter', printer_name: '#stPrinter', paper_width: '#stPaper' };
 
   async function loadPrinters(selected) {
@@ -2587,8 +2574,6 @@ views.settings = (() => {
     for (const [k, sel] of Object.entries(F)) $(sel).value = s[k] || '';
     $('#stAutoPrint').checked = s.auto_print !== '0';
     updatePreview();
-    $('#stPass').value = '';
-    $('#stPass').placeholder = s.has_smtp_pass ? '•••••••• (tersimpan — kosongkan jika tidak diubah)' : 'Password / App Password';
     const info = await api('app:info');
     $('#infoVersion').textContent = info.version;
     $('#infoDb').textContent = info.dbFile;
@@ -2599,11 +2584,8 @@ views.settings = (() => {
     const d = {};
     for (const [k, sel] of Object.entries(F)) d[k] = $(sel).value;
     d.auto_print = $('#stAutoPrint').checked ? '1' : '0';
-    if ($('#stPass').value) d.smtp_pass = $('#stPass').value;
     state.settings = await api('settings:save', d);
     $('#storeName').textContent = state.settings.store_name;
-    $('#stPass').value = '';
-    $('#stPass').placeholder = state.settings.has_smtp_pass ? '•••••••• (tersimpan — kosongkan jika tidak diubah)' : 'Password / App Password';
     if (!silent) toast('Pengaturan tersimpan.', 'ok');
   }
 
@@ -2615,18 +2597,6 @@ views.settings = (() => {
       await api('receipt:test');
       toast('Nota tes dikirim ke printer.', 'ok');
     } catch (e) { toast(e.message, 'err', 8000); }
-  });
-  $('#stSecurity').addEventListener('change', () => { $('#stPort').value = { ssl: 465, starttls: 587, none: 25 }[$('#stSecurity').value]; });
-  $('#stTest').addEventListener('click', async () => {
-    const btn = $('#stTest');
-    btn.disabled = true;
-    btn.textContent = 'Mengirim…';
-    try {
-      await save(true);
-      const r = await api('settings:testEmail');
-      toast(`Email tes terkirim ke ${state.settings.owner_email}. Balasan server: ${r.response}`, 'ok', 8000);
-    } catch (e) { toast(e.message, 'err', 9000); }
-    finally { btn.disabled = false; btn.textContent = 'Kirim Email Tes'; }
   });
   $('#stOpenReports').addEventListener('click', () => api('app:openReports'));
   $('#stOpenData').addEventListener('click', () => api('db:openFolder'));

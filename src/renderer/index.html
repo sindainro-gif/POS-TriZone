@@ -399,7 +399,7 @@
     <!-- ======================= SHIFT ======================= -->
     <section class="view" id="view-shift">
       <header class="page-head">
-        <div><h1>Laporan Shift &amp; Tutup Kasir</h1><p>Rekap omset shift berjalan, kirim laporan ke owner, dan kirim ulang laporan shift 4 hari terakhir.</p></div>
+        <div><h1>Laporan Shift &amp; Tutup Kasir</h1><p>Rekap omset shift berjalan, tutup shift &amp; kirim ke mother base, dan status kiriman 4 hari terakhir.</p></div>
       </header>
       <div id="shiftContent"></div>
     </section>
@@ -407,30 +407,15 @@
     <!-- ======================= PENGATURAN ======================= -->
     <section class="view" id="view-settings">
       <header class="page-head">
-        <div><h1>Pengaturan</h1><p>Identitas toko dan email pengiriman laporan tutup shift.</p></div>
+        <div><h1>Pengaturan</h1><p>Identitas toko, pengguna, mother base, jaringan, dan printer.</p></div>
       </header>
       <div class="grid-2">
         <div class="card">
           <h2>Identitas Toko</h2>
           <div class="field"><label>Nama Toko</label><input id="stStoreName" maxlength="80"></div>
           <div class="field"><label>Alamat / Keterangan (tampil di struk)</label><input id="stStoreAddress" maxlength="200"></div>
-          <h2 class="mt">Email Laporan (SMTP)</h2>
-          <div class="row-2">
-            <div class="field"><label>Server SMTP</label><input id="stHost" placeholder="smtp.gmail.com"></div>
-            <div class="field"><label>Port</label><input id="stPort" type="number" placeholder="587"></div>
-          </div>
-          <div class="field"><label>Keamanan</label>
-            <select id="stSecurity"><option value="starttls">STARTTLS (port 587)</option><option value="ssl">SSL/TLS (port 465)</option><option value="none">Tanpa enkripsi</option></select>
-          </div>
-          <div class="row-2">
-            <div class="field"><label>Username SMTP</label><input id="stUser" autocomplete="off" placeholder="toko@gmail.com"></div>
-            <div class="field"><label>Password SMTP</label><input id="stPass" type="password" autocomplete="new-password"></div>
-          </div>
-          <div class="field"><label>Email Pengirim</label><input id="stFrom" placeholder="toko@gmail.com"></div>
-          <div class="field"><label>Email Owner (penerima; pisahkan dengan koma)</label><input id="stOwner" placeholder="owner@gmail.com"></div>
           <div class="btn-row">
             <button class="btn primary" id="stSave">Simpan Pengaturan</button>
-            <button class="btn ghost" id="stTest">Kirim Email Tes</button>
           </div>
         </div>
         <div class="card">
@@ -450,9 +435,8 @@
           </div>
           <h2 class="mt">Catatan</h2>
           <ul class="notes">
-            <li>Untuk Gmail: aktifkan Verifikasi 2 Langkah, lalu buat <b>App Password</b> dan gunakan sebagai Password SMTP.</li>
-            <li>Password SMTP disimpan terenkripsi dengan akun Windows.</li>
-            <li>Shift <b>hanya ditutup setelah server SMTP membalas 250 OK</b>. Penjualannya lalu disimpan sebagai cadangan sampai akhir hari berikutnya, kemudian dihapus otomatis. Isinya tidak bisa dibuka di aplikasi; laporannya bisa dikirim ulang dari <b>Laporan Shift → Kirim Ulang Laporan Shift</b>. Salinan file laporan tetap tersimpan di folder laporan.</li>
+            <li>Saat tutup shift, penjualan <b>langsung dikirim ke mother base</b> dan hasilnya ditampilkan. Bila internet putus, shift tetap tertutup dan datanya dikirim ulang otomatis tiap 5 menit. Statusnya terlihat di <b>Laporan Shift → Kiriman ke Mother Base</b>.</li>
+            <li>File laporan (Rekap PDF, CSV penjualan, CSV stok) tetap disimpan di folder laporan komputer ini sebagai cadangan.</li>
             <li>Database dicadangkan otomatis setiap hari (14 salinan terakhir).</li>
           </ul>
         </div>
@@ -472,7 +456,7 @@
           <span id="mbBadge" class="badge wh">-</span>
         </div>
         <p class="muted small" style="margin-top:-6px">Penjualan setiap tutup shift, penerimaan, mutasi, stok opname, dan stok 4 zona dikirim otomatis ke <b>mother base</b> lewat internet.
-          Tanpa internet, toko tetap jalan: data menunggu di komputer ini dan dikirim saat internet tersambung. Password, akun SMTP, dan PIN <b>tidak</b> ikut.</p>
+          Tanpa internet, toko tetap jalan: data menunggu di komputer ini dan dikirim saat internet tersambung. Password dan PIN <b>tidak</b> ikut.</p>
         <div id="mbClient" class="mode-panel hidden">Pengiriman ke mother base dijalankan oleh komputer yang menyimpan database (PC Gudang). Atur di Pengaturan PC Gudang.</div>
         <div id="mbDemo" class="mode-panel hidden">Versi DEMO tidak mengirim data ke mother base.</div>
         <div id="mbBody">

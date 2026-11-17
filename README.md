@@ -27,7 +27,7 @@ Klik dua kali **`Jalankan DEMO.bat`**. Versi ini untuk latihan kasir dan mencoba
   | Kasir | Kasir | 333333 |
 
 - **Tanda DEMO:** kotak DEMO oranye di sidebar dan bingkai oranye di layar. Nota bertuliskan `** DEMO - BUKAN NOTA ASLI **`.
-- **Printer sungguhan, email tidak dikirim:** nota dan label dicetak ke printer yang dipilih (printer nota di Pengaturan, printer label di kanan bawah layar Cetak Barcode). Nota bertanda DEMO. Pengaturan printer demo terpisah dari aplikasi asli, jadi pilih printernya sekali di demo. Tutup shift membuat laporan di `Laporan-Demo` dan tidak mengirim email selama SMTP masih contoh (`demo.local`). Untuk mencoba email sungguhan, isi akun SMTP asli (mis. `smtp.gmail.com`, port 587, email Gmail + App Password) dan email owner di Pengaturan demo; tutup shift lalu benar-benar mengirim laporan.
+- **Printer sungguhan, tanpa kirim data:** nota dan label dicetak ke printer yang dipilih (printer nota di Pengaturan, printer label di kanan bawah layar Cetak Barcode). Nota bertanda DEMO. Pengaturan printer demo terpisah dari aplikasi asli, jadi pilih printernya sekali di demo. Tutup shift membuat file laporan di `Laporan-Demo`; versi DEMO tidak pernah mengirim data ke mother base.
 - **Reset Data** mengembalikan semua data latihan ke kondisi awal.
 - Versi demo selalu berjalan **Mandiri**; mode Server/Kasir hanya di aplikasi asli.
 - Uji otomatis: `npm run smoke:demo`.
@@ -40,7 +40,7 @@ PC Gudang / Mandiri mengirim data toko langsung ke **mother base** (database Sup
 - **Tanpa internet:** toko tetap jalan. Penjualan shift masuk antrean di `pos.db` dalam transaksi yang sama dengan tutup shift, dan dokumen ditandai terkirim hanya setelah mother base membalas. Pengiriman dicoba otomatis tiap 5 menit; kiriman ulang tidak membuat data dobel.
 - **Pengaturan:** **Pengaturan → Mother Base** (Admin, di PC Gudang / Mandiri): alamat mother base, anon key, kode toko 3 huruf, dan kunci toko dari kantor. Tombol **Tes Koneksi**, **Kirim Sekarang**, **Ambil Master Barang**.
 - **Kunci daftar barang:** bila dicentang, barang baru, nama, barcode, merk, kategori, harga, dan satuan masuk hanya berubah lewat master barang dari mother base (diambil otomatis tiap jam). Batas minimum display toko tetap bisa diubah di toko. Stok tidak pernah diubah oleh master barang.
-- **Tidak ikut:** password dan akun SMTP, email owner, PIN, kode pasangan.
+- **Tidak ikut:** password, PIN, kode pasangan.
 - Versi DEMO tidak mengirim data.
 - Uji otomatis: `node test/motherbase.test.js` (dengan mother base tiruan) dan `node motherbase/test/uji.js` (dengan PostgreSQL).
 
@@ -74,7 +74,7 @@ npm run smoke     # uji UI Electron + screenshot (database sementara)
 | `src/db.js` | Skema SQLite (sql.js/WASM, tanpa kompilasi native), transaksi, simpan atomik, backup harian |
 | `src/auth.js` | Hash PIN (scrypt) & pencocokan login, dipakai server dan login darurat kasir |
 | `src/services.js` | Logika bisnis: produk, import, kasir, mutasi, penerimaan, shift, pengaturan |
-| `src/main.js` | Proses utama Electron: IPC, import/template Excel, PDF, email SMTP, tutup shift |
+| `src/main.js` | Proses utama Electron: IPC, import/template Excel, PDF, tutup shift & kirim ke mother base |
 | `src/remote.js` | RPC HTTP LAN antara PC Gudang (server) dan PC Kasir (klien) |
 | `src/offline.js` | Mode darurat PC Kasir: cache barang + antrian transaksi OFF- dan sinkron ulang |
 | `src/reports.js` | CSV penjualan, CSV snapshot stok, HTML rekap (→ PDF) |
@@ -139,12 +139,11 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
 ## Lokasi data
 
 - Database: `%APPDATA%\POS Tri-Zone\pos.db` (backup harian di subfolder `backup/`, 14 terakhir). Path persisnya tampil di **Pengaturan → Informasi**.
-- Laporan tutup shift: `Dokumen\POS-Laporan\Shift_YYYYMMDD_HHMMSS\`
+- Laporan tutup shift: `Dokumen\POS-Laporan\Shift_YYYYMMDD_HHMMSS\` (Rekap PDF, CSV penjualan, CSV snapshot stok). File ini cadangan lokal; tidak ada lagi email laporan.
 - **Riwayat Shift (cadangan):** tutup shift tidak lagi menghapus penjualan. Penjualan shift yang sudah ditutup dipindah ke tabel riwayat di database.
   - Riwayat disimpan **4 hari** (hari ini + 3 hari sebelumnya). Yang lebih lama dihapus otomatis saat tutup shift, saat aplikasi dibuka, dan tiap jam.
-  - **Isi riwayat tidak bisa dibuka di aplikasi.** Di **Laporan Shift → Kirim Ulang Laporan Shift** hanya tampil kasir dan waktu shift, dengan tombol **Kirim Ulang Laporan**.
-  - Kirim ulang mengirim file laporan asli (Rekap PDF, CSV penjualan, CSV snapshot stok) ke email owner. Bila file laporan asli hilang, Rekap PDF dan CSV penjualan dibuat ulang dari cadangan riwayat.
-  - **Tutup shift tidak menunggu internet.** Shift langsung ditutup; bila email laporan gagal, shift ditandai **Email menunggu** dan email dikirim otomatis tiap 10 menit (subjek "(Tertunda)") sampai terkirim. Penjualannya tetap masuk antrean mother base.
+  - **Isi riwayat tidak bisa dibuka di aplikasi.** Di **Laporan Shift → Kiriman ke Mother Base** hanya tampil kasir, waktu shift, dan status **Terkirim ✓ / Menunggu**. Tombol **Kirim Sekarang** muncul bila ada yang menunggu.
+  - **Tutup shift langsung mengirim ke mother base** dan menunggu konfirmasinya. Bila internet putus atau mother base belum diatur, shift tetap ditutup; datanya menunggu di antrean dan dikirim otomatis tiap 5 menit.
 - Antrean mother base: tabel `mb_outbox_shift` di `pos.db` (tidak ikut dihapus bersama Riwayat Shift sampai diterima mother base).
 
 ## Login & hak akses
@@ -171,7 +170,7 @@ Setiap orang login dengan **nama + PIN 6 digit**. Menu yang tidak diizinkan dise
 Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data langsung ke PC Gudang lewat jaringan toko (LAN/WiFi yang sama). Stok selalu sama di kedua komputer, tanpa proses sinkron terpisah.
 
 **Pembagian tugas**
-- PC Gudang: Penerimaan Barang, Cetak Barcode, Mutasi Stok, Daftar Barang (+ semua menu lain). Menyimpan database, cadangan, dan laporan tutup shift; email laporan dikirim dari sini.
+- PC Gudang: Penerimaan Barang, Cetak Barcode, Mutasi Stok, Daftar Barang (+ semua menu lain). Menyimpan database, cadangan, dan laporan tutup shift; data dikirim ke mother base dari sini.
 - PC Kasir: Kasir / Pembayaran, cetak nota, Laporan Shift. Semua menu tetap bisa dibuka dan memakai data PC Gudang.
 
 **Langkah pemasangan**
@@ -185,13 +184,13 @@ Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data lang
 - PC Gudang dan aplikasinya sebaiknya menyala selama kasir berjualan. Jika terputus, PC Kasir masuk **MODE DARURAT** (lihat di bawah).
 
 **MODE DARURAT (PC Gudang / jaringan mati)**
-- Saat terhubung, PC Kasir menyimpan salinan daftar barang (SKU, barcode, nama, harga, stok terakhir), shift aktif, dan pengaturan nota ke `offline-cache.json` di folder data kasir. Salinan diperbarui tiap ±1 menit. Password SMTP tidak ikut disimpan.
+- Saat terhubung, PC Kasir menyimpan salinan daftar barang (SKU, barcode, nama, harga, stok terakhir), shift aktif, dan pengaturan nota ke `offline-cache.json` di folder data kasir. Salinan diperbarui tiap ±1 menit.
 - Jika PC Gudang tidak terjangkau, layar kasir diberi bingkai & spanduk kuning **MODE DARURAT**. Scan dan cari barang memakai salinan tadi. Transaksi tetap bisa dibayar dan disimpan ke `offline-queue.json` sebelum nota dicetak. Nomor struknya `OFF-YYYYMMDD-XXXX-0001` (`XXXX` = kode unik PC kasir) dan nota bertanda `** MODE DARURAT **`.
 - Syarat: PC Kasir pernah terhubung, dan shift sudah dibuka saat terakhir terhubung. Buka shift, tutup shift, laporan shift, dan menu gudang tetap memerlukan PC Gudang.
 - Stok yang tampil adalah stok terakhir yang diketahui, dikurangi transaksi darurat yang belum terkirim. Jika stok itu kurang, kasir hanya diberi peringatan dan tetap boleh menjual, karena barangnya sudah ada di tangan pelanggan.
 - Saat koneksi kembali (dicek tiap 15 detik), antrian dikirim **berurutan**, dimulai dari yang paling lama, dengan harga dan waktu jual aslinya. Jika jaringan putus di tengah pengiriman, sisa antrian dicoba lagi nanti. Transaksi yang ditolak PC Gudang (data rusak) tetap disimpan di antrian beserta pesan errornya, lalu antrian berikutnya tetap dikirim.
 - **Jika display toko di PC Gudang tidak cukup**, transaksi **tetap dicatat** dan **display toko dibiarkan minus**, lalu transaksi ditandai **Perlu Dicek**. Alasannya, barang sudah keluar secara fisik dan uang sudah diterima. Jika ditolak, omset dan laci kasir tidak akan cocok. Jika stok dipaksa 0, selisihnya hilang tanpa jejak. Dengan stok minus, selisihnya terlihat jelas, dan barang itu muncul merah paling atas di **Saran Restock Rak Toko** sampai stok dibereskan (Mutasi Gudang → Toko atau Penerimaan). Stok Gudang Utama dan Gudang BS tidak pernah disentuh.
-- Daftar **Perlu Dicek** tampil di **Laporan Shift** (tombol *Sudah Dicek*) dan di PDF/email rekap tutup shift. Daftar ini juga mencakup barang yang sudah dihapus dari gudang dan transaksi yang masuk saat tidak ada shift aktif (dicatat ke shift berikutnya).
+- Daftar **Perlu Dicek** tampil di **Laporan Shift** (tombol *Sudah Dicek*) dan di PDF rekap tutup shift. Daftar ini juga mencakup barang yang sudah dihapus dari gudang dan transaksi yang masuk saat tidak ada shift aktif (dicatat ke shift berikutnya).
 - Anti dobel: transaksi darurat tercatat di tabel `offline_sales` yang tidak ikut dihapus saat tutup shift, sehingga pengiriman ulang diabaikan. Setiap pembayaran juga membawa penanda unik. Jika koneksi putus tepat setelah PC Gudang menyimpan transaksi online, salinan daruratnya tidak dihitung dua kali.
 - Tutup shift di PC Kasir ditolak selama masih ada transaksi darurat yang belum terkirim.
 - Sebaiknya beri PC Gudang **IP tetap** (atur DHCP reservation di router) agar alamatnya tidak berubah.
@@ -207,7 +206,7 @@ Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data lang
 ## Penyesuaian terhadap spesifikasi
 
 - `stock_transfers` menerima zona eksternal: `customer` (retur pelanggan) sebagai asal, `supplier` (retur keluar) dan `disposed` (dibuang) sebagai tujuan.
-- Tabel tambahan `settings` untuk nama toko, SMTP, dan nomor struk.
+- Tabel tambahan `settings` untuk nama toko, printer, nomor struk, dan mother base.
 - Waktu disimpan dalam waktu lokal (`datetime('now','localtime')`).
 - Import ulang SKU yang sudah ada memperbarui data master; kolom kosong mempertahankan nilai lama, dan stok awal diabaikan.
 - **Daftar Barang → Import Excel / CSV** menerima dua format, dikenali otomatis dari judul kolom:

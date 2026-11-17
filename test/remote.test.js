@@ -13,7 +13,7 @@ async function t(name, fn) {
 (async () => {
   const gudang = createServices(await Database.open(null));
   const key = newPairKey();
-  const blocked = new Set(['getSettingsRaw', 'archiveShift']);
+  const blocked = new Set(['mbConfig', 'archiveShift']);
   const server = await startServer({
     port: 0,
     host: '127.0.0.1',
@@ -56,7 +56,7 @@ async function t(name, fn) {
   });
 
   await t('perintah terlarang & tidak dikenal ditolak', async () => {
-    await assert.rejects(svc.getSettingsRaw(), /tidak dikenal/);
+    await assert.rejects(svc.mbConfig(), /tidak dikenal/);
     await assert.rejects(svc.archiveShift(), /tidak dikenal/);
     await assert.rejects(kasir.rpc('hapusSemua', []), /tidak dikenal/);
     assert.strictEqual(gudang.shiftSalesRows().length, 1);

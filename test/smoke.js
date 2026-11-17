@@ -39,7 +39,7 @@ app.on('browser-window-created', (_e, win) => {
         { Barcode: '8997654321098', SKU: 'SNK-010', Nama_Barang: 'Keripik Kentang 68g', Merk: 'Renyah', Kategori: 'Makanan Ringan', Harga_Jual: 11500, Satuan_Masuk: 'Karton', Rasio_Isi_Dus: 40, Stok_Awal_Toko: 4, Stok_Awal_Gudang: 80, Min_Alert_Toko: 10 },
         { Barcode: '8990001112223', SKU: 'SBN-005', Nama_Barang: 'Sabun Mandi 85g', Merk: 'Wangi', Kategori: 'Perawatan', Harga_Jual: 4200, Rasio_Isi_Dus: 72, Stok_Awal_Toko: 15, Stok_Awal_Gudang: 0, Stok_Awal_BS: 3, Min_Alert_Toko: 5 },
       ]);
-      svc.saveSettings({ store_name: 'Toko Sumber Rejeki', store_address: 'Jl. Merdeka No. 1', owner_email: 'owner@contoh.id',
+      svc.saveSettings({ store_name: 'Toko Sumber Rejeki', store_address: 'Jl. Merdeka No. 1',
         receipt_header: 'KANO 5000 SEPANJANG\nJl. Raya Wonocolo No. 48\nTelp:085111328510', receipt_footer: 'KUMPULKAN HINGGA 200 BIJI\nDAN TUKARKAN SOUVENIR' });
       await wait(800);
       // Database baru tanpa akun → layar "Buat Akun Admin"
@@ -396,31 +396,44 @@ app.on('browser-window-created', (_e, win) => {
       console.log('printer terdeteksi:', JSON.stringify(printers.data && printers.data.map((p) => p.name)));
       if (!fs.existsSync(path.join(out, 'INV-' + require('../src/services').localNow().slice(0, 10).replace(/-/g, '') + '-0001.pdf'))) throw new Error('nota otomatis tidak tercetak');
 
-      // Tutup shift tanpa internet (SMTP tidak bisa dihubungi): shift TETAP ditutup, penjualan masuk Riwayat Shift
-      // dan antrean mother base; email ditandai menunggu untuk dicoba ulang otomatis
-      svc.saveSettings({ smtp_host: '127.0.0.1', smtp_port: '2', smtp_security: 'none', smtp_from: 'toko@contoh.id' });
+      // Tutup shift saat mother base belum diatur: shift TETAP ditutup, file laporan dibuat di komputer ini,
+      // penjualan masuk Riwayat Shift dan antrean mother base (dikirim otomatis setelah diatur / internet tersambung)
       const salesBefore = svc.shiftSalesRows().length;
       const res = await run(`window.posBridge.call('shift:close', {})`);
-      console.log('tutup shift (SMTP mati):', JSON.stringify(res));
+      console.log('tutup shift (mother base belum diatur):', JSON.stringify(res));
       const dirs = fs.readdirSync(process.env.POS_REPORTS_DIR);
       const files = fs.readdirSync(path.join(process.env.POS_REPORTS_DIR, dirs[0]));
       console.log('file laporan:', files.join(', '));
       const pdf = files.find((f) => f.endsWith('.pdf'));
       fs.copyFileSync(path.join(process.env.POS_REPORTS_DIR, dirs[0], pdf), path.join(out, 'rekap.pdf'));
-      if (!res.ok || res.data.emailed || !res.data.email_error || svc.getShift() || svc.shiftSalesRows().length) throw new Error('shift seharusnya tetap ditutup walau email gagal');
+      if (!res.ok || 'emailed' in res.data || svc.getShift() || svc.shiftSalesRows().length) throw new Error('shift seharusnya tetap ditutup walau mother base belum diatur');
+      if (!files.some((f) => /^Rekap_Shift_.*\.pdf$/.test(f)) || files.filter((f) => f.endsWith('.csv')).length !== 2) throw new Error('file laporan lokal tidak lengkap');
       const outbox = svc.mbStatus();
       const hist = svc.listShiftHistory();
-      console.log('antrean mother base:', outbox.pending_shifts, '· email menunggu:', svc.pendingShiftEmails().length, '· baris riwayat:', salesBefore);
-      if (outbox.pending_shifts !== 1 || svc.pendingShiftEmails().length !== 1 || hist[0].email_terkirim !== 0) throw new Error('antrean mother base / email menunggu tidak tercatat');
+      console.log('antrean mother base:', outbox.pending_shifts, '· baris riwayat:', salesBefore);
+      if (outbox.pending_shifts !== 1 || hist[0].mb_terkirim !== 0) throw new Error('antrean mother base tidak tercatat');
       if (!res.data.motherbase || res.data.motherbase.sent || res.data.motherbase.configured) throw new Error(`hasil mother base saat belum diatur salah: ${JSON.stringify(res.data.motherbase)}`);
       if (hist[0].cashier_name !== 'Pemilik') throw new Error('nama kasir shift tidak diambil dari akun login');
       await wait(800);
-      await shot('09-shift-ditutup-email-menunggu');
+      await shot('09-shift-ditutup-mother-base-menunggu');
       await run(`document.querySelector('#modalRoot .modal-foot .btn.primary') && document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
       await wait(600);
       await run(`document.querySelector('[data-view=shift]').click()`);
       await wait(800);
-      await shot('09b-riwayat-email-menunggu');
+      const waitCard = await run(`document.querySelector('#shMbCard').innerText`);
+      console.log('kartu kiriman mother base:', waitCard.replace(/\s+/g, ' '));
+      if (!/Kiriman ke Mother Base/.test(waitCard) || !/Menunggu/.test(waitCard) || !/Kirim Sekarang/.test(waitCard) || /Rp|Detail/.test(waitCard)) {
+        throw new Error('kartu Kiriman ke Mother Base tidak menampilkan status Menunggu');
+      }
+      await shot('09b-kiriman-mother-base-menunggu');
+      // Kirim Sekarang saat mother base belum diatur: pesan jelas, data tetap menunggu
+      await run(`document.querySelector('#shMbSend').click()`);
+      await wait(1500);
+      const sendToast = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
+      console.log('kirim sekarang (belum diatur):', sendToast);
+      if (!/belum diatur/.test(sendToast) || svc.mbStatus().pending_shifts !== 1) throw new Error('Kirim Sekarang tanpa pengaturan seharusnya gagal dengan pesan jelas');
+      const gone = await run(`window.posBridge.call('shift:resendReport', { shift_uid: 'x' })`);
+      if (gone.ok) throw new Error('kirim ulang email seharusnya sudah dihapus');
       const opened = await run(`window.posBridge.call('shift:open', {})`);
       if (!opened.ok) throw new Error(`buka shift lagi gagal: ${JSON.stringify(opened)}`);
       await run('refreshShift()');
@@ -498,6 +511,12 @@ app.on('browser-window-created', (_e, win) => {
       }
       await shot('09c-tutup-shift-terkirim-mother-base');
       await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
+      await wait(1000);
+      // Kartu riwayat: kedua shift (yang tadi menunggu & yang baru) sudah terkirim, tombol Kirim Sekarang hilang
+      const sentCard = await run(`document.querySelector('#shMbCard').innerText`);
+      console.log('kartu kiriman mother base:', sentCard.replace(/\s+/g, ' '));
+      if ((sentCard.match(/Terkirim/g) || []).length !== 2 || /Menunggu|Kirim Sekarang/.test(sentCard)) throw new Error('kartu Kiriman ke Mother Base tidak berubah menjadi Terkirim');
+      await shot('09d-kiriman-mother-base-terkirim');
       fakeMb.close();
       svc.mbSaveConfig({ url: '' });
       await run(`window.posBridge.call('shift:open', {})`);

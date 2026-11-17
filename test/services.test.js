@@ -269,20 +269,21 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     // Daftar riwayat untuk layar hanya kasir & waktu: omset, struk, dan barang tidak bisa dilihat
     const hist = svc.listShiftHistory();
     assert.strictEqual(hist.length, 1);
-    assert.deepStrictEqual(Object.keys(hist[0]).sort(), ['cashier_name', 'closed_at', 'email_terkirim', 'shift_start', 'shift_uid']);
-    assert.deepStrictEqual([hist[0].shift_uid, hist[0].cashier_name], [uid, 'Rina']);
-    // Data lengkap hanya untuk mengirim ulang laporan (proses utama)
-    const rep = svc.shiftHistoryReport({ shift_uid: uid });
-    assert.deepStrictEqual([rep.shift.receipts, rep.shift.revenue, rep.shift.cash_sales, rep.shift.notes, rep.shift.report_dir],
+    assert.deepStrictEqual(Object.keys(hist[0]).sort(), ['cashier_name', 'closed_at', 'mb_terkirim', 'shift_start', 'shift_uid']);
+    assert.deepStrictEqual([hist[0].shift_uid, hist[0].cashier_name, hist[0].mb_terkirim], [uid, 'Rina', 0]);
+    // Data lengkap tetap tersimpan sebagai cadangan (dikirim ke mother base), tidak untuk layar
+    const row = db.get('SELECT receipts, revenue, cash_sales, notes, report_dir, by_method FROM shift_history WHERE shift_uid = ?', [uid]);
+    assert.deepStrictEqual([row.receipts, row.revenue, row.cash_sales, row.notes, row.report_dir],
       [before.totals.receipts, before.totals.revenue, before.cashSales, 'tutup uji', 'C:\\Laporan\\Shift_X']);
-    assert.deepStrictEqual(rep.shift.by_method.map((m) => m.method).sort(), before.byMethod.map((m) => m.method).sort());
-    assert.strictEqual(rep.byItem.reduce((s, i) => s + i.total, 0), before.totals.revenue);
-    assert.strictEqual(rep.sales.reduce((s, l) => s + l.line_total, 0), before.totals.revenue);
-    assert.strictEqual(new Set(rep.sales.map((l) => l.receipt_no)).size, before.totals.receipts);
+    assert.deepStrictEqual(JSON.parse(row.by_method).map((m) => m.method).sort(), before.byMethod.map((m) => m.method).sort());
+    const sales = db.all('SELECT receipt_no, line_total FROM shift_history_sales WHERE shift_uid = ?', [uid]);
+    assert.strictEqual(sales.reduce((s, l) => s + l.line_total, 0), before.totals.revenue);
+    assert.strictEqual(new Set(sales.map((l) => l.receipt_no)).size, before.totals.receipts);
     // Struk shift yang sudah ditutup tidak bisa dicetak ulang lagi
-    throwsMsg(() => svc.receiptForReprint({ receipt_no: rep.sales[0].receipt_no }), /tidak ditemukan/);
+    throwsMsg(() => svc.receiptForReprint({ receipt_no: sales[0].receipt_no }), /tidak ditemukan/);
     assert.strictEqual(svc.historyReceiptDetail, undefined);
     assert.strictEqual(svc.shiftHistoryDetail, undefined);
+    assert.strictEqual(svc.shiftHistoryReport, undefined);
   });
 
   await t('riwayat shift: 4 hari disimpan, yang lebih lama dihapus otomatis', () => {
@@ -308,7 +309,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     uids = svc.listShiftHistory().map((h) => h.shift_uid);
     assert.deepStrictEqual(uids.length, 1);
     assert.notStrictEqual(uids[0], 'kemarin');
-    throwsMsg(() => svc.shiftHistoryReport({ shift_uid: 'kemarin' }), /tidak ditemukan/);
+    assert.strictEqual(db.get("SELECT COUNT(*) AS n FROM shift_history WHERE shift_uid = 'kemarin'").n, 0);
   });
 
   await t('data tersimpan ke file & terbaca ulang', async () => {
@@ -468,13 +469,22 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(db4.get('SELECT COUNT(*) AS n FROM stock_transfers').n, 3);
   });
 
-  await t('pengaturan: password terenkripsi tidak bocor ke renderer', () => {
-    const s2 = createServices(db, { encrypt: (s) => 'enc:' + Buffer.from(s).toString('base64'), decrypt: (s) => Buffer.from(s.slice(4), 'base64').toString() });
-    const pub = s2.saveSettings({ store_name: 'Toko Maju', owner_email: 'a@b.co, c@d.id', smtp_pass: 'rahasia' });
-    assert.strictEqual(pub.smtp_pass, undefined);
-    assert.strictEqual(pub.has_smtp_pass, true);
-    assert.strictEqual(s2.getSettingsRaw().smtp_pass, 'rahasia');
-    throwsMsg(() => s2.saveSettings({ owner_email: 'bukan-email' }), /tidak valid/);
+  await t('pengaturan: email laporan (SMTP) sudah tidak ada; sisa akun SMTP lama dibersihkan', async () => {
+    const SMTP_LEFT = "SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'smtp%' OR key = 'owner_email'";
+    const pub = svc.saveSettings({ store_name: 'Toko Maju', owner_email: 'a@b.co', smtp_host: 'smtp.gmail.com', smtp_pass: 'rahasia' });
+    assert.strictEqual(pub.store_name, 'Toko Maju');
+    for (const k of ['smtp_host', 'smtp_pass', 'has_smtp_pass', 'owner_email']) assert.strictEqual(pub[k], undefined);
+    assert.strictEqual(db.get(SMTP_LEFT).n, 0);
+    assert.strictEqual(svc.getSettingsRaw, undefined);
+    // Database versi lama yang masih menyimpan akun & password SMTP: dibersihkan saat dibuka
+    db.tx(() => {
+      db.run("INSERT OR REPLACE INTO settings(key, value) VALUES('smtp_pass', 'enc:lama')");
+      db.run("INSERT OR REPLACE INTO settings(key, value) VALUES('owner_email', 'a@b.co')");
+    });
+    assert.strictEqual(db.get(SMTP_LEFT).n, 2);
+    const db2 = await Database.open(file);
+    assert.strictEqual(db2.get(SMTP_LEFT).n, 0);
+    assert.strictEqual(createServices(db2).getSettings().store_name, 'Toko Maju');
   });
 
   console.log(`\n${passed} tes lulus${process.exitCode ? ', ada yang GAGAL' : ''}.`);

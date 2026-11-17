@@ -90,7 +90,7 @@ function fakeMotherbase() {
     assert.strictEqual(svc.mbStatus().ready, true);
   });
 
-  await t('tutup shift: penjualan masuk antrean mother base di transaksi yang sama, email belum terkirim tercatat', () => {
+  await t('tutup shift: penjualan masuk antrean mother base di transaksi yang sama, status Menunggu di riwayat', () => {
     const uid = svc.getShift().shift_uid;
     svc.archiveShift({ closed_at: '2026-11-16 21:05:00', notes: 'uji' });
     const row = db.get('SELECT * FROM mb_outbox_shift WHERE shift_uid = ?', [uid]);
@@ -99,12 +99,7 @@ function fakeMotherbase() {
     assert.strictEqual(p.shift.receipts, 3);
     assert.strictEqual(p.sales.length, 3);
     assert.strictEqual(row.sent_at, null);
-    assert.deepStrictEqual(svc.pendingShiftEmails().map((h) => h.shift_uid), [uid]);
-    assert.strictEqual(svc.listShiftHistory()[0].email_terkirim, 0);
-    svc.markShiftEmail({ shift_uid: uid, ok: false, error: 'SMTP mati' });
-    assert.strictEqual(svc.pendingShiftEmails()[0].email_error, 'SMTP mati');
-    svc.markShiftEmail({ shift_uid: uid, ok: true });
-    assert.deepStrictEqual(svc.pendingShiftEmails(), []);
+    assert.strictEqual(svc.listShiftHistory()[0].mb_terkirim, 0);
   });
 
   svc.createReception({ reference_no: 'DO.UJI.0001', supplier_name: 'PT Kantor', items: [{ sku: 'A-1', qty: 2, pack_type: 'Dus', destination: 'warehouse' }] });

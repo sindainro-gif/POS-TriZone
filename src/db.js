@@ -121,7 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_opname_items_doc ON stock_opname_items(doc_id);
 
 -- ========================================================
 -- PARTISI B: DATA TRANSAKSI SHIFT KASIR
--- shift_sales = penjualan shift yang sedang berjalan. Saat tutup shift (setelah email 250 OK) barisnya
+-- shift_sales = penjualan shift yang sedang berjalan. Saat tutup shift barisnya
 -- dipindah ke shift_history_sales sebagai cadangan, lalu dihapus otomatis setelah hari berikutnya lewat.
 -- ========================================================
 CREATE TABLE IF NOT EXISTS shift_sales (
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS shift_history (
     cash_sales INTEGER NOT NULL DEFAULT 0,
     by_method TEXT,            -- JSON [{method, receipts, total}]
     report_dir TEXT,           -- folder laporan tutup shift (PDF / CSV)
-    email_sent_at DATETIME,    -- kosong = email laporan belum terkirim (dicoba ulang otomatis)
+    email_sent_at DATETIME,    -- tidak dipakai lagi (dulu: status email laporan; email sudah dihapus)
     email_error TEXT
 );
 
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS shift_history_sales (
 CREATE INDEX IF NOT EXISTS idx_history_sales_shift ON shift_history_sales(shift_uid);
 CREATE INDEX IF NOT EXISTS idx_history_closed ON shift_history(closed_at);
 
--- Pengaturan aplikasi (nama toko, SMTP, nomor struk)
+-- Pengaturan aplikasi (nama toko, printer, nomor struk, mother base)
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -298,6 +298,8 @@ function migrate(sqlDb) {
     if (table === 'shift_history' && col === 'email_sent_at') sqlDb.exec('UPDATE shift_history SET email_sent_at = closed_at');
   }
   widenZoneChecks(sqlDb);
+  // Email laporan (SMTP) sudah dihapus; data shift dikirim ke mother base. Bersihkan akun & password SMTP lama.
+  sqlDb.exec(`DELETE FROM settings WHERE key IN ('smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'smtp_pass', 'smtp_from', 'owner_email')`);
   sqlDb.exec('CREATE INDEX IF NOT EXISTS idx_transfers_doc ON stock_transfers(doc_id)');
   // Mutasi lama (sebelum ada form multi-item): satu baris = satu dokumen MT-LAMA-<id>
   const old = sqlDb.exec('SELECT id, from_zone, to_zone, reason, created_at, qty FROM stock_transfers WHERE doc_id IS NULL ORDER BY id')[0]?.values || [];

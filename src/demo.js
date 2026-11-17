@@ -52,9 +52,6 @@ function seedDemo(svc) {
   svc.saveSettings({
     store_name: 'Toko Demo Tri-Zone',
     store_address: 'Jl. Contoh No. 1 (DATA DEMO)',
-    owner_email: 'owner@demo.local',
-    smtp_host: 'demo.local',
-    smtp_from: 'toko@demo.local',
     receipt_header: 'TOKO DEMO TRI-ZONE\nJl. Contoh No. 1\nTelp: 0800-0000-0000',
     receipt_footer: 'TERIMA KASIH\nNOTA LATIHAN - BUKAN TRANSAKSI ASLI',
   });

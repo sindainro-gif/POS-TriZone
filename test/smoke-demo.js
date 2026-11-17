@@ -1,6 +1,6 @@
 'use strict';
 // Uji asap versi DEMO: electron test/smoke-demo.js [folder-output]
-// Data demo di folder sementara; memastikan data contoh, akun latihan, nota PDF, tutup shift tanpa email, dan reset.
+// Data demo di folder sementara; memastikan data contoh, akun latihan, nota PDF, tutup shift (file laporan lokal, tanpa kirim ke mother base), dan reset.
 const { app } = require('electron');
 const fs = require('fs');
 const os = require('os');
@@ -57,48 +57,39 @@ app.on('browser-window-created', (_e, win) => {
       if (!prints.some((f) => /^INV-.*\.pdf$/.test(f))) throw new Error('nota demo tidak tercetak');
       if (svc.getProduct('MNM-001').floor_stock !== mnm.floor_stock - 2) throw new Error('stok demo tidak berkurang');
 
-      // Tutup shift: laporan dibuat, email tidak dikirim sungguhan
+      // Tutup shift: file laporan dibuat di komputer ini, DEMO tidak mengirim ke mother base
       const close = await run(`window.posBridge.call('shift:close', {})`);
-      console.log('tutup shift demo:', JSON.stringify(close.data && close.data.response || close.error));
-      if (!close.ok || !/DEMO/.test(close.data.response)) throw new Error('tutup shift demo gagal');
-      if (!fs.readdirSync(path.join(dataDir, 'Laporan-Demo')).length) throw new Error('laporan demo tidak dibuat');
-      console.log('shift setelah tutup:', svc.getShift(), '· email demo terkirim:', close.data.emailed);
-      if (svc.getShift() || !close.data.emailed) throw new Error('tutup shift demo: data shift / status email tidak sesuai');
+      console.log('tutup shift demo:', JSON.stringify(close.data || close.error));
+      if (!close.ok || close.data.motherbase.sent || !/DEMO/.test(close.data.motherbase.error)) throw new Error('tutup shift demo gagal');
+      const repFiles = fs.readdirSync(close.data.dir);
+      console.log('file laporan demo:', repFiles.join(', '));
+      if (!close.data.dir.startsWith(path.join(dataDir, 'Laporan-Demo')) || !repFiles.some((f) => /^Rekap_Shift_.*\.pdf$/.test(f))
+        || repFiles.filter((f) => f.endsWith('.csv')).length !== 2) throw new Error('file laporan demo tidak lengkap');
+      console.log('shift setelah tutup:', svc.getShift());
+      if (svc.getShift()) throw new Error('tutup shift demo: shift masih terbuka');
 
-      // Riwayat shift: penjualan tersimpan sebagai cadangan, isinya tidak bisa dilihat, laporannya bisa dikirim ulang
+      // Riwayat shift: penjualan tersimpan sebagai cadangan, isinya tidak bisa dilihat, hanya status kirim ke mother base
       const hist = svc.listShiftHistory();
       const uid = JSON.stringify(hist[0] && hist[0].shift_uid);
-      if (hist.length !== 1 || svc.shiftSalesRows().length || svc.shiftHistoryReport({ shift_uid: hist[0].shift_uid }).shift.receipts !== 1) {
-        throw new Error('penjualan tidak tersimpan sebagai cadangan');
-      }
+      if (hist.length !== 1 || svc.shiftSalesRows().length || hist[0].mb_terkirim !== 0) throw new Error('penjualan tidak tersimpan sebagai cadangan');
       await run(`go('shift')`);
       await wait(900);
-      const histText = await run(`document.querySelector('#shHistoryBody').innerText`);
-      console.log('kirim ulang laporan di layar:', histText.replace(/\s+/g, ' '));
-      if (!/Kasir/.test(histText) || !/Kirim Ulang Laporan/.test(histText) || /Rp|Detail/.test(histText)) {
-        throw new Error('kartu Kirim Ulang Laporan Shift tidak sesuai (isi riwayat tidak boleh tampil)');
+      const histText = await run(`document.querySelector('#shMbCard').innerText`);
+      console.log('kiriman mother base di layar:', histText.replace(/\s+/g, ' '));
+      if (!/Kiriman ke Mother Base/.test(histText) || !/Kasir/.test(histText) || !/Menunggu/.test(histText) || /Rp|Detail/.test(histText)) {
+        throw new Error('kartu Kiriman ke Mother Base tidak sesuai (isi riwayat tidak boleh tampil)');
       }
       const blocked = await run(`window.posBridge.call('shift:historyDetail', { shift_uid: ${uid} })`);
       if (blocked.ok || !/tidak dikenal/.test(blocked.error)) throw new Error('detail riwayat shift seharusnya tidak bisa dibuka');
-      // Lewat tombol: konfirmasi → kirim ulang
-      await run(`document.querySelector('#shHistoryBody [data-h]').click()`);
-      await wait(500);
-      await shot('demo-03b-kirim-ulang');
-      await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
-      await wait(3000);
+      const gone = await run(`window.posBridge.call('shift:resendReport', { shift_uid: ${uid} })`);
+      if (gone.ok) throw new Error('kirim ulang email seharusnya sudah dihapus');
+      // Tombol Kirim Sekarang: versi DEMO tidak mengirim, pesannya jelas
+      await run(`document.querySelector('#shMbSend').click()`);
+      await wait(1500);
+      await shot('demo-03b-kiriman-mother-base');
       const toastText = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
-      console.log('kirim ulang (tombol):', toastText);
-      if (!/dikirim ulang/.test(toastText)) throw new Error('kirim ulang lewat tombol gagal');
-      const resend = await run(`window.posBridge.call('shift:resendReport', { shift_uid: ${uid} })`);
-      console.log('kirim ulang:', JSON.stringify(resend.data || resend.error));
-      if (!resend.ok || resend.data.regenerated || resend.data.attachments.filter((f) => /\.(pdf|csv)$/.test(f)).length !== 3) throw new Error('lampiran kirim ulang tidak lengkap');
-      // File laporan asli hilang → Rekap PDF & CSV penjualan dibuat ulang dari cadangan riwayat
-      const repDir = path.join(dataDir, 'Laporan-Demo');
-      for (const d of fs.readdirSync(repDir)) for (const f of fs.readdirSync(path.join(repDir, d))) if (/\.(pdf|csv)$/.test(f)) fs.unlinkSync(path.join(repDir, d, f));
-      const regen = await run(`window.posBridge.call('shift:resendReport', { shift_uid: ${uid} })`);
-      console.log('kirim ulang tanpa file asli:', JSON.stringify(regen.data || regen.error));
-      if (!regen.ok || !regen.data.regenerated || !regen.data.attachments.some((f) => /^Rekap_Shift_.*\.pdf$/.test(f))
-        || !regen.data.attachments.some((f) => /^Penjualan_Shift_.*\.csv$/.test(f))) throw new Error('laporan tidak dibuat ulang dari cadangan');
+      console.log('kirim sekarang (DEMO):', toastText);
+      if (!/DEMO/.test(toastText)) throw new Error('Kirim Sekarang di DEMO seharusnya menolak dengan pesan jelas');
 
       // Reset → data contoh kembali ke awal, harus login lagi
       const reset = await run(`window.posBridge.call('demo:reset')`);

@@ -76,41 +76,8 @@ ${off.checks.length ? `<h2>Transaksi Mode Darurat — Perlu Dicek</h2>
 <table><tr><th>No. Struk</th><th>Waktu</th><th class="r">Total</th><th>Catatan</th></tr>
 ${off.checks.map((c) => `<tr><td>${esc(c.receipt_no)}</td><td>${esc(c.created_at)}</td><td class="r">${rp(c.total)}</td><td>${c.notes.map(esc).join('<br>')}</td></tr>`).join('')}
 </table>` : ''}
-<p class="muted" style="margin-top:18px">Snapshot stok lengkap (Display Toko, Gudang Utama, Gudang BS, Gudang Shopee) terlampir dalam file CSV terpisah.</p>
+<p class="muted" style="margin-top:18px">Snapshot stok lengkap (Display Toko, Gudang Utama, Gudang BS, Gudang Shopee) tersimpan dalam file CSV terpisah.</p>
 </body></html>`;
 }
 
-function summaryText({ store, summary, closedAt }) {
-  const { shift, totals, byMethod } = summary;
-  return [
-    `Rekap Tutup Shift — ${store.store_name}`,
-    '',
-    `Kasir          : ${shift.cashier_name}`,
-    `Mulai shift    : ${shift.shift_start}`,
-    `Tutup shift    : ${closedAt}`,
-    `Transaksi      : ${num(totals.receipts)} struk`,
-    `Barang terjual : ${num(totals.qty)} Biji`,
-    `TOTAL OMSET    : ${rp(totals.revenue)}`,
-    '',
-    'Per metode pembayaran:',
-    ...(byMethod.length ? byMethod.map((m) => `  - ${m.method}: ${rp(m.total)} (${m.receipts} transaksi)`) : ['  - (tidak ada penjualan)']),
-    '',
-    `Penjualan tunai : ${rp(summary.cashSales)}`,
-    '',
-    ...offlineText(summary.offline),
-    'Lampiran: Rekap PDF, detail penjualan (CSV), dan snapshot stok Display Toko / Gudang Utama / Gudang BS / Gudang Shopee (CSV).',
-    '',
-    '— Dikirim otomatis oleh POS Tri-Zone',
-  ].join('\n');
-}
-
-function offlineText(off) {
-  if (!off || (!off.receipts && !off.checks.length)) return [];
-  return [
-    `Transaksi MODE DARURAT (OFF-...) : ${num(off.receipts)} struk`,
-    ...(off.checks.length ? ['PERLU DICEK (display toko tidak cukup saat dikirim ke gudang):', ...off.checks.map((c) => `  - ${c.receipt_no}: ${c.notes.join(' ')}`)] : []),
-    '',
-  ];
-}
-
-module.exports = { salesCsv, stockCsv, summaryHtml, summaryText, SALES_HEADERS };
+module.exports = { salesCsv, stockCsv, summaryHtml, SALES_HEADERS };

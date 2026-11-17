@@ -10,7 +10,7 @@ const PAYMENT_METHODS = ['Tunai', 'QRIS', 'Transfer'];
 const LEGACY_PAYMENT = { 'Kartu Debit': 'Transfer' };
 
 // Riwayat shift yang sudah ditutup disimpan 4 hari kalender: hari ini + 3 hari sebelumnya
-// (cadangan bila email laporan atau kiriman ke mother base tertunda, mis. saat akhir pekan)
+// (cadangan bila kiriman ke mother base tertunda, mis. saat akhir pekan)
 const SHIFT_HISTORY_DAYS = 4;
 
 const ZONE_COL = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock', shopee: 'shopee_stock' };
@@ -68,7 +68,7 @@ const OPNAME_FISIK = { floor: 'fisikdisplaytoko', warehouse: 'fisikgudangutama',
 const OPNAME_STOCK = { floor: 'displaytoko', warehouse: 'gudangutama', damaged: 'gudangbs', shopee: 'gudangshopee' };
 
 const SETTING_KEYS = [
-  'store_name', 'store_address', 'smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'smtp_from', 'owner_email',
+  'store_name', 'store_address',
   'receipt_header', 'receipt_footer', 'printer_name', 'paper_width', 'auto_print', 'label_printer_name',
 ];
 
@@ -155,26 +155,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const out = {};
     for (const k of SETTING_KEYS) out[k] = getSetting(k);
     if (!out.store_name) out.store_name = 'Toko Saya';
-    if (!out.smtp_port) out.smtp_port = '587';
-    if (!out.smtp_security) out.smtp_security = 'starttls';
     if (!out.paper_width) out.paper_width = '58';
     if (out.auto_print === '') out.auto_print = '1';
-    out.has_smtp_pass = !!getSetting('smtp_pass');
     return out;
   }
-  function getSettingsRaw() {
-    return { ...getSettings(), smtp_pass: decrypt(getSetting('smtp_pass')) };
-  }
   function saveSettings(d = {}) {
-    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const owner = toStr(d.owner_email, 'Email owner', { max: 500 });
-    for (const e of owner.split(/[,;]/).map((x) => x.trim()).filter(Boolean)) {
-      if (!emailRe.test(e)) fail(`Email owner tidak valid: ${e}`);
-    }
-    const from = toStr(d.smtp_from, 'Email pengirim');
-    if (from && !emailRe.test(from.replace(/^.*<|>$/g, ''))) fail('Email pengirim tidak valid.');
-    if (d.smtp_port !== undefined && d.smtp_port !== '') toInt(d.smtp_port, 'Port SMTP', { min: 1, max: 65535 });
-    if (d.smtp_security && !['ssl', 'starttls', 'none'].includes(d.smtp_security)) fail('Jenis keamanan SMTP tidak dikenal.');
     if (d.paper_width !== undefined && !['58', '80'].includes(String(d.paper_width))) fail('Lebar kertas harus 58 mm atau 80 mm.');
     if (d.auto_print !== undefined) d.auto_print = d.auto_print === true || d.auto_print === '1' ? '1' : '0';
     db.tx(() => {
@@ -184,8 +169,6 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         const v = k === 'receipt_header' || k === 'receipt_footer' ? String(d[k]).replace(/\r\n/g, '\n').slice(0, 500) : toStr(d[k], k, { max: 500 });
         setSetting(k, v);
       }
-      if (d.clear_smtp_pass) setSetting('smtp_pass', '');
-      else if (d.smtp_pass) setSetting('smtp_pass', encrypt(String(d.smtp_pass)));
     });
     return getSettings();
   }
@@ -600,37 +583,13 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return { shift_uid: uid };
   }
 
-  // Isi riwayat TIDAK ditampilkan di aplikasi (hanya bisa dikirim ulang ke email owner):
+  // Isi riwayat TIDAK ditampilkan di aplikasi; layar hanya melihat kasir, waktu, dan status kirim ke mother base.
   // daftar ini sengaja tanpa omset, struk, atau barang.
   function listShiftHistory() {
     return db.all(
-      `SELECT shift_uid, cashier_name, shift_start, closed_at, CASE WHEN email_sent_at IS NULL THEN 0 ELSE 1 END AS email_terkirim
-       FROM shift_history ORDER BY closed_at DESC`,
+      `SELECT h.shift_uid, h.cashier_name, h.shift_start, h.closed_at, CASE WHEN o.sent_at IS NULL THEN 0 ELSE 1 END AS mb_terkirim
+       FROM shift_history h LEFT JOIN mb_outbox_shift o ON o.shift_uid = h.shift_uid ORDER BY h.closed_at DESC`,
     );
-  }
-
-  // Laporan tutup shift yang email-nya belum terkirim (dicoba ulang otomatis oleh proses utama)
-  function pendingShiftEmails() {
-    return db.all('SELECT shift_uid, closed_at, email_error FROM shift_history WHERE email_sent_at IS NULL ORDER BY closed_at');
-  }
-  function markShiftEmail({ shift_uid, ok, error = '' } = {}) {
-    db.tx(() => {
-      if (ok) db.run('UPDATE shift_history SET email_sent_at = ?, email_error = NULL WHERE shift_uid = ?', [localNow(), shift_uid]);
-      else db.run('UPDATE shift_history SET email_error = ? WHERE shift_uid = ? AND email_sent_at IS NULL', [String(error).slice(0, 500), shift_uid]);
-    });
-  }
-
-  // Data lengkap satu shift untuk mengirim ulang laporannya (hanya dipakai proses utama, diblokir dari jaringan)
-  function shiftHistoryReport({ shift_uid } = {}) {
-    const shift = db.get('SELECT * FROM shift_history WHERE shift_uid = ?', [shift_uid]);
-    if (!shift) fail(`Riwayat shift tidak ditemukan (riwayat hanya disimpan ${SHIFT_HISTORY_DAYS} hari).`);
-    shift.by_method = JSON.parse(shift.by_method || '[]');
-    const byItem = db.all(
-      `SELECT sku, product_name AS name, SUM(qty_sold) AS qty, SUM(line_total) AS total
-       FROM shift_history_sales WHERE shift_uid = ? GROUP BY sku, product_name ORDER BY total DESC`, [shift_uid],
-    );
-    const sales = db.all('SELECT * FROM shift_history_sales WHERE shift_uid = ? ORDER BY id', [shift_uid]);
-    return { shift, byItem, sales };
   }
 
   // ---------------------------------------------------------------- Transaksi mode darurat (dari PC kasir)
@@ -1275,7 +1234,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   // ---------------------------------------------------------------- Mother base (pusat data kantor)
   // Data dikirim oleh PC pemilik database (src/motherbase.js). Fungsi di sini hanya menyiapkan dan
-  // menandai data; tidak ada koneksi jaringan. Rahasia toko tidak ikut: password/akun SMTP, email owner,
+  // menandai data; tidak ada koneksi jaringan. Rahasia toko tidak ikut: kunci toko mother base,
   // hash PIN, kode pasangan, dan penanda teknis.
   const MB_DOCS = {
     receptions: { table: 'stock_receptions', cursor: 'mb_cursor_receptions' },
@@ -1607,11 +1566,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     mbConfig, mbSaveConfig, mbStatus, mbShiftSent, mbState, mbSetState, mbQueueHistory, mbBatch, mbAck, mbApplyMaster, mbMasterSince,
     needsSetup, listUsers, saveUser, deleteUser, authCache, verifyLogin,
     listLabelDesigns, getLabelDesign, saveLabelDesign, deleteLabelDesign, setDefaultLabelDesign, labelItemsFromReception,
-    meta, getSettings, getSettingsRaw, saveSettings,
+    meta, getSettings, saveSettings,
     getProduct, listProducts, categories, findByCode, searchProducts, saveProduct, deleteProduct, importRows,
     stockSnapshot, lowStock,
     getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, shiftSalesRows,
-    archiveShift, pruneShiftHistory, listShiftHistory, shiftHistoryReport, pendingShiftEmails, markShiftEmail,
+    archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
     createReception, listReceptions, getReception, importReceptions,
