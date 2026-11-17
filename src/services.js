@@ -1249,7 +1249,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
   function assertMasterUnlocked(what) {
     if (masterLocked()) {
-      fail(`Daftar barang dikunci mother base: ${what} hanya lewat mother base (Pengaturan → Mother Base → Ambil Master Barang).`);
+      fail(`Daftar barang dikunci mother base: ${what} hanya lewat mother base (Daftar Barang → Ambil Master Barang).`);
     }
   }
 

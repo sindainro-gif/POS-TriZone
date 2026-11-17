@@ -74,6 +74,10 @@ app.on('browser-window-created', (_e, win) => {
       const hist = svc.listShiftHistory();
       const uid = JSON.stringify(hist[0] && hist[0].shift_uid);
       if (hist.length !== 1 || svc.shiftSalesRows().length || hist[0].mb_terkirim !== 0) throw new Error('penjualan tidak tersimpan sebagai cadangan');
+      // DEMO tidak terhubung ke mother base: tombol Ambil Master Barang tidak ditampilkan
+      await run(`go('products')`);
+      await wait(600);
+      if (await run(`document.querySelector('#pdPull').offsetParent !== null`)) throw new Error('tombol Ambil Master Barang seharusnya tersembunyi di DEMO');
       await run(`go('shift')`);
       await wait(900);
       const histText = await run(`document.querySelector('#shMbCard').innerText`);

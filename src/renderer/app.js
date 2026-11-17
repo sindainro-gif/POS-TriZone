@@ -1387,6 +1387,18 @@ views.opname = (() => {
 })();
 
 // ================================================================ 4. DAFTAR BARANG
+// Hasil Ambil Master Barang (dipakai di Daftar Barang dan Pengaturan → Mother Base)
+function showMasterResult(x) {
+  if (x.dilewati.length) {
+    modal({
+      title: 'Master Barang Diambil',
+      body: `<p>${num(x.jumlah)} barang dari mother base: ${num(x.baru)} baru, ${num(x.diubah)} diubah, ${num(x.sama)} sama.</p>
+        <p class="small">${num(x.dilewati.length)} barang dilewati:</p>${errorList(x.dilewati)}`,
+      actions: [{ label: 'Tutup', kind: 'primary' }],
+    });
+  } else toast(`Master barang: ${num(x.baru)} baru, ${num(x.diubah)} diubah, ${num(x.sama)} sama.`, 'ok', 7000);
+}
+
 views.products = (() => {
   let rows = [];
   let t;
@@ -1486,6 +1498,16 @@ views.products = (() => {
   }
 
   $('#pdAdd').addEventListener('click', () => openForm(null));
+  // Semua peran boleh mengambil master barang terbaru dari mother base (di PC kasir diteruskan ke PC gudang)
+  $('#pdPull').addEventListener('click', async () => {
+    const btn = $('#pdPull');
+    btn.disabled = true;
+    btn.textContent = 'Mengambil…';
+    try {
+      showMasterResult(await api('products:pullMaster'));
+      load();
+    } catch (e) { toast(e.message, 'err', 8000); } finally { btn.disabled = false; btn.textContent = 'Ambil Master Barang'; }
+  });
   $('#pdTemplate').addEventListener('click', async () => {
     try { const f = await api('products:template'); if (f) toast(`Template disimpan: ${f}`, 'ok', 6000); } catch (e) { toast(e.message, 'err'); }
   });
@@ -1512,6 +1534,7 @@ views.products = (() => {
     // Pakai style, bukan kelas .hidden: kelas itu juga dipakai untuk menyembunyikan tombol menurut peran
     $('#pdImport').style.display = locked ? 'none' : '';
     $('#pdAdd').style.display = locked ? 'none' : '';
+    $('#pdPull').style.display = document.body.classList.contains('demo') ? 'none' : ''; // DEMO tidak terhubung ke mother base
     load();
     setTimeout(() => $('#pdSearch').focus(), 30);
   }
@@ -2315,15 +2338,7 @@ const mbCard = (() => {
     const r = await api('mb:pullMaster');
     st = r.status;
     render();
-    const x = r.result;
-    if (x.dilewati.length) {
-      modal({
-        title: 'Master Barang Diambil',
-        body: `<p>${num(x.jumlah)} barang dari mother base: ${num(x.baru)} baru, ${num(x.diubah)} diubah, ${num(x.sama)} sama.</p>
-          <p class="small">${num(x.dilewati.length)} barang dilewati:</p>${errorList(x.dilewati)}`,
-        actions: [{ label: 'Tutup', kind: 'primary' }],
-      });
-    } else toast(`Master barang: ${num(x.baru)} baru, ${num(x.diubah)} diubah, ${num(x.sama)} sama.`, 'ok', 7000);
+    showMasterResult(r.result);
   }));
 
   return { load };

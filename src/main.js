@@ -224,11 +224,19 @@ async function sendShiftToMotherbase(uid) {
 
 const sendMotherbaseLocal = () => sendShiftToMotherbase(null);
 
+// Ambil master barang dari mother base sekarang (tombol di Daftar Barang, semua peran, juga dari PC kasir).
+async function pullMasterLocal() {
+  if (!mb || DEMO) throw userError('Versi DEMO tidak mengambil master barang dari mother base.');
+  if (!localSvc.mbConfig().ready) throw userError('Mother base belum diatur. Minta Admin mengisinya di Pengaturan → Mother Base.');
+  return mb.ambilMaster({ full: true });
+}
+
 // Perintah yang boleh dipanggil PC kasir lewat jaringan
 const SERVER_MAIN = {
   'main.checkout': checkoutLocal,
   'main.closeShift': closeShiftLocal,
   'main.sendMotherbase': sendMotherbaseLocal,
+  'main.pullMaster': pullMasterLocal,
 };
 const REMOTE_BLOCKED = new Set([
   'archiveShift', 'pruneShiftHistory', 'checkout', 'shiftData',
@@ -550,6 +558,7 @@ const PUBLIC = new Set(['auth:status', 'auth:setup', 'auth:login', 'auth:logout'
 const ACCESS = {
   'settings:get': ALL, 'printer:list': ALL, 'stock:low': ALL, 'shift:get': ALL,
   'products:list': ALL, 'products:categories': ALL, 'products:get': ALL, 'products:findByCode': ALL, 'products:search': ALL,
+  'products:pullMaster': ALL,
   'products:save': GUDANG, 'products:delete': GUDANG, 'products:import': GUDANG, 'products:template': GUDANG,
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
@@ -674,6 +683,7 @@ const handlers = {
   'shift:history': () => svc.listShiftHistory(), // kasir, waktu & status kirim mother base (isi riwayat tidak ditampilkan)
   'shift:close': (a) => (isClient() ? closeShiftClient(a) : runMain('main.closeShift', a)),
   'shift:sendMotherbase': () => runMain('main.sendMotherbase'),
+  'products:pullMaster': () => runMain('main.pullMaster'),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
   'offline:markChecked': (a) => svc.markOfflineChecked(a),
 

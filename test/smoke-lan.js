@@ -98,6 +98,10 @@ app.on('browser-window-created', (_e, win) => {
       if (nav !== 'checkout,products,shift') throw new Error('menu kasir tidak sesuai peran');
       const denied = await run(`window.posBridge.call('device:get')`);
       if (denied.ok) throw new Error('kasir bisa membuka pengaturan mode komputer');
+      // Ambil Master Barang dari PC kasir diteruskan ke PC gudang (di sana mother base belum diatur)
+      const pull = await run(`window.posBridge.call('products:pullMaster')`);
+      console.log('ambil master dari PC kasir:', JSON.stringify(pull));
+      if (pull.ok || !/belum diatur/.test(pull.error)) throw new Error('Ambil Master Barang dari PC kasir tidak diteruskan ke PC gudang');
       await shot('lan-03-menu-kasir');
 
       // Matikan PC gudang → kasir keluar lalu login lagi (login darurat dari cache akun)

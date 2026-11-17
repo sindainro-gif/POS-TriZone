@@ -39,6 +39,7 @@ PC Gudang / Mandiri mengirim data toko langsung ke **mother base** (database Sup
 - **Yang dikirim:** penjualan setiap tutup shift, penerimaan, mutasi, stok opname, transaksi mode darurat, daftar barang, dan stok 4 zona. Shift yang masih berjalan juga ikut, jadi omset hari ini sudah terlihat di kantor.
 - **Tanpa internet:** toko tetap jalan. Penjualan shift masuk antrean di `pos.db` dalam transaksi yang sama dengan tutup shift, dan dokumen ditandai terkirim hanya setelah mother base membalas. Pengiriman dicoba otomatis tiap 5 menit; kiriman ulang tidak membuat data dobel.
 - **Pengaturan:** **Pengaturan → Mother Base** (Admin, di PC Gudang / Mandiri): alamat mother base, anon key, kode toko 3 huruf, dan kunci toko dari kantor. Tombol **Tes Koneksi**, **Kirim Sekarang**, **Ambil Master Barang**.
+- **Ambil Master Barang untuk semua pengguna:** tombol **Ambil Master Barang** juga ada di halaman **Daftar Barang** dan bisa ditekan Admin, Gudang, maupun Kasir, termasuk dari PC Kasir (diteruskan ke PC Gudang). Barang baru dan perubahan nama, barcode, harga, atau satuan dari kantor langsung masuk. Tidak tampil di versi DEMO.
 - **Kunci daftar barang:** bila dicentang, barang baru, nama, barcode, merk, kategori, harga, dan satuan masuk hanya berubah lewat master barang dari mother base (diambil otomatis tiap jam). Batas minimum display toko tetap bisa diubah di toko. Stok tidak pernah diubah oleh master barang.
 - **Tidak ikut:** password, PIN, kode pasangan.
 - Versi DEMO tidak mengirim data.

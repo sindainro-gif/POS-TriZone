@@ -488,6 +488,7 @@ app.on('browser-window-created', (_e, win) => {
 
       // Tutup shift dengan mother base (tiruan lokal): data langsung dikirim, ditunggu, dan layar menyatakan terkirim
       const received = [];
+      let fakeProduk = []; // master barang yang dikirim mother base tiruan
       const fakeMb = require('http').createServer((req, resp) => {
         let body = '';
         req.on('data', (c) => { body += c; });
@@ -496,7 +497,7 @@ app.on('browser-window-created', (_e, win) => {
           if (req.url.endsWith('/rpc/terima_data')) received.push(...(p.shifts || []).map((s) => s.shift.shift_uid));
           const reply = req.url.endsWith('/rpc/terima_data')
             ? { ok: true, kode_toko: p.kode_toko, shift_diterima: (p.shifts || []).map((s) => s.shift.shift_uid), dokumen: {} }
-            : { ok: true, kode_toko: p.kode_toko, produk: [], server_at: new Date().toISOString() };
+            : { ok: true, kode_toko: p.kode_toko, produk: p.sejak && p.sejak.startsWith('2999') ? [] : fakeProduk, server_at: new Date().toISOString() };
           resp.writeHead(200, { 'Content-Type': 'application/json' });
           resp.end(JSON.stringify(reply));
         });
@@ -523,6 +524,17 @@ app.on('browser-window-created', (_e, win) => {
       console.log('kartu kiriman mother base:', sentCard.replace(/\s+/g, ' '));
       if ((sentCard.match(/Terkirim/g) || []).length !== 2 || /Menunggu|Kirim Sekarang/.test(sentCard)) throw new Error('kartu Kiriman ke Mother Base tidak berubah menjadi Terkirim');
       await shot('09d-kiriman-mother-base-terkirim');
+      // Ambil Master Barang dari halaman Daftar Barang: barang baru dari kantor langsung masuk
+      fakeProduk = [{ sku: 'MB-001', barcode: '2000000000017', name: 'Barang Dari Kantor', brand: 'Pusat', category: 'Kantor', unit_price: 9900, pack_unit: 'Dus', pack_ratio: 12, aktif: true }];
+      await run(`go('products')`);
+      await wait(800);
+      await run(`document.querySelector('#pdPull').click()`);
+      await wait(2500);
+      const pulled = svc.getProduct('MB-001');
+      const pdText = await run(`document.querySelector('#pdBody').innerText`);
+      console.log('ambil master barang (Daftar Barang):', pulled && pulled.name, pulled && pulled.unit_price, '· tampil di tabel:', /Barang Dari Kantor/.test(pdText));
+      if (!pulled || pulled.unit_price !== 9900 || !/Barang Dari Kantor/.test(pdText)) throw new Error('Ambil Master Barang di Daftar Barang tidak memasukkan barang baru');
+      await shot('09e-ambil-master-barang');
       fakeMb.close();
       svc.mbSaveConfig({ url: '' });
       await run(`window.posBridge.call('shift:open', {})`);
@@ -581,8 +593,13 @@ app.on('browser-window-created', (_e, win) => {
         const repDir = await run(`window.posBridge.call('app:reportsDir')`);
         const openPath = await run(`window.posBridge.call('app:openPath', { dir: '.' })`);
         if (repDir.ok || openPath.ok) throw new Error(`lokasi laporan bisa dilihat / dibuka oleh ${name}`);
+        // Ambil Master Barang boleh untuk semua peran (mother base di sini sengaja tidak terjangkau → pesan mother base, bukan Akses ditolak)
+        const pull = await run(`window.posBridge.call('products:pullMaster')`);
+        if (pull.ok || /Akses ditolak/.test(pull.error) || !/mother base/.test(pull.error)) throw new Error(`Ambil Master Barang untuk ${name} salah: ${JSON.stringify(pull)}`);
         await run(`go('products')`);
         await wait(800);
+        const pullShown = await run(`(() => { const b = document.querySelector('#pdPull'); return !!b && b.offsetParent !== null; })()`);
+        if (!pullShown) throw new Error(`tombol Ambil Master Barang tidak terlihat oleh ${name}`);
         const edits = await run(`document.querySelectorAll('#pdBody [data-edit]').length + (document.querySelector('#pdAdd').classList.contains('hidden') ? 0 : 1)`);
         if ((name === 'Rina') !== (edits === 0)) throw new Error(`hak ubah Daftar Barang untuk ${name} salah`);
         await shot(`11-login-${name.toLowerCase()}`);
