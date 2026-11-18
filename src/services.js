@@ -583,7 +583,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return { shift_uid: uid };
   }
 
-  // Isi riwayat TIDAK ditampilkan di aplikasi; layar hanya melihat kasir, waktu, dan status kirim ke mother base.
+  // Riwayat shift (cadangan) beserta status kirim ke mother base. Tidak ditampilkan di layar pegawai.
   // daftar ini sengaja tanpa omset, struk, atau barang.
   function listShiftHistory() {
     return db.all(
@@ -1249,7 +1249,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
   function assertMasterUnlocked(what) {
     if (masterLocked()) {
-      fail(`Daftar barang dikunci mother base: ${what} hanya lewat mother base (Daftar Barang → Ambil Master Barang).`);
+      fail(`Daftar barang dikunci (${what} tidak diizinkan). Tekan Perbarui Daftar Barang untuk mengambil data terbaru.`);
     }
   }
 

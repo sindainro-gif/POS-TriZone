@@ -39,7 +39,8 @@ PC Gudang / Mandiri mengirim data toko langsung ke **mother base** (database Sup
 - **Yang dikirim:** penjualan setiap tutup shift, penerimaan, mutasi, stok opname, transaksi mode darurat, daftar barang, dan stok 4 zona. Shift yang masih berjalan juga ikut, jadi omset hari ini sudah terlihat di kantor.
 - **Tanpa internet:** toko tetap jalan. Penjualan shift masuk antrean di `pos.db` dalam transaksi yang sama dengan tutup shift, dan dokumen ditandai terkirim hanya setelah mother base membalas. Pengiriman dicoba otomatis tiap 5 menit; kiriman ulang tidak membuat data dobel.
 - **Pengaturan:** **Pengaturan → Mother Base** (Admin, di PC Gudang / Mandiri): alamat mother base, anon key, kode toko 3 huruf, dan kunci toko dari kantor. Tombol **Tes Koneksi**, **Kirim Sekarang**, **Ambil Master Barang**.
-- **Ambil Master Barang untuk semua pengguna:** tombol **Ambil Master Barang** juga ada di halaman **Daftar Barang** dan bisa ditekan Admin, Gudang, maupun Kasir, termasuk dari PC Kasir (diteruskan ke PC Gudang). Barang baru dan perubahan nama, barcode, harga, atau satuan dari kantor langsung masuk. Tidak tampil di versi DEMO.
+- **Perbarui Daftar Barang (semua pengguna):** tombol **Perbarui Daftar Barang** di halaman **Daftar Barang** mengambil master barang dari mother base dan bisa ditekan Admin, Gudang, maupun Kasir, termasuk dari PC Kasir (diteruskan ke PC Gudang). Tidak tampil di versi DEMO.
+- **Disembunyikan dari pegawai:** layar kerja (Laporan Shift, tutup shift, Daftar Barang, layar login) tidak menyebut mother base maupun data cadangan, termasuk untuk akun Admin. Pesannya netral, misalnya "Daftar barang diperbarui" dan "Daftar barang belum bisa diperbarui". Status kiriman, antrean, dan error hanya terlihat di **Pengaturan → Mother Base** (Admin).
 - **Kunci daftar barang:** bila dicentang, barang baru, nama, barcode, merk, kategori, harga, dan satuan masuk hanya berubah lewat master barang dari mother base (diambil otomatis tiap jam). Batas minimum display toko tetap bisa diubah di toko. Stok tidak pernah diubah oleh master barang.
 - **Tidak ikut:** password, PIN, kode pasangan.
 - Versi DEMO tidak mengirim data.
@@ -145,8 +146,8 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
   - Laporan dari versi sebelum 1.9.1 tetap di `Dokumen\POS-Laporan` (tidak dipindah otomatis).
 - **Riwayat Shift (cadangan):** tutup shift tidak lagi menghapus penjualan. Penjualan shift yang sudah ditutup dipindah ke tabel riwayat di database.
   - Riwayat disimpan **4 hari** (hari ini + 3 hari sebelumnya). Yang lebih lama dihapus otomatis saat tutup shift, saat aplikasi dibuka, dan tiap jam.
-  - **Isi riwayat tidak bisa dibuka di aplikasi.** Di **Laporan Shift → Kiriman ke Mother Base** hanya tampil kasir, waktu shift, dan status **Terkirim ✓ / Menunggu**. Tombol **Kirim Sekarang** muncul bila ada yang menunggu.
-  - **Tutup shift langsung mengirim ke mother base** dan menunggu konfirmasinya. Bila internet putus atau mother base belum diatur, shift tetap ditutup; datanya menunggu di antrean dan dikirim otomatis tiap 5 menit.
+  - **Riwayat tidak tampil di aplikasi** dan keberadaannya tidak disebut di layar pegawai.
+  - **Tutup shift langsung mengirim ke mother base** dan menunggu konfirmasinya, tetapi layar hanya menampilkan "Shift Berhasil Ditutup" dan omsetnya. Bila internet putus atau mother base belum diatur, shift tetap ditutup; datanya menunggu di antrean dan dikirim otomatis tiap 5 menit. Admin memantau jumlah shift menunggu dan tombol **Kirim Sekarang** di **Pengaturan → Mother Base**.
 - Antrean mother base: tabel `mb_outbox_shift` di `pos.db` (tidak ikut dihapus bersama Riwayat Shift sampai diterima mother base).
 
 ## Login & hak akses

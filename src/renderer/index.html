@@ -264,13 +264,13 @@
       <header class="page-head">
         <div><h1>Daftar Barang</h1><p>Master produk dan stok per zona.</p></div>
         <div class="btn-row">
-          <button class="btn" id="pdPull" title="Ambil barang baru, nama, barcode, harga, dan satuan terbaru dari mother base">Ambil Master Barang</button>
+          <button class="btn" id="pdPull" title="Ambil barang baru dan perubahan nama, barcode, harga, dan satuan terbaru">Perbarui Daftar Barang</button>
           <button class="btn ghost" id="pdTemplate">Unduh Template</button>
           <button class="btn ghost" id="pdImport">Import Excel / CSV</button>
           <button class="btn primary" id="pdAdd">+ Tambah Barang</button>
         </div>
       </header>
-      <div id="pdLocked" class="alert warn hidden" style="margin-bottom:12px">Daftar barang <b>dikunci mother base</b>. Barang baru, nama, barcode, harga, dan satuan diubah di kantor lalu diambil lewat tombol <b>Ambil Master Barang</b> di atas (otomatis tiap jam). Batas minimum display toko tetap bisa diubah di sini.</div>
+      <div id="pdLocked" class="alert warn hidden" style="margin-bottom:12px">Daftar barang <b>dikunci</b>. Barang baru, nama, barcode, harga, dan satuan tidak diubah di sini; tekan <b>Perbarui Daftar Barang</b> untuk mengambil yang terbaru (otomatis tiap jam). Batas minimum display toko tetap bisa diubah.</div>
       <div class="card">
         <div class="card-head">
           <div class="btn-row">
@@ -400,7 +400,7 @@
     <!-- ======================= SHIFT ======================= -->
     <section class="view" id="view-shift">
       <header class="page-head">
-        <div><h1>Laporan Shift &amp; Tutup Kasir</h1><p>Rekap omset shift berjalan, tutup shift &amp; kirim ke mother base, dan status kiriman 4 hari terakhir.</p></div>
+        <div><h1>Laporan Shift &amp; Tutup Kasir</h1><p>Rekap omset shift berjalan dan tutup kasir.</p></div>
       </header>
       <div id="shiftContent"></div>
     </section>
@@ -436,7 +436,7 @@
           </div>
           <h2 class="mt">Catatan</h2>
           <ul class="notes">
-            <li>Saat tutup shift, penjualan <b>langsung dikirim ke mother base</b> dan hasilnya ditampilkan. Bila internet putus, shift tetap tertutup dan datanya dikirim ulang otomatis tiap 5 menit. Statusnya terlihat di <b>Laporan Shift → Kiriman ke Mother Base</b>.</li>
+            <li>Saat tutup shift, penjualan <b>langsung dikirim ke mother base</b> (hasilnya tidak ditampilkan ke pegawai). Bila internet putus, shift tetap tertutup dan datanya dikirim ulang otomatis tiap 5 menit. Statusnya terlihat di kartu <b>Mother Base</b> di bawah. Layar kerja pegawai tidak menyebut mother base.</li>
             <li>File laporan (Rekap PDF, CSV penjualan, CSV stok) tetap disimpan di folder laporan komputer ini sebagai cadangan.</li>
             <li>Database dicadangkan otomatis setiap hari (14 salinan terakhir).</li>
           </ul>

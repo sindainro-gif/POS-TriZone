@@ -232,10 +232,10 @@ function fakeMotherbase() {
     svc.mbSaveConfig({ kunci_master: true });
     assert.strictEqual(svc.meta().master_locked, true);
     const a = svc.getProduct('A-1');
-    throwsMsg(() => svc.saveProduct({ product: { ...a, unit_price: 1 } }), /dikunci mother base/);
-    throwsMsg(() => svc.saveProduct({ product: { ...a, sku: 'BARU', barcode: '2000000000999' }, isNew: true }), /dikunci mother base/);
-    throwsMsg(() => svc.deleteProduct({ sku: 'C-3' }), /dikunci mother base/);
-    throwsMsg(() => svc.importRows([{ SKU: 'X', Barcode: '1', Nama_Barang: 'X', Harga_Jual: 1 }]), /dikunci mother base/);
+    throwsMsg(() => svc.saveProduct({ product: { ...a, unit_price: 1 } }), /^Daftar barang dikunci \((?!.*mother base)/);
+    throwsMsg(() => svc.saveProduct({ product: { ...a, sku: 'BARU', barcode: '2000000000999' }, isNew: true }), /^Daftar barang dikunci \((?!.*mother base)/);
+    throwsMsg(() => svc.deleteProduct({ sku: 'C-3' }), /^Daftar barang dikunci \((?!.*mother base)/);
+    throwsMsg(() => svc.importRows([{ SKU: 'X', Barcode: '1', Nama_Barang: 'X', Harga_Jual: 1 }]), /^Daftar barang dikunci \((?!.*mother base)/);
     assert.strictEqual(svc.saveProduct({ product: { ...a, min_floor_alert: 9 } }).min_floor_alert, 9);
     svc.mbSaveConfig({ kunci_master: false });
     assert.strictEqual(svc.saveProduct({ product: { ...a, unit_price: 1300 } }).unit_price, 1300);

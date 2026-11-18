@@ -60,7 +60,7 @@ app.on('browser-window-created', (_e, win) => {
       // Tutup shift: file laporan dibuat di komputer ini, DEMO tidak mengirim ke mother base
       const close = await run(`window.posBridge.call('shift:close', {})`);
       console.log('tutup shift demo:', JSON.stringify(close.data || close.error));
-      if (!close.ok || close.data.motherbase.sent || !/DEMO/.test(close.data.motherbase.error)) throw new Error('tutup shift demo gagal');
+      if (!close.ok || 'motherbase' in close.data) throw new Error('tutup shift demo gagal');
       const demoRep = path.join(dataDir, 'Laporan-Demo');
       const repDirs = fs.existsSync(demoRep) ? fs.readdirSync(demoRep).sort() : [];
       const repFiles = repDirs.length ? fs.readdirSync(path.join(demoRep, repDirs[repDirs.length - 1])) : [];
@@ -70,32 +70,24 @@ app.on('browser-window-created', (_e, win) => {
       console.log('shift setelah tutup:', svc.getShift());
       if (svc.getShift()) throw new Error('tutup shift demo: shift masih terbuka');
 
-      // Riwayat shift: penjualan tersimpan sebagai cadangan, isinya tidak bisa dilihat, hanya status kirim ke mother base
+      // Riwayat shift: penjualan tersimpan sebagai cadangan, tetapi tidak disebut / ditampilkan di layar
       const hist = svc.listShiftHistory();
       const uid = JSON.stringify(hist[0] && hist[0].shift_uid);
       if (hist.length !== 1 || svc.shiftSalesRows().length || hist[0].mb_terkirim !== 0) throw new Error('penjualan tidak tersimpan sebagai cadangan');
-      // DEMO tidak terhubung ke mother base: tombol Ambil Master Barang tidak ditampilkan
+      // DEMO tidak terhubung ke mother base: tombol Perbarui Daftar Barang tidak ditampilkan
       await run(`go('products')`);
       await wait(600);
-      if (await run(`document.querySelector('#pdPull').offsetParent !== null`)) throw new Error('tombol Ambil Master Barang seharusnya tersembunyi di DEMO');
+      if (await run(`document.querySelector('#pdPull').offsetParent !== null`)) throw new Error('tombol Perbarui Daftar Barang seharusnya tersembunyi di DEMO');
       await run(`go('shift')`);
       await wait(900);
-      const histText = await run(`document.querySelector('#shMbCard').innerText`);
-      console.log('kiriman mother base di layar:', histText.replace(/\s+/g, ' '));
-      if (!/Kiriman ke Mother Base/.test(histText) || !/Kasir/.test(histText) || !/Menunggu/.test(histText) || /Rp|Detail/.test(histText)) {
-        throw new Error('kartu Kiriman ke Mother Base tidak sesuai (isi riwayat tidak boleh tampil)');
-      }
+      const shiftPage = await run(`document.querySelector('#view-shift').innerText`);
+      console.log('laporan shift demo:', shiftPage.replace(/\s+/g, ' ').slice(0, 160));
+      if (/mother base|cadangan|4 hari/i.test(shiftPage) || await run(`!!document.querySelector('#shMbCard')`)) throw new Error('Laporan Shift masih menyebut mother base / cadangan');
+      await shot('demo-03b-laporan-shift-netral');
       const blocked = await run(`window.posBridge.call('shift:historyDetail', { shift_uid: ${uid} })`);
       if (blocked.ok || !/tidak dikenal/.test(blocked.error)) throw new Error('detail riwayat shift seharusnya tidak bisa dibuka');
       const gone = await run(`window.posBridge.call('shift:resendReport', { shift_uid: ${uid} })`);
       if (gone.ok) throw new Error('kirim ulang email seharusnya sudah dihapus');
-      // Tombol Kirim Sekarang: versi DEMO tidak mengirim, pesannya jelas
-      await run(`document.querySelector('#shMbSend').click()`);
-      await wait(1500);
-      await shot('demo-03b-kiriman-mother-base');
-      const toastText = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
-      console.log('kirim sekarang (DEMO):', toastText);
-      if (!/DEMO/.test(toastText)) throw new Error('Kirim Sekarang di DEMO seharusnya menolak dengan pesan jelas');
 
       // Reset → data contoh kembali ke awal, harus login lagi
       const reset = await run(`window.posBridge.call('demo:reset')`);

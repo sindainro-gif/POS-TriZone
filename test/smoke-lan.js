@@ -101,7 +101,7 @@ app.on('browser-window-created', (_e, win) => {
       // Ambil Master Barang dari PC kasir diteruskan ke PC gudang (di sana mother base belum diatur)
       const pull = await run(`window.posBridge.call('products:pullMaster')`);
       console.log('ambil master dari PC kasir:', JSON.stringify(pull));
-      if (pull.ok || !/belum diatur/.test(pull.error)) throw new Error('Ambil Master Barang dari PC kasir tidak diteruskan ke PC gudang');
+      if (pull.ok || !/belum diatur/.test(pull.error) || /mother base/i.test(pull.error)) throw new Error('Perbarui Daftar Barang dari PC kasir tidak diteruskan ke PC gudang / pesannya tidak netral');
       await shot('lan-03-menu-kasir');
 
       // Matikan PC gudang → kasir keluar lalu login lagi (login darurat dari cache akun)

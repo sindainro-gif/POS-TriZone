@@ -202,11 +202,13 @@ async function closeShiftLocal({ notes } = {}) {
   const motherbase = await sendShiftToMotherbase(uid);
 
   // Lokasi file laporan sengaja TIDAK dikirim ke layar (tersimpan di shift_history.report_dir)
-  return { motherbase, revenue: summary.totals.revenue, receipts: summary.totals.receipts };
+  // Hasil kiriman tidak ditampilkan ke pegawai (Admin memantaunya di Pengaturan → Mother Base)
+  if (!motherbase.sent && motherbase.configured) console.error('[mother base] shift belum terkirim:', motherbase.error);
+  return { revenue: summary.totals.revenue, receipts: summary.totals.receipts };
 }
 
 // Kirim antrean ke mother base sekarang juga dan pastikan shift `uid` (atau semua shift) sudah diterima.
-// Tidak pernah melempar: hasilnya { sent, configured, error, pending } untuk ditampilkan ke kasir.
+// Tidak pernah melempar: hasilnya { sent, configured, error, pending } (dicatat, tidak ditampilkan ke pegawai).
 async function sendShiftToMotherbase(uid) {
   if (!mb || DEMO) return { sent: false, configured: false, error: DEMO ? 'Versi DEMO tidak mengirim ke mother base.' : 'Mother base tidak tersedia.' };
   if (!localSvc.mbConfig().ready) {
@@ -222,20 +224,23 @@ async function sendShiftToMotherbase(uid) {
   return { sent, configured: true, error: sent ? '' : 'Mother base belum mengonfirmasi shift ini.', pending: localSvc.mbStatus().pending_shifts };
 }
 
-const sendMotherbaseLocal = () => sendShiftToMotherbase(null);
-
-// Ambil master barang dari mother base sekarang (tombol di Daftar Barang, semua peran, juga dari PC kasir).
+// Ambil master barang dari mother base sekarang (tombol Perbarui Daftar Barang, semua peran, juga dari PC kasir).
+// Pesannya netral: pegawai tidak perlu tahu ada mother base. Detail error tersimpan di status untuk Admin.
 async function pullMasterLocal() {
-  if (!mb || DEMO) throw userError('Versi DEMO tidak mengambil master barang dari mother base.');
-  if (!localSvc.mbConfig().ready) throw userError('Mother base belum diatur. Minta Admin mengisinya di Pengaturan → Mother Base.');
-  return mb.ambilMaster({ full: true });
+  if (!mb || DEMO) throw userError('Versi DEMO tidak memperbarui daftar barang.');
+  if (!localSvc.mbConfig().ready) throw userError('Pembaruan daftar barang belum diatur. Hubungi Admin.');
+  try {
+    return await mb.ambilMaster({ full: true });
+  } catch (err) {
+    console.error('[mother base] ambil master:', err.message);
+    throw userError('Daftar barang belum bisa diperbarui. Periksa internet, lalu coba lagi.');
+  }
 }
 
 // Perintah yang boleh dipanggil PC kasir lewat jaringan
 const SERVER_MAIN = {
   'main.checkout': checkoutLocal,
   'main.closeShift': closeShiftLocal,
-  'main.sendMotherbase': sendMotherbaseLocal,
   'main.pullMaster': pullMasterLocal,
 };
 const REMOTE_BLOCKED = new Set([
@@ -569,7 +574,6 @@ const ACCESS = {
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR,
-  'shift:history': KASIR, 'shift:sendMotherbase': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR,
 };
 
@@ -680,9 +684,7 @@ const handlers = {
   },
   'shift:summary': () => svc.shiftSummary(),
   'shift:receipt': (a) => svc.receiptDetail(a),
-  'shift:history': () => svc.listShiftHistory(), // kasir, waktu & status kirim mother base (isi riwayat tidak ditampilkan)
   'shift:close': (a) => (isClient() ? closeShiftClient(a) : runMain('main.closeShift', a)),
-  'shift:sendMotherbase': () => runMain('main.sendMotherbase'),
   'products:pullMaster': () => runMain('main.pullMaster'),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
   'offline:markChecked': (a) => svc.markOfflineChecked(a),

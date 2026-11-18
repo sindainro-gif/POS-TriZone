@@ -412,7 +412,7 @@ app.on('browser-window-created', (_e, win) => {
       const hist = svc.listShiftHistory();
       console.log('antrean mother base:', outbox.pending_shifts, '· baris riwayat:', salesBefore);
       if (outbox.pending_shifts !== 1 || hist[0].mb_terkirim !== 0) throw new Error('antrean mother base tidak tercatat');
-      if (!res.data.motherbase || res.data.motherbase.sent || res.data.motherbase.configured) throw new Error(`hasil mother base saat belum diatur salah: ${JSON.stringify(res.data.motherbase)}`);
+      if ('motherbase' in res.data) throw new Error('status mother base seharusnya tidak dikirim ke layar');
       if (hist[0].cashier_name !== 'Pemilik') throw new Error('nama kasir shift tidak diambil dari akun login');
       await wait(800);
       await shot('09-shift-ditutup-mother-base-menunggu');
@@ -426,18 +426,12 @@ app.on('browser-window-created', (_e, win) => {
       await wait(600);
       await run(`document.querySelector('[data-view=shift]').click()`);
       await wait(800);
-      const waitCard = await run(`document.querySelector('#shMbCard').innerText`);
-      console.log('kartu kiriman mother base:', waitCard.replace(/\s+/g, ' '));
-      if (!/Kiriman ke Mother Base/.test(waitCard) || !/Menunggu/.test(waitCard) || !/Kirim Sekarang/.test(waitCard) || /Rp|Detail/.test(waitCard)) {
-        throw new Error('kartu Kiriman ke Mother Base tidak menampilkan status Menunggu');
-      }
-      await shot('09b-kiriman-mother-base-menunggu');
-      // Kirim Sekarang saat mother base belum diatur: pesan jelas, data tetap menunggu
-      await run(`document.querySelector('#shMbSend').click()`);
-      await wait(1500);
-      const sendToast = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
-      console.log('kirim sekarang (belum diatur):', sendToast);
-      if (!/belum diatur/.test(sendToast) || svc.mbStatus().pending_shifts !== 1) throw new Error('Kirim Sekarang tanpa pengaturan seharusnya gagal dengan pesan jelas');
+      // Laporan Shift tidak menyebut mother base / cadangan dan tidak ada kartu kiriman
+      const shiftPage = await run(`document.querySelector('#view-shift').innerText`);
+      if (/mother base|cadangan|4 hari/i.test(shiftPage) || await run(`!!document.querySelector('#shMbCard')`)) throw new Error('halaman Laporan Shift masih menyebut mother base / cadangan');
+      await shot('09b-laporan-shift-netral');
+      const hidden = await run(`Promise.all(['shift:history', 'shift:sendMotherbase'].map((c) => window.posBridge.call(c).then((r) => r.ok)))`);
+      if (hidden.some(Boolean)) throw new Error('perintah riwayat / kirim mother base seharusnya sudah dihapus');
       const gone = await run(`window.posBridge.call('shift:resendReport', { shift_uid: 'x' })`);
       if (gone.ok) throw new Error('kirim ulang email seharusnya sudah dihapus');
       const opened = await run(`window.posBridge.call('shift:open', {})`);
@@ -507,29 +501,31 @@ app.on('browser-window-created', (_e, win) => {
       const closingUid = svc.getShift().shift_uid;
       await run(`go('shift')`);
       await wait(800);
+      if (await run(`document.querySelector('#shClose').innerText`) !== 'Tutup Shift') throw new Error('tombol tutup shift masih menyebut mother base');
       await run(`document.querySelector('#shClose').click()`);
       await wait(400);
+      const confirmText = await run(`document.querySelector('#modalRoot').innerText`);
+      if (/mother base|cadangan|4 hari/i.test(confirmText)) throw new Error(`konfirmasi tutup shift masih menyebut mother base / cadangan: ${confirmText}`);
       await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`); // konfirmasi Tutup Shift
       await wait(4000);
-      const mbShown = await run(`(document.querySelector('#shMbResult') || {}).innerText || ''`);
-      console.log('tutup shift → mother base:', mbShown.replace(/\s+/g, ' '), '· diterima:', received.length, 'shift');
-      if (!/sudah terkirim/.test(mbShown) || svc.mbStatus().pending_shifts !== 0 || !received.includes(closingUid)) {
+      // Data tetap langsung terkirim & dikonfirmasi, tetapi layar tidak menyebutnya
+      const doneShown = await run(`document.querySelector('#modalRoot').innerText`);
+      console.log('tutup shift (layar):', doneShown.replace(/\s+/g, ' '), '· diterima mother base:', received.length, 'shift');
+      if (!/Shift Berhasil Ditutup/.test(doneShown) || /mother base|cadangan|4 hari/i.test(doneShown)) throw new Error('layar hasil tutup shift tidak netral');
+      if (svc.mbStatus().pending_shifts !== 0 || !received.includes(closingUid) || svc.listShiftHistory().some((h) => !h.mb_terkirim)) {
         throw new Error('tutup shift tidak langsung mengirim ke mother base');
       }
-      await shot('09c-tutup-shift-terkirim-mother-base');
+      await shot('09c-tutup-shift-netral');
       await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
       await wait(1000);
-      // Kartu riwayat: kedua shift (yang tadi menunggu & yang baru) sudah terkirim, tombol Kirim Sekarang hilang
-      const sentCard = await run(`document.querySelector('#shMbCard').innerText`);
-      console.log('kartu kiriman mother base:', sentCard.replace(/\s+/g, ' '));
-      if ((sentCard.match(/Terkirim/g) || []).length !== 2 || /Menunggu|Kirim Sekarang/.test(sentCard)) throw new Error('kartu Kiriman ke Mother Base tidak berubah menjadi Terkirim');
-      await shot('09d-kiriman-mother-base-terkirim');
-      // Ambil Master Barang dari halaman Daftar Barang: barang baru dari kantor langsung masuk
+      // Perbarui Daftar Barang: barang baru dari kantor langsung masuk, pesannya tidak menyebut mother base
       fakeProduk = [{ sku: 'MB-001', barcode: '2000000000017', name: 'Barang Dari Kantor', brand: 'Pusat', category: 'Kantor', unit_price: 9900, pack_unit: 'Dus', pack_ratio: 12, aktif: true }];
       await run(`go('products')`);
       await wait(800);
       await run(`document.querySelector('#pdPull').click()`);
       await wait(2500);
+      const pullToast = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
+      if (!/Daftar barang diperbarui/.test(pullToast) || /mother base/i.test(pullToast)) throw new Error(`pesan Perbarui Daftar Barang tidak netral: ${pullToast}`);
       const pulled = svc.getProduct('MB-001');
       const pdText = await run(`document.querySelector('#pdBody').innerText`);
       console.log('ambil master barang (Daftar Barang):', pulled && pulled.name, pulled && pulled.unit_price, '· tampil di tabel:', /Barang Dari Kantor/.test(pdText));
@@ -593,13 +589,14 @@ app.on('browser-window-created', (_e, win) => {
         const repDir = await run(`window.posBridge.call('app:reportsDir')`);
         const openPath = await run(`window.posBridge.call('app:openPath', { dir: '.' })`);
         if (repDir.ok || openPath.ok) throw new Error(`lokasi laporan bisa dilihat / dibuka oleh ${name}`);
-        // Ambil Master Barang boleh untuk semua peran (mother base di sini sengaja tidak terjangkau → pesan mother base, bukan Akses ditolak)
+        // Perbarui Daftar Barang boleh untuk semua peran (mother base sengaja tidak terjangkau → pesan netral, bukan Akses ditolak)
         const pull = await run(`window.posBridge.call('products:pullMaster')`);
-        if (pull.ok || /Akses ditolak/.test(pull.error) || !/mother base/.test(pull.error)) throw new Error(`Ambil Master Barang untuk ${name} salah: ${JSON.stringify(pull)}`);
+        if (pull.ok || /Akses ditolak|mother base/i.test(pull.error) || !/belum bisa diperbarui/.test(pull.error)) throw new Error(`Ambil Master Barang untuk ${name} salah: ${JSON.stringify(pull)}`);
         await run(`go('products')`);
         await wait(800);
         const pullShown = await run(`(() => { const b = document.querySelector('#pdPull'); return !!b && b.offsetParent !== null; })()`);
-        if (!pullShown) throw new Error(`tombol Ambil Master Barang tidak terlihat oleh ${name}`);
+        if (!pullShown) throw new Error(`tombol Perbarui Daftar Barang tidak terlihat oleh ${name}`);
+        if (/mother base/i.test(await run(`document.querySelector('#view-products').innerText`))) throw new Error(`Daftar Barang menyebut mother base untuk ${name}`);
         const edits = await run(`document.querySelectorAll('#pdBody [data-edit]').length + (document.querySelector('#pdAdd').classList.contains('hidden') ? 0 : 1)`);
         if ((name === 'Rina') !== (edits === 0)) throw new Error(`hak ubah Daftar Barang untuk ${name} salah`);
         await shot(`11-login-${name.toLowerCase()}`);
