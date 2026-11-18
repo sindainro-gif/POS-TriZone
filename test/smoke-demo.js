@@ -65,8 +65,8 @@ app.on('browser-window-created', (_e, win) => {
       const repDirs = fs.existsSync(demoRep) ? fs.readdirSync(demoRep).sort() : [];
       const repFiles = repDirs.length ? fs.readdirSync(path.join(demoRep, repDirs[repDirs.length - 1])) : [];
       console.log('file laporan demo:', repFiles.join(', '));
-      if ('dir' in close.data || !repFiles.some((f) => /^Rekap_Shift_.*\.pdf$/.test(f))
-        || repFiles.filter((f) => f.endsWith('.csv')).length !== 2) throw new Error('file laporan demo tidak lengkap');
+      if ('dir' in close.data || !repFiles.some((f) => /^Rekap_Shift_.*\.pdf\.enc$/.test(f))
+        || repFiles.filter((f) => f.endsWith('.csv.enc')).length !== 2 || repFiles.some((f) => !f.endsWith('.enc'))) throw new Error('file laporan demo tidak lengkap / tidak terenkripsi');
       console.log('shift setelah tutup:', svc.getShift());
       if (svc.getShift()) throw new Error('tutup shift demo: shift masih terbuka');
 

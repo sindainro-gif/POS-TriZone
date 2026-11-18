@@ -17,6 +17,7 @@ const crypto = require('crypto');
 const { seedDemo, DEMO_ACCOUNTS } = require('./demo');
 const { createDraftStore } = require('./drafts');
 const { createMotherbase } = require('./motherbase');
+const reportCrypt = require('./reportcrypt');
 
 // Versi DEMO (Jalankan DEMO.bat): data latihan di folder terpisah; mencetak ke printer sungguhan, tidak mengirim ke mother base
 const DEMO = process.argv.includes('--demo') || process.env.POS_DEMO === '1';
@@ -58,6 +59,13 @@ const secrets = {
     return s || '';
   },
 };
+
+// Kunci enkripsi file laporan (file laporan.key di folder data, isinya dienkripsi akun Windows)
+let reportKeyCache;
+const reportKey = () => (reportKeyCache ||= reportCrypt.loadOrCreateKey(path.join(DATA_DIR, 'laporan.key'), secrets));
+// File laporan yang dibuka Admin didekripsi ke sini; dikosongkan saat aplikasi dibuka & ditutup
+const OPEN_DIR = path.join(DATA_DIR, 'buka-laporan');
+const clearOpenDir = () => { try { fs.rmSync(OPEN_DIR, { recursive: true, force: true }); } catch (_) { /* file masih dibuka program lain */ } };
 
 function userError(msg) {
   const e = new Error(msg);
@@ -191,7 +199,9 @@ async function closeShiftLocal({ notes } = {}) {
       [`Penjualan_Shift_${stamp}.csv`]: reports.salesCsv(localSvc.shiftSalesRows()),
       [`Snapshot_Stok_${stamp}.csv`]: reports.stockCsv(localSvc.stockSnapshot()),
     };
-    for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), content);
+    // Isi asli tidak pernah ditulis ke disk: langsung terenkripsi (hanya Admin yang bisa membuka lewat Pengaturan)
+    const key = reportKey();
+    for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name + reportCrypt.EXT), reportCrypt.encrypt(key, content));
     uid = localSvc.archiveShift({ closed_at: closedAt, notes: ctx.notes, report_dir: dir }).shift_uid;
   } finally {
     closingShift = false;
@@ -390,6 +400,29 @@ function saveTemplate({ title, fileName, sheet, headers, sample, textCols }) {
 }
 
 // ---------------------------------------------------------------- Cadangkan / pulihkan database
+function requireLocalReports() {
+  if (isClient()) throw userError('Laporan tutup shift ada di PC gudang. Buka dari Pengaturan di PC gudang.');
+}
+
+// Buka satu file laporan: didekripsi ke folder sementara lalu dibuka dengan program bawaan Windows
+async function openReport({ folder, file } = {}) {
+  requireLocalReports();
+  const plainName = (s) => typeof s === 'string' && s !== '' && !/[\\/]|\.\./.test(s);
+  if (!plainName(folder) || !plainName(file) || !/^Shift_/.test(folder) || !file.endsWith(reportCrypt.EXT)) throw userError('Nama laporan tidak valid.');
+  const src = path.join(reportsRoot(), folder, file);
+  if (!fs.existsSync(src)) throw userError('File laporan tidak ditemukan.');
+  let data;
+  try { data = reportCrypt.decrypt(reportKey(), fs.readFileSync(src)); } catch (err) { throw userError(err.message); }
+  const out = path.join(OPEN_DIR, folder, file.slice(0, -reportCrypt.EXT.length));
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, data);
+  if (process.env.POS_NO_SHELL_OPEN !== '1') {
+    const err = await shell.openPath(out);
+    if (err) throw userError(`Tidak bisa membuka laporan: ${err}`);
+  }
+  return { path: out };
+}
+
 function requireLocalDb() {
   if (isClient()) throw userError('Komputer ini terhubung ke PC gudang. Cadangkan / pulihkan database dilakukan di PC gudang.');
 }
@@ -607,7 +640,9 @@ const handlers = {
   // Hanya Admin (tidak tercantum di ACCESS): lokasi file laporan tidak boleh diketahui kasir
   'app:reportsDir': () => (isClient() ? 'Di PC gudang (laporan tutup shift dibuat di sana)' : reportsRoot()),
   'app:status': () => connectionStatus(),
-  'app:openReports': () => { requireLocalDb(); fs.mkdirSync(reportsRoot(), { recursive: true }); return shell.openPath(reportsRoot()); },
+  // Laporan tutup shift terenkripsi: hanya Admin (tidak tercantum di ACCESS), hanya di PC pemilik database
+  'reports:list': () => { requireLocalReports(); return reportCrypt.listReports(reportsRoot()); },
+  'reports:open': (a) => openReport(a),
   'db:backup': () => backupDatabase(),
   'db:restore': () => restoreDatabase(),
   'db:openFolder': () => shell.openPath(DATA_DIR),
@@ -810,6 +845,12 @@ async function startup() {
     return;
   }
   await openLocalDatabase();
+  clearOpenDir();
+  // Laporan dari versi sebelumnya (belum terenkripsi) ikut diamankan
+  try {
+    const n = reportCrypt.encryptExisting(reportsRoot(), reportKey());
+    if (n) console.log(`[laporan] ${n} file laporan lama dienkripsi`);
+  } catch (err) { console.error('[laporan] enkripsi file lama gagal:', err.message); }
   // Riwayat shift lebih lama dari 4 hari dihapus saat start & tiap jam (juga setiap tutup shift).
   const pruneHistory = () => {
     try { localSvc.pruneShiftHistory(); } catch (err) { console.error('[riwayat shift]', err); }
@@ -865,6 +906,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => {
     if (server) server.close();
+    clearOpenDir();
   });
 }
 

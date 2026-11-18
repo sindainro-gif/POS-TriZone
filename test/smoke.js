@@ -12,6 +12,12 @@ fs.mkdirSync(out, { recursive: true });
 process.env.POS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pos-smoke-data-'));
 process.env.POS_REPORTS_DIR = path.join(process.env.POS_DATA_DIR, 'laporan');
 process.env.POS_PRINT_TO_PDF = out; // nota "dicetak" ke PDF berukuran kertas thermal
+process.env.POS_NO_SHELL_OPEN = '1'; // laporan yang dibuka Admin tidak benar-benar dibuka di program lain
+// Laporan dari versi lama (belum terenkripsi): harus dienkripsi saat aplikasi dibuka
+const LEGACY_REPORT = 'Shift_20200101_000000';
+fs.mkdirSync(path.join(process.env.POS_REPORTS_DIR, LEGACY_REPORT), { recursive: true });
+fs.writeFileSync(path.join(process.env.POS_REPORTS_DIR, LEGACY_REPORT, 'Rekap_Shift_20200101_000000.pdf'), '%PDF-1.4 laporan lama');
+fs.writeFileSync(path.join(process.env.POS_REPORTS_DIR, LEGACY_REPORT, 'Penjualan_Shift_20200101_000000.csv'), 'No_Struk;Waktu\nINV-LAMA;2020');
 
 const { getServices } = require('../src/main.js');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -401,13 +407,45 @@ app.on('browser-window-created', (_e, win) => {
       const salesBefore = svc.shiftSalesRows().length;
       const res = await run(`window.posBridge.call('shift:close', {})`);
       console.log('tutup shift (mother base belum diatur):', JSON.stringify(res));
-      const dirs = fs.readdirSync(process.env.POS_REPORTS_DIR);
+      const dirs = fs.readdirSync(process.env.POS_REPORTS_DIR).filter((d) => d !== LEGACY_REPORT);
       const files = fs.readdirSync(path.join(process.env.POS_REPORTS_DIR, dirs[0]));
       console.log('file laporan:', files.join(', '));
-      const pdf = files.find((f) => f.endsWith('.pdf'));
-      fs.copyFileSync(path.join(process.env.POS_REPORTS_DIR, dirs[0], pdf), path.join(out, 'rekap.pdf'));
       if (!res.ok || 'emailed' in res.data || svc.getShift() || svc.shiftSalesRows().length) throw new Error('shift seharusnya tetap ditutup walau mother base belum diatur');
-      if (!files.some((f) => /^Rekap_Shift_.*\.pdf$/.test(f)) || files.filter((f) => f.endsWith('.csv')).length !== 2) throw new Error('file laporan lokal tidak lengkap');
+      // Laporan disimpan terenkripsi: nama .enc, isinya bukan PDF / CSV yang terbaca
+      if (!files.some((f) => /^Rekap_Shift_.*\.pdf\.enc$/.test(f)) || files.filter((f) => f.endsWith('.csv.enc')).length !== 2 || files.some((f) => !f.endsWith('.enc'))) {
+        throw new Error('file laporan tidak terenkripsi / tidak lengkap');
+      }
+      for (const f of files) {
+        const head = fs.readFileSync(path.join(process.env.POS_REPORTS_DIR, dirs[0], f)).toString('latin1');
+        if (!head.startsWith('POSTZ-LAP1') || /%PDF|No_Struk|Nama_Barang/.test(head)) throw new Error(`isi ${f} masih bisa dibaca`);
+      }
+      const legacy = fs.readdirSync(path.join(process.env.POS_REPORTS_DIR, LEGACY_REPORT));
+      console.log('laporan lama setelah aplikasi dibuka:', legacy.join(', '));
+      if (legacy.length !== 2 || legacy.some((f) => !f.endsWith('.enc'))) throw new Error('laporan lama belum dienkripsi saat aplikasi dibuka');
+      // Admin membuka laporan lewat Pengaturan: didekripsi ke folder sementara
+      const repList = await run(`window.posBridge.call('reports:list')`);
+      if (!repList.ok || repList.data.length !== 2 || repList.data[0].folder !== dirs[0] || repList.data[0].files.length !== 3) throw new Error(`daftar laporan salah: ${JSON.stringify(repList)}`);
+      const openRep = (file) => run(`window.posBridge.call('reports:open', ${JSON.stringify({ folder: dirs[0], file })})`);
+      const openedPdf = await openRep(files.find((f) => f.endsWith('.pdf.enc')));
+      const openedCsv = await openRep(files.find((f) => f.startsWith('Penjualan_')));
+      if (!openedPdf.ok || fs.readFileSync(openedPdf.data.path).subarray(0, 5).toString() !== '%PDF-') throw new Error(`Rekap PDF tidak bisa dibuka Admin: ${JSON.stringify(openedPdf)}`);
+      if (!openedCsv.ok || !fs.readFileSync(openedCsv.data.path, 'utf8').includes('No_Struk')) throw new Error('CSV penjualan tidak bisa dibuka Admin');
+      fs.copyFileSync(openedPdf.data.path, path.join(out, 'rekap.pdf'));
+      const badOpen = await Promise.all([
+        run(`window.posBridge.call('reports:open', { folder: '..', file: 'pos.db.enc' })`),
+        run(`window.posBridge.call('reports:open', ${JSON.stringify({ folder: dirs[0], file: '..\\..\\pos.db.enc' })})`),
+        run(`window.posBridge.call('reports:open', ${JSON.stringify({ folder: dirs[0], file: files[0].replace(/\.enc$/, '') })})`),
+      ]);
+      if (badOpen.some((r) => r.ok)) throw new Error('nama laporan yang aneh seharusnya ditolak');
+      await run(`document.querySelector('[data-view=settings]').click()`);
+      await wait(600);
+      await run(`document.querySelector('#stOpenReports').scrollIntoView(); document.querySelector('#stOpenReports').click()`);
+      await wait(700);
+      const repModal = await run(`document.querySelector('#modalRoot').innerText`);
+      if (!/Laporan Tutup Shift/.test(repModal) || !/Rekap PDF/.test(repModal) || !/Stok CSV/.test(repModal)) throw new Error('modal Lihat Laporan tidak sesuai');
+      await shot('08b-lihat-laporan-terenkripsi');
+      await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
+      await wait(300);
       const outbox = svc.mbStatus();
       const hist = svc.listShiftHistory();
       console.log('antrean mother base:', outbox.pending_shifts, '· baris riwayat:', salesBefore);
@@ -589,6 +627,9 @@ app.on('browser-window-created', (_e, win) => {
         const repDir = await run(`window.posBridge.call('app:reportsDir')`);
         const openPath = await run(`window.posBridge.call('app:openPath', { dir: '.' })`);
         if (repDir.ok || openPath.ok) throw new Error(`lokasi laporan bisa dilihat / dibuka oleh ${name}`);
+        const repL = await run(`window.posBridge.call('reports:list')`);
+        const repO = await run(`window.posBridge.call('reports:open', { folder: 'Shift_x', file: 'a.enc' })`);
+        if (repL.ok || repO.ok || !/Akses ditolak/.test(repL.error) || !/Akses ditolak/.test(repO.error)) throw new Error(`laporan bisa dibuka oleh ${name}`);
         // Perbarui Daftar Barang boleh untuk semua peran (mother base sengaja tidak terjangkau → pesan netral, bukan Akses ditolak)
         const pull = await run(`window.posBridge.call('products:pullMaster')`);
         if (pull.ok || /Akses ditolak|mother base/i.test(pull.error) || !/belum bisa diperbarui/.test(pull.error)) throw new Error(`Ambil Master Barang untuk ${name} salah: ${JSON.stringify(pull)}`);

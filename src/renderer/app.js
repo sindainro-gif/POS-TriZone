@@ -2557,7 +2557,35 @@ views.settings = (() => {
       toast('Nota tes dikirim ke printer.', 'ok');
     } catch (e) { toast(e.message, 'err', 8000); }
   });
-  $('#stOpenReports').addEventListener('click', () => api('app:openReports'));
+  // Laporan tutup shift terenkripsi: Admin membukanya satu per satu (didekripsi ke folder sementara)
+  const REPORT_KIND = [[/^Rekap_/, 'Rekap PDF'], [/^Penjualan_/, 'Penjualan CSV'], [/^Snapshot_Stok_/, 'Stok CSV']];
+  const reportLabel = (f) => (REPORT_KIND.find(([re]) => re.test(f)) || [null, f.replace(/\.enc$/, '')])[1];
+  const shiftLabel = (folder) => {
+    const m = /^Shift_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/.exec(folder);
+    return m ? fmtTime(`${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`) : folder;
+  };
+  $('#stOpenReports').addEventListener('click', async () => {
+    let list;
+    try { list = await api('reports:list'); } catch (e) { toast(e.message, 'err', 7000); return; }
+    const m = modal({
+      title: 'Laporan Tutup Shift',
+      wide: true,
+      body: list.length ? `<p class="muted small" style="margin-top:0">File disimpan terenkripsi. Klik untuk membuka; salinan yang dibuka dihapus saat aplikasi ditutup.</p>
+        <div class="tbl-wrap" style="max-height:420px"><table class="tbl"><thead><tr><th>Tutup Shift</th><th>File</th></tr></thead><tbody id="rpBody">
+        ${list.map((r) => `<tr><td>${esc(shiftLabel(r.folder))}</td><td><div class="btn-row">${r.files.map((f) => `<button class="btn sm" data-folder="${esc(r.folder)}" data-file="${esc(f)}">${esc(reportLabel(f))}</button>`).join('')}</div></td></tr>`).join('')}
+        </tbody></table></div>` : '<p class="muted">Belum ada laporan tutup shift.</p>',
+      actions: [{ label: 'Tutup', kind: 'primary' }],
+    });
+    m.el.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-file]');
+      if (!b) return;
+      b.disabled = true;
+      try {
+        await api('reports:open', { folder: b.dataset.folder, file: b.dataset.file });
+        toast(`${reportLabel(b.dataset.file)} dibuka.`, 'ok');
+      } catch (err) { toast(err.message, 'err', 8000); } finally { b.disabled = false; }
+    });
+  });
   $('#stOpenData').addEventListener('click', () => api('db:openFolder'));
   $('#stBackup').addEventListener('click', async () => {
     try { const f = await api('db:backup'); if (f) toast(`Database dicadangkan ke: ${f}`, 'ok', 8000); } catch (e) { toast(e.message, 'err', 8000); }
