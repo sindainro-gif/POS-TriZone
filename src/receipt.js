@@ -1,11 +1,18 @@
 'use strict';
-// Formatter nota thermal: teks lebar tetap (58 mm = 32 kolom, 80 mm = 48 kolom).
+// Nota thermal. Isi nota dibangun sebagai baris terstruktur (tengah, kiri, kiri–kanan, label = nilai, garis),
+// lalu dicetak sebagai HTML dengan font biasa (Segoe UI) yang ukurannya bisa diatur. Versi teks lebar tetap
+// (58 mm = 32 kolom, 80 mm = 48 kolom) tetap tersedia untuk ringkasan & uji otomatis.
 
 const COLS = { 58: 32, 80: 48 };
 const PRINTABLE_MM = { 58: 48, 80: 72 };
+const BASE_FONT_MM = { 58: 2.75, 80: 3.1 }; // ukuran huruf "Normal"
+const FONT_SCALES = ['90', '100', '115', '130']; // Kecil, Normal, Besar, Sangat Besar (persen)
+const TOP_MM = 5; // jarak atas: baris pertama tidak terpotong di tepi atas kertas
+const TEAR_MM = 12; // ruang kosong di bawah untuk menyobek
 
 const num = (n) => Math.round(Number(n) || 0).toLocaleString('id-ID');
 const pad2 = (n) => String(n).padStart(2, '0');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function center(text, cols) {
   const t = text.slice(0, cols);
@@ -36,9 +43,7 @@ function wrap(text, cols) {
   return out.length ? out : [''];
 }
 
-function textLines(text, cols) {
-  return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).flatMap((l) => wrap(l, cols)).map((l) => center(l, cols));
-}
+const textRows = (text, extra = {}) => String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((s) => ({ t: 'c', s, ...extra }));
 
 function parseTime(s) {
   const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
@@ -46,87 +51,130 @@ function parseTime(s) {
 }
 
 /**
+ * Baris nota terstruktur: { t: 'c' | 'l' | 'lr' | 'kv' | 'hr', ... }
  * receipt: { receipt_no, created_at, cashier, payment_method, lines:[{name, qty, unit_price, line_total}], total, cash_received, change }
  * settings: { receipt_header, receipt_footer, store_name, store_address, paper_width }
  */
-function buildReceiptLines(receipt, settings = {}, { reprint = false, now = new Date() } = {}) {
-  const cols = COLS[settings.paper_width] || COLS[58];
-  const dash = '-'.repeat(cols);
-  const out = [];
-
+function buildReceiptRows(receipt, settings = {}, { reprint = false, now = new Date() } = {}) {
+  const rows = [];
   const header = settings.receipt_header && settings.receipt_header.trim()
     ? settings.receipt_header
     : [settings.store_name, settings.store_address].filter(Boolean).join('\n');
-  out.push(...textLines(header, cols));
-  if (reprint) out.push(center('** CETAK ULANG **', cols));
-  if (settings.demo) out.push(center('** DEMO - BUKAN NOTA ASLI **', cols));
+  const head = textRows(header);
+  if (head.length) head[0].big = true; // baris pertama (nama toko) sedikit lebih besar
+  rows.push(...head);
+  if (reprint) rows.push({ t: 'c', s: '** CETAK ULANG **' });
+  if (settings.demo) rows.push({ t: 'c', s: '** DEMO - BUKAN NOTA ASLI **' });
   // Transaksi saat PC gudang tidak terhubung (nomor OFF-...), dikirim ke gudang setelah koneksi kembali
-  if (/^OFF-/.test(receipt.receipt_no)) out.push(center('** MODE DARURAT **', cols));
+  if (/^OFF-/.test(receipt.receipt_no)) rows.push({ t: 'c', s: '** MODE DARURAT **' });
   // Pembatalan dicetak sebagai nota tersendiri; nota asli yang dicetak ulang diberi tanda sudah dibatalkan
-  if (receipt.void_of) out.push(center('** NOTA PEMBATALAN **', cols));
-  if (receipt.voided_by) out.push(center('** NOTA SUDAH DIBATALKAN **', cols));
-  out.push(dash);
+  if (receipt.void_of) rows.push({ t: 'c', s: '** NOTA PEMBATALAN **' });
+  if (receipt.voided_by) rows.push({ t: 'c', s: '** NOTA SUDAH DIBATALKAN **' });
+  rows.push({ t: 'hr' });
 
-  const t = parseTime(receipt.created_at);
+  const tm = parseTime(receipt.created_at);
   // Nomor struk tidak dicetak (tetap tersimpan & tampil di Laporan Shift)
-  out.push(...leftRight(`Tgl: ${t ? `${t.d}-${t.mo}-${t.y.slice(2)}` : '-'}`, t ? `${t.h}:${t.mi}:${t.s}` : '', cols));
-  out.push(...wrap(`Ksr: ${receipt.cashier || '-'}`, cols));
+  rows.push({ t: 'lr', l: `Tgl: ${tm ? `${tm.d}-${tm.mo}-${tm.y.slice(2)}` : '-'}`, r: tm ? `${tm.h}:${tm.mi}:${tm.s}` : '' });
+  rows.push({ t: 'l', s: `Ksr: ${receipt.cashier || '-'}` });
   if (receipt.void_of) {
     const o = parseTime(receipt.void_of_at);
-    out.push(...wrap(`Batal nota: ${o ? `${o.d}-${o.mo}-${o.y.slice(2)} ${o.h}:${o.mi}:${o.s}` : '-'}`, cols));
+    rows.push({ t: 'l', s: `Batal nota: ${o ? `${o.d}-${o.mo}-${o.y.slice(2)} ${o.h}:${o.mi}:${o.s}` : '-'}` });
   }
-  out.push(dash);
+  rows.push({ t: 'hr' });
 
   for (const l of receipt.lines) {
-    out.push(...wrap(l.name, cols));
-    out.push(...leftRight(`${num(l.unit_price)} x ${num(l.qty)} =`, num(l.line_total), cols));
+    rows.push({ t: 'l', s: l.name });
+    rows.push({ t: 'lr', l: `${num(l.unit_price)} x ${num(l.qty)} =`, r: num(l.line_total) });
   }
-  out.push(dash);
+  rows.push({ t: 'hr' });
 
   const qty = receipt.lines.reduce((s, l) => s + Number(l.qty || 0), 0);
-  out.push(`BRS=${receipt.lines.length} ,QTY ${num(qty)}`);
-  out.push(...leftRight('Total       =', num(receipt.total), cols));
+  rows.push({ t: 'l', s: `BRS=${receipt.lines.length} ,QTY ${num(qty)}` });
+  rows.push({ t: 'kv', k: 'Total', v: num(receipt.total) });
   const isCash = receipt.payment_method === 'Tunai';
   if (receipt.void_of) {
-    out.push(...leftRight('Dikembalikan=', num(receipt.total), cols));
-    out.push(dash);
-    out.push(...wrap(`Alasan: ${receipt.reason || '-'}`, cols));
-    out.push(...wrap(`Disetujui: ${receipt.approved_by || '-'}`, cols));
+    rows.push({ t: 'kv', k: 'Dikembalikan', v: num(receipt.total) });
+    rows.push({ t: 'hr' });
+    rows.push({ t: 'l', s: `Alasan: ${receipt.reason || '-'}` });
+    rows.push({ t: 'l', s: `Disetujui: ${receipt.approved_by || '-'}` });
   } else if (isCash && !reprint) {
-    out.push(...leftRight('Tunai       =', num(receipt.cash_received), cols));
-    out.push(dash);
-    out.push(...leftRight('Kembali     =', num(receipt.change), cols));
+    rows.push({ t: 'kv', k: 'Tunai', v: num(receipt.cash_received) });
+    rows.push({ t: 'hr' });
+    rows.push({ t: 'kv', k: 'Kembali', v: num(receipt.change) });
   } else {
-    out.push(...leftRight(`${receipt.payment_method}`.padEnd(12) + '=', num(receipt.total), cols));
+    rows.push({ t: 'kv', k: `${receipt.payment_method}`, v: num(receipt.total) });
   }
-  out.push(dash);
+  rows.push({ t: 'hr' });
 
-  out.push(...textLines(settings.receipt_footer, cols));
+  rows.push(...textRows(settings.receipt_footer));
   const p = `${pad2(now.getDate())}/${pad2(now.getMonth() + 1)}/${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-  out.push(`JAM CETAK : ${p}`.slice(0, cols));
+  rows.push({ t: 'l', s: `JAM CETAK : ${p}`, cut: true });
+  return rows;
+}
+
+// Versi teks lebar tetap dari baris nota (ringkasan & uji otomatis)
+function rowsToText(rows, cols) {
+  const out = [];
+  for (const r of rows) {
+    if (r.t === 'hr') out.push('-'.repeat(cols));
+    else if (r.t === 'c') out.push(...wrap(r.s, cols).map((l) => center(l, cols)));
+    else if (r.t === 'l') out.push(...(r.cut ? [String(r.s).slice(0, cols)] : wrap(r.s, cols)));
+    else if (r.t === 'lr') out.push(...leftRight(r.l, r.r, cols));
+    else if (r.t === 'kv') out.push(...leftRight(`${r.k}`.padEnd(12) + '=', r.v, cols));
+  }
   return out;
 }
 
-// Teks nota dimulai di tepi kiri halaman: driver printer thermal umumnya sudah memulai cetak dari tepi
-// AREA CETAK (bukan tepi kertas). Dulu teks diletakkan di tengah kertas sehingga bergeser ~5 mm ke kanan
-// dan sisi kanannya terpotong. offsetMm (Pengaturan → Geser ke kanan) untuk printer yang sisi kirinya terpotong.
-function receiptPage(lines, paperWidth, { offsetMm = 0 } = {}) {
+function buildReceiptLines(receipt, settings = {}, opts = {}) {
+  return rowsToText(buildReceiptRows(receipt, settings, opts), COLS[settings.paper_width] || COLS[58]);
+}
+
+const normRows = (rows) => rows.map((r) => (typeof r === 'string' ? { t: 'l', s: r } : r));
+
+function rowsToHtml(rows) {
+  return normRows(rows).map((r) => {
+    if (r.t === 'hr') return '<div class="n-hr"></div>';
+    if (r.t === 'c') return `<div class="n-c${r.big ? ' n-big' : ''}">${esc(r.s)}</div>`;
+    if (r.t === 'lr') return `<div class="n-lr"><span>${esc(r.l)}</span><span class="n-v">${esc(r.r)}</span></div>`;
+    if (r.t === 'kv') return `<div class="n-kv"><span>${esc(r.k)}</span><span>=</span><span class="n-v">${esc(r.v)}</span></div>`;
+    return `<div class="n-l">${esc(r.s)}</div>`;
+  }).join('');
+}
+
+// Tampilan nota (CSS + isi) untuk cetak maupun pratinjau di Pengaturan. Teks dimulai di tepi kiri AREA CETAK:
+// driver printer thermal umumnya sudah memulai cetak dari situ (dulu teks di tengah kertas → kanan terpotong).
+// offsetMm = geser ke kanan bila sisi kiri terpotong; fontScale = ukuran huruf (persen).
+function receiptFragment(rows, paperWidth, { offsetMm = 0, fontScale = 100 } = {}) {
   const width = COLS[paperWidth] ? Number(paperWidth) : 58;
   const offset = Math.min(10, Math.max(0, Number(offsetMm) || 0));
-  const cols = COLS[width];
-  // Lebar karakter monospace ≈ 0,6 em → ukuran font agar `cols` karakter pas di area cetak
-  const fontMm = (PRINTABLE_MM[width] / cols / 0.6).toFixed(2);
-  const lineMm = fontMm * 1.2;
-  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const scale = FONT_SCALES.includes(String(fontScale)) ? Number(fontScale) : 100;
+  const fontMm = (BASE_FONT_MM[width] * scale) / 100;
+  const css = `.nota { box-sizing: border-box; width: ${PRINTABLE_MM[width]}mm; margin: 0 0 0 ${offset}mm; padding: ${TOP_MM}mm 0 ${TEAR_MM}mm;
+      font-family: "Segoe UI", "Segoe UI Semibold", Arial, sans-serif; font-size: ${fontMm.toFixed(2)}mm; line-height: 1.3;
+      color: #000; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .nota .n-c { text-align: center; overflow-wrap: anywhere; }
+    .nota .n-c.n-big { font-size: 1.15em; font-weight: 700; }
+    .nota .n-l { overflow-wrap: anywhere; }
+    .nota .n-lr { display: flex; justify-content: space-between; gap: 2mm; }
+    .nota .n-kv { display: grid; grid-template-columns: 40% auto 1fr; column-gap: 1.5mm; }
+    .nota .n-v { text-align: right; white-space: nowrap; }
+    .nota .n-hr { border-top: 0.35mm dashed #000; margin: 1mm 0; }`;
+  return { css, html: `<div class="nota">${rowsToHtml(rows)}</div>`, width, fontMm };
+}
+
+function receiptPage(rows, paperWidth, opts = {}) {
+  const f = receiptFragment(normRows(rows), paperWidth, opts);
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     @page { margin: 0; }
     html, body { margin: 0; padding: 0; background: #fff; }
-    pre { margin: 2mm 0 0 ${offset}mm; width: ${PRINTABLE_MM[width]}mm; font-family: "Courier New", Consolas, monospace;
-          font-size: ${fontMm}mm; line-height: ${lineMm.toFixed(2)}mm; color: #000; font-weight: 600; white-space: pre; }
-  </style></head><body><pre>${esc(lines.join('\n'))}\n\n\n</pre></body></html>`;
-  // Tinggi kertas mengikuti panjang nota (+ ruang sobek)
-  const heightMm = Math.ceil((lines.length + 4) * lineMm + 6);
-  return { html, widthMicrons: width * 1000, heightMicrons: Math.max(heightMm, 40) * 1000 };
+    ${f.css}
+  </style></head><body>${f.html}</body></html>`;
+  // Perkiraan tinggi kertas (dipakai bila tinggi sebenarnya tidak bisa diukur): baris panjang dihitung terbungkus
+  const charsPerLine = Math.max(10, Math.floor(PRINTABLE_MM[f.width] / (f.fontMm * 0.55)));
+  const lines = normRows(rows).reduce((n, r) => n + (r.t === 'hr' ? 0.6 : Math.ceil(String(r.s || `${r.l || ''} ${r.r || ''} ${r.k || ''} ${r.v || ''}`).length / charsPerLine) || 1), 0);
+  const heightMm = Math.ceil(lines * f.fontMm * 1.3 * 1.15 + TOP_MM + TEAR_MM);
+  // measure: printPage mengukur tinggi isi sebenarnya (selector) agar kertas tidak terbuang / terpotong
+  return { html, widthMicrons: f.width * 1000, heightMicrons: Math.max(heightMm, 40) * 1000, measure: '.nota' };
 }
 
-module.exports = { buildReceiptLines, receiptPage, COLS };
+module.exports = { buildReceiptLines, buildReceiptRows, rowsToText, receiptFragment, receiptPage, COLS, FONT_SCALES };

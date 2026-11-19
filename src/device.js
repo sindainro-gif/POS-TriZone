@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PRINTER_KEYS = ['printer_name', 'paper_width', 'auto_print', 'label_printer_name', 'receipt_offset'];
+const PRINTER_KEYS = ['printer_name', 'paper_width', 'auto_print', 'label_printer_name', 'receipt_offset', 'receipt_font_scale'];
 const MODES = ['standalone', 'server', 'client'];
 
 const DEFAULTS = {
@@ -17,6 +17,7 @@ const DEFAULTS = {
   auto_print: '1',
   label_printer_name: '',
   receipt_offset: '0', // mm geser cetakan nota ke kanan (bila sisi kiri terpotong)
+  receipt_font_scale: '100', // ukuran huruf nota (persen): 90 / 100 / 115 / 130
 };
 
 function loadDevice(dir) {

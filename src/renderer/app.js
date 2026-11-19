@@ -2606,7 +2606,7 @@ async function refreshConnection() {
 // ================================================================ 6. PENGATURAN
 views.settings = (() => {
   const F = { store_name: '#stStoreName', store_address: '#stStoreAddress',
-    receipt_header: '#stHeader', receipt_footer: '#stFooter', printer_name: '#stPrinter', paper_width: '#stPaper', receipt_offset: '#stOffset' };
+    receipt_header: '#stHeader', receipt_footer: '#stFooter', printer_name: '#stPrinter', paper_width: '#stPaper', receipt_offset: '#stOffset', receipt_font_scale: '#stFontSize' };
 
   async function loadPrinters(selected) {
     const list = await api('printer:list').catch(() => []);
@@ -2619,12 +2619,16 @@ views.settings = (() => {
 
   let previewTimer;
   async function updatePreview() {
-    const lines = await api('receipt:preview', {
-      settings: { receipt_header: $('#stHeader').value, receipt_footer: $('#stFooter').value, paper_width: $('#stPaper').value, store_name: $('#stStoreName').value, store_address: $('#stStoreAddress').value },
+    const pv = await api('receipt:preview', {
+      settings: {
+        receipt_header: $('#stHeader').value, receipt_footer: $('#stFooter').value, paper_width: $('#stPaper').value,
+        store_name: $('#stStoreName').value, store_address: $('#stStoreAddress').value,
+        receipt_font_scale: $('#stFontSize').value, receipt_offset: $('#stOffset').value || '0',
+      },
     }).catch(() => null);
-    if (lines) $('#stPreview').textContent = lines.join('\n');
+    if (pv) $('#stPreview').innerHTML = `<style>${pv.css}</style>${pv.html}`;
   }
-  ['#stHeader', '#stFooter', '#stPaper', '#stStoreName', '#stStoreAddress'].forEach((s) => $(s).addEventListener('input', () => {
+  ['#stHeader', '#stFooter', '#stPaper', '#stStoreName', '#stStoreAddress', '#stFontSize', '#stOffset'].forEach((s) => $(s).addEventListener('input', () => {
     clearTimeout(previewTimer);
     previewTimer = setTimeout(updatePreview, 150);
   }));

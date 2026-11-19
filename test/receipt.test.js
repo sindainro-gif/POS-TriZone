@@ -1,7 +1,7 @@
 'use strict';
 // Uji formatter nota thermal: node test/receipt.test.js
 const assert = require('assert');
-const { buildReceiptLines, receiptPage } = require('../src/receipt');
+const { buildReceiptLines, buildReceiptRows, receiptFragment, receiptPage } = require('../src/receipt');
 
 let passed = 0;
 function t(name, fn) {
@@ -70,20 +70,41 @@ t('cetak ulang & non-tunai tanpa kembalian', () => {
   assert.doesNotMatch(qris, /Kembali/);
 });
 
-t('ukuran halaman cetak sesuai lebar kertas', () => {
+t('ukuran halaman cetak sesuai lebar kertas; tinggi diukur dari isi', () => {
   const p = receiptPage(['a', 'b'], '80');
   assert.strictEqual(p.widthMicrons, 80000);
   assert.ok(p.heightMicrons >= 40000);
-  assert.match(p.html, /<pre>a\nb/);
+  assert.strictEqual(p.measure, '.nota');
+  assert.match(p.html, /<div class="nota"><div class="n-l">a<\/div><div class="n-l">b<\/div><\/div>/);
 });
 
-t('teks nota mulai di tepi kiri area cetak (tidak digeser ke tengah kertas); bisa digeser manual', () => {
-  const p58 = receiptPage(['a'], '58');
-  assert.match(p58.html, /pre \{ margin: 2mm 0 0 0mm; width: 48mm;/);
-  assert.doesNotMatch(p58.html, /margin: 2mm auto/);
-  assert.match(receiptPage(['a'], '58', { offsetMm: '3.5' }).html, /margin: 2mm 0 0 3\.5mm;/);
-  assert.match(receiptPage(['a'], '58', { offsetMm: 99 }).html, /margin: 2mm 0 0 10mm;/);
-  assert.match(receiptPage(['a'], '80', { offsetMm: -4 }).html, /margin: 2mm 0 0 0mm; width: 72mm;/);
+t('teks nota mulai di tepi kiri area cetak, ada jarak atas, bisa digeser manual', () => {
+  const css = (o) => receiptFragment([], o.paper || '58', o).css;
+  assert.match(css({}), /width: 48mm; margin: 0 0 0 0mm; padding: 5mm 0 12mm;/);
+  assert.doesNotMatch(css({}), /margin:[^;]*auto/); // tidak di tengah kertas
+  assert.match(css({ offsetMm: '3.5' }), /margin: 0 0 0 3\.5mm;/);
+  assert.match(css({ offsetMm: 99 }), /margin: 0 0 0 10mm;/);
+  assert.match(css({ paper: '80', offsetMm: -4 }), /width: 72mm; margin: 0 0 0 0mm;/);
+});
+
+t('font biasa (Segoe UI) dan ukuran huruf bisa diatur', () => {
+  const size = (fontScale, paper = '58') => Number(/font-size: ([\d.]+)mm/.exec(receiptFragment([], paper, { fontScale }).css)[1]);
+  assert.match(receiptFragment([], '58').css, /font-family: "Segoe UI"/);
+  assert.strictEqual(size('100'), 2.75);
+  assert.ok(size('90') < size('100') && size('100') < size('115') && size('115') < size('130'));
+  assert.strictEqual(size('999'), 2.75); // nilai aneh → Normal
+  assert.ok(size('100', '80') > size('100', '58'));
+});
+
+t('baris nota terstruktur: kiri–kanan, label = nilai, garis, nama toko lebih besar; teks aman', () => {
+  const rows = buildReceiptRows({ ...receipt, lines: [{ name: 'Sabun <b>', qty: 1, unit_price: 1000, line_total: 1000 }] }, settings, { now });
+  const html = receiptFragment(rows, '58').html;
+  assert.match(html, /<div class="n-c n-big">KANO 5000 SEPANJANG<\/div>/);
+  assert.match(html, /<div class="n-lr"><span>1\.000 x 1 =<\/span><span class="n-v">1\.000<\/span><\/div>/);
+  assert.match(html, /<div class="n-kv"><span>Total<\/span><span>=<\/span><span class="n-v">48\.000<\/span><\/div>/);
+  assert.match(html, /<div class="n-hr"><\/div>/);
+  assert.match(html, /Sabun &lt;b&gt;/);
+  assert.doesNotMatch(html, /<b>/);
 });
 
 console.log(`\n${passed} tes nota lulus${process.exitCode ? ', ada yang GAGAL' : ''}.`);

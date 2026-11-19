@@ -7,7 +7,7 @@ const XLSX = require('xlsx');
 const { Database } = require('./db');
 const { createServices, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, OPNAME_TEMPLATE_HEADERS, localNow } = require('./services');
 const reports = require('./reports');
-const { buildReceiptLines, receiptPage } = require('./receipt');
+const { buildReceiptLines, buildReceiptRows, receiptFragment, receiptPage, FONT_SCALES } = require('./receipt');
 const { labelPages, labelPreview } = require('./labels');
 const { startServer, createRemoteClient, newPairKey, DEFAULT_PORT } = require('./remote');
 const { loadDevice, saveDevice, PRINTER_KEYS, MODES } = require('./device');
@@ -121,9 +121,17 @@ const SAMPLE_RECEIPT = {
 
 // Cetak HTML tanpa dialog ke printer tertentu dengan ukuran kertas khusus (mikron).
 async function printPage(page, { deviceName, pdfName, what }) {
-  const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
+  // page.measure: ukur tinggi isi (mis. nota) agar panjang kertas pas — tidak terpotong, tidak boros kertas.
+  // Halaman ini buatan aplikasi sendiri tanpa skrip; JavaScript hanya dipakai untuk mengukur.
+  const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: !!page.measure } });
   try {
     await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(page.html));
+    if (page.measure) {
+      try {
+        const px = await w.webContents.executeJavaScript(`Math.ceil(document.querySelector(${JSON.stringify(page.measure)}).getBoundingClientRect().bottom)`);
+        if (px > 0) page = { ...page, heightMicrons: Math.max(40, Math.ceil((px * 25.4) / 96) + 2) * 1000 };
+      } catch (_) { /* pakai perkiraan tinggi dari receiptPage */ }
+    }
     const pdfDir = process.env.POS_PRINT_TO_PDF;
     if (pdfDir) {
       // Mode uji otomatis: simpan sebagai PDF dengan ukuran kertas yang sama, tanpa printer fisik
@@ -153,7 +161,7 @@ async function printPage(page, { deviceName, pdfName, what }) {
 
 async function printReceipt(receipt, { reprint = false } = {}) {
   const s = await getSettings();
-  const page = receiptPage(buildReceiptLines(receipt, s, { reprint }), s.paper_width, { offsetMm: s.receipt_offset });
+  const page = receiptPage(buildReceiptRows(receipt, s, { reprint }), s.paper_width, { offsetMm: s.receipt_offset, fontScale: s.receipt_font_scale });
   return printPage(page, { deviceName: s.printer_name, pdfName: receipt.receipt_no, what: 'Nota' });
 }
 
@@ -749,6 +757,7 @@ const handlers = {
     const own = {};
     for (const k of PRINTER_KEYS) if (a[k] !== undefined) own[k] = k === 'auto_print' ? (a[k] === true || a[k] === '1' ? '1' : '0') : String(a[k]);
     if (own.paper_width && !['58', '80'].includes(own.paper_width)) throw userError('Lebar kertas harus 58 mm atau 80 mm.');
+    if (own.receipt_font_scale !== undefined && !FONT_SCALES.includes(own.receipt_font_scale)) throw userError('Ukuran huruf nota tidak dikenal.');
     if (own.receipt_offset !== undefined) {
       const o = Number(String(own.receipt_offset).replace(',', '.'));
       if (!Number.isFinite(o) || o < 0 || o > 10) throw userError('Geser cetakan nota harus 0–10 mm.');
@@ -819,7 +828,12 @@ const handlers = {
     }
   },
   'receipt:test': () => printReceipt({ ...SAMPLE_RECEIPT, created_at: localNow() }),
-  'receipt:preview': async ({ settings }) => buildReceiptLines({ ...SAMPLE_RECEIPT, created_at: localNow() }, { ...(await getSettings()), ...(settings || {}) }),
+  // Pratinjau nota di Pengaturan: tampilan sama dengan hasil cetak (font, ukuran huruf, geser)
+  'receipt:preview': async ({ settings }) => {
+    const s = { ...(await getSettings()), ...(settings || {}) };
+    const rows = buildReceiptRows({ ...SAMPLE_RECEIPT, created_at: localNow() }, s);
+    return { lines: buildReceiptLines({ ...SAMPLE_RECEIPT, created_at: localNow() }, s), ...receiptFragment(rows, s.paper_width, { offsetMm: s.receipt_offset, fontScale: s.receipt_font_scale }) };
+  },
 
   'labels:designs': () => svc.listLabelDesigns(),
   'labels:saveDesign': (a) => svc.saveLabelDesign(a),
