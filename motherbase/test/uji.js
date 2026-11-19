@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -270,16 +270,16 @@ function fileAccurate() {
   const bersih = f1.baris.filter((r) => ['UJ-KESET', 'UJ-BARU', 'UJ-IMP1'].includes(r.sku));
   const cek2 = impor(bersih, false);
   assert.deepStrictEqual([cek2.ok, cek2.jumlah, cek2.baru, cek2.diubah, cek2.sama, cek2.harga_beli], [true, 3, 1, 1, 1, 1]);
-  assert.deepStrictEqual(cek2.principal_baru, ['PT Uji Principal']);
+  assert.deepStrictEqual(cek2.principal_baru, []); // kolom Principal di file lama diabaikan
   assert.match(cek2.perubahan.find((x) => x.sku === 'UJ-KESET').detail, /harga jual: 16\.000 → 17\.500|harga jual: 16000 → 17500/);
   assert.throws(() => impor(bersih, true, '00000000-0000-0000-0000-00000000000a'), /Hanya pengguna kantor/);
   const simpan = impor(bersih, true);
   assert.strictEqual(simpan.disimpan, true);
   assert.deepStrictEqual(q("select harga_jual_konsumen, nama, satuan_masuk, barcode from produk where sku = 'UJ-KESET'").split('|'), ['17500.00', ...kesetLama]);
   assert.strictEqual(q("select diubah_at from produk where sku = 'UJ-BARU'"), diubahLama); // tidak berubah → tidak disentuh
-  assert.deepStrictEqual(q(`select p.barcode, p.rasio_isi, p.isi_dus, pr.nama, h.harga, h.berlaku_at, h.sumber from produk p
-    join principal pr on pr.id = p.principal_id join harga_beli h on h.sku = p.sku where p.sku = 'UJ-IMP1'`).split('|'),
-    ['2000000000200', '12', '24', 'PT Uji Principal', '9250.00', '2026-11-10', 'PRICELIST']);
+  assert.deepStrictEqual(q(`select p.barcode, p.rasio_isi, p.principal_id is null, h.harga, h.berlaku_at, h.sumber from produk p
+    join harga_beli h on h.sku = p.sku where p.sku = 'UJ-IMP1'`).split('|'),
+    ['2000000000200', '12', 't', '9250.00', '2026-11-10', 'PRICELIST']);
   // Import ulang file yang sama: tidak ada perubahan, harga beli tidak dicatat dobel
   const ulang = impor(bersih, true);
   assert.deepStrictEqual([ulang.baru, ulang.diubah, ulang.sama, ulang.harga_beli], [0, 0, 3, 0]);
@@ -314,6 +314,24 @@ function fileAccurate() {
   assert.throws(() => q("update produk set rasio_isi = 5 where sku = 'UJ-SAT2'"), /produk_satuan_masuk_cek/);
   assert.strictEqual(q("select count(*) from produk where satuan_masuk not in ('Coly', 'Biji')"), '0');
   ok('satuan masuk hanya Coly / Biji: Karton → Coly, Pcs → Biji, sebutan lain ditolak, Biji wajib isi 1');
+
+  // Usulan beli tanpa principal: semua barang aktif, dibulatkan ke isi 1 Coly, lead time dari pengaturan
+  q(`insert into shift (kode_toko, shift_uid, kasir, mulai_at, data_at) values ('MLG', 'UJI-USULAN', 'Uji', now(), now());
+     insert into penjualan (kode_toko, shift_uid, no_struk, baris_ke, waktu, tanggal, sku, nama, qty, harga, subtotal, metode_bayar)
+     values ('MLG', 'UJI-USULAN', 'U1', 1, now() - interval '1 day', current_date - 1, 'UJ-SAT1', 'Satuan Karton', 28, 1000, 28000, 'Tunai')`);
+  const usul = (sku) => q(`select usulan_qty || '/' || isi_kemasan from public.laporan_usulan_beli() where sku = '${sku}'`);
+  // 1 Biji/hari × (7 + 7) + 3 = 17 → dibulatkan ke isi 1 Coly (6) = 18
+  assert.strictEqual(usul('UJ-SAT1'), '18/6');
+  q(`update pengaturan set nilai = '10' where kunci = 'usulan_lead_time_hari'`);
+  assert.strictEqual(usul('UJ-SAT1'), '24/6'); // 1 × (10 + 7) + 3 = 20 → 24
+  const noPo = sebagai(ADMIN, 'select public.buat_po_dari_usulan()');
+  assert.deepStrictEqual(q(`select coalesce(principal_id::text, '-'), status from po where no_po = '${noPo}'`).split('|'), ['-', 'USULAN']);
+  assert.match(q(`select qty_usulan || ' ' || alasan from po_baris where no_po = '${noPo}' and sku = 'UJ-SAT1'`), /^24\.000 .*lead time 10 \+ periode 7 hari.*dibulatkan ke isi 1 Coly \(6 Biji\)/);
+  assert.strictEqual(usul('UJ-SAT1'), '24/6'); // PO usulan belum dihitung sampai disetujui owner
+  q(`update po set status = 'DISETUJUI' where no_po = '${noPo}'`);
+  assert.strictEqual(usul('UJ-SAT1'), ''); // PO yang disetujui & belum datang mengurangi kebutuhan
+  assert.throws(() => sebagai('00000000-0000-0000-0000-00000000000a', 'select public.buat_po_dari_usulan()'), /Hanya pengguna kantor/);
+  ok('usulan beli tanpa principal: semua barang, lead time dari pengaturan, dibulatkan ke isi 1 Coly, satu PO');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });

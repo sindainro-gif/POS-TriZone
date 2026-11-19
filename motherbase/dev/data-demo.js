@@ -76,7 +76,7 @@ async function buatDatabase(dbUrl) {
   const c = new Client({ connectionString: dbUrl });
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
-    'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;
@@ -218,8 +218,8 @@ async function buatDataDemo(dbUrl) {
     await tokoSvc[t.kode].mb.kirim();
   }
 
-  // Usulan PO untuk principal pertama (menunggu persetujuan owner)
-  await q('select public.buat_po_dari_usulan($1)', [prId[0]]).catch(() => null);
+  // Usulan PO untuk semua barang yang perlu dibeli (menunggu persetujuan owner)
+  await q('select public.buat_po_dari_usulan()').catch(() => null);
 
   await c.end();
   await pool.end();

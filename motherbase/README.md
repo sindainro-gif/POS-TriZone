@@ -21,7 +21,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 | `web/` | Aplikasi web kantor (HTML/JS tanpa proses build). `config.js` diisi alamat project. |
 | `web/lib/accurate.js` | Pembaca laporan Accurate "Rincian Pengiriman Pesanan" (dipakai web & baris perintah) |
 | `web/lib/import-barang.js` | Pembaca Excel import master barang (template Trizone, data item, file "Unduh master") |
-| `supabase/migrations/` | Skema database: `…01_mother_base.sql` (data & protokol Trizone), `…02_aplikasi.sql` (laporan, PO, SO, pengguna, AI), `…03_import_barang.sql` (import master barang), `…04_satuan_masuk.sql` (satuan masuk Coly / Biji) |
+| `supabase/migrations/` | Skema database: `…01_mother_base.sql` (data & protokol Trizone), `…02_aplikasi.sql` (laporan, PO, SO, pengguna, AI), `…03_import_barang.sql` (import master barang), `…04_satuan_masuk.sql` (satuan masuk Coly / Biji), `…05_tanpa_principal.sql` (usulan beli tanpa principal) |
 | `supabase/seed.sql` | Data awal: 9 toko, pemetaan pelanggan Accurate |
 | `supabase/functions/asisten/` | Edge Function asisten AI (`index.ts` untuk Deno, inti di `asisten.mjs`) |
 | `apps-script/Code.gs` | Alert email harian pukul 09.00 (opsional) |
@@ -37,9 +37,8 @@ mengelola master barang & harga, dan menyetujui pembelian.
 | Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari; unduh CSV |
 | Stok & Opname | semua | Review & persetujuan SO (kantor), selisih stok Trizone vs hitungan mother base, cari stok, stok lambat |
 | Surat Jalan | kantor | Upload Excel Accurate di browser, unduh file import penerimaan Trizone per toko, simpan, status pencocokan |
-| Pembelian | kantor | Usulan beli per principal → usulan PO dengan alasan per baris → owner ubah qty & setujui → tandai dikirim → terima barang (stok gudang & harga beli diperbarui) |
-| Master Barang | kantor | Barcode, harga jual, satuan & isi, principal; harga beli / pricelist; markup (owner); import Excel dengan pratinjau |
-| Principal | kantor | Lead time (perkiraan & aktual), periode order, minimum order; tombol Wawancara AI |
+| Pembelian | kantor | Usulan beli semua barang dalam satu daftar (lead time, periode order, stok pengaman diatur owner; dibulatkan ke isi 1 Coly) → usulan PO dengan alasan per baris → owner ubah qty & setujui → tandai dikirim → terima barang (stok gudang & harga beli diperbarui) |
+| Master Barang | kantor | Barcode, harga jual, satuan masuk (Coly / Biji) & isi 1 Coly; harga beli / pricelist; markup (owner); import Excel dengan pratinjau |
 | Toko | kantor | Koneksi tiap toko, buat / ganti kunci toko (owner), pemetaan pelanggan Accurate |
 | Asisten AI | semua | Tanya jawab data dengan Claude; percakapan tersimpan per pengguna |
 | Pengguna | owner | Peran: owner, admin kantor, gudang, purchasing, pemilik toko (hanya tokonya) |
@@ -53,8 +52,7 @@ data tokonya, juga saat bertanya ke asisten AI.
   (`fallbacks: "default"`) supaya permintaan yang ditolak filter keamanan dialihkan otomatis.
 - Claude hanya memakai alat yang memanggil fungsi laporan di database dengan token pengguna yang login.
   Angka selalu dari database; Claude menjelaskan dan menyarankan.
-- Satu-satunya alat yang menulis adalah `simpan_principal`, hanya di mode **wawancara principal**
-  dan hanya untuk pengguna kantor.
+- Semua alat hanya membaca; asisten tidak mengubah data.
 - Biaya mengikuti pemakaian API Anthropic (per token). Setiap pertanyaan biasanya 2–3 panggilan
   ke Claude (memanggil alat, lalu menjawab).
 
@@ -65,7 +63,7 @@ data tokonya, juga saat bertanya ke asisten AI.
 1. Buat project di supabase.com.
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
    `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`,
-   `migrations/20261119000004_satuan_masuk.sql`, lalu `seed.sql`
+   `migrations/20261119000004_satuan_masuk.sql`, `migrations/20261119000005_tanpa_principal.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`
@@ -145,13 +143,12 @@ Di aplikasi: **Master Barang → Import Excel…**. Cara termudah: **Unduh maste
 lalu pilih file itu lagi.
 
 - **Format:** sama dengan template import barang Trizone (`Barcode`, `SKU`, `Nama_Barang`, `Merk`,
-  `Kategori`, `Harga_Jual`, `Satuan_Masuk`, `Rasio_Isi_Dus`), ditambah kolom kantor `Principal`,
-  `Isi_Dus_Principal`, `Harga_Beli` (per Biji, dicatat sebagai pricelist), dan `Aktif` (Ya/Tidak).
+  `Kategori`, `Harga_Jual`, `Satuan_Masuk` (Coly / Biji), `Rasio_Isi_Dus` = isi 1 Coly), ditambah kolom
+  kantor `Harga_Beli` (per Biji, dicatat sebagai pricelist) dan `Aktif` (Ya/Tidak). Kolom lain diabaikan.
   File "data item" program lama (`Kode Item`, `Nama Item`, `Jenis`, `Harga Jual`) juga diterima.
 - **Membaca kolom:** nama kolom tidak peka huruf besar/kecil, spasi, atau garis bawah, dan baris judul
   di atas tabel dilewati.
-- **Sel kosong tidak mengubah data lama.** Barang yang tidak ada di file tidak dihapus. Principal
-  yang belum ada dibuat otomatis.
+- **Sel kosong tidak mengubah data lama.** Barang yang tidak ada di file tidak dihapus.
 - **Pratinjau dulu:** jumlah barang baru, diubah, dan sama, rincian perubahan per barang, serta
   kesalahan per baris (SKU ganda, barcode dipakai barang lain, angka salah, barang baru tanpa nama).
   Simpan hanya bisa bila tidak ada kesalahan, dan semua baris tersimpan bersama atau tidak sama sekali.

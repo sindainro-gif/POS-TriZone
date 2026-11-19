@@ -15,7 +15,6 @@ function pilihAlat(teks, hariIni) {
   const h = new Date(`${hariIni}T00:00:00Z`);
   const mundur = (n) => { const d = new Date(h); d.setUTCDate(d.getUTCDate() - n); return TGL(d); };
   const kode = (/\b(krp|mnk|sda|trp|mlg|bks|cld|dpk)\b/i.exec(teks) || [])[1];
-  if (/wawancara|principal|lead time/.test(t)) return ['daftar_principal', {}];
   if (/stok lambat|tidak laku|dead/.test(t)) return ['stok_lambat', { hari: 30 }];
   if (/stok/.test(t)) return ['cari_stok', { cari: (/stok\s+(\w+)/.exec(t) || [])[1] || '' }];
   if (/naik|turun|tren/.test(t)) return ['tren_produk', { dari: mundur(6), sampai: hariIni, dari_banding: mundur(13), sampai_banding: mundur(7), ...(kode ? { kode_toko: kode.toUpperCase() } : {}) }];

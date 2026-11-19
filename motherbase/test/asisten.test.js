@@ -35,9 +35,8 @@ function dbTiruan({ peran = 'owner' } = {}) {
     rpc: async (fn, args) => {
       panggilan.push([fn, args]);
       if (fn === 'saya') return { id: 'u1', nama: 'Owner Uji', peran, kode_toko: null, aktif: true };
-      if (fn === 'laporan_principal') return [{ id: 7, nama: 'PT Uji' }];
+      if (fn === 'laporan_usulan_beli') return [{ sku: 'A', nama: 'Barang A', usulan_qty: 24, isi_kemasan: 12 }];
       if (fn === 'laporan_tren_produk') return [{ sku: 'A', nama: 'Barang A', qty_periode: 10, qty_banding: 4, selisih: 6, persen: 150 }];
-      if (fn === 'simpan_data_principal') return { id: args.p_id, ...args.p };
       if (fn === 'laporan_stok_produk') return Array.from({ length: 400 }, (_, i) => ({ sku: `S${i}` }));
       throw new Error(`fungsi ${fn} tidak ada di tiruan`);
     },
@@ -101,7 +100,7 @@ function dbTiruan({ peran = 'owner' } = {}) {
     ok('percakapan berlanjut: riwayat (termasuk blok thinking) disimpan dan dikirim ulang; tampilan tanpa konteks & blok alat');
   }
 
-  // 2. Masukan alat tidak valid dan alat simpan di mode tanya → tool_result error, bukan exception
+  // 2. Masukan alat tidak valid dan alat yang tidak ada → tool_result error, bukan exception
   {
     const { anthropic, permintaan } = claudeTiruan([
       { content: [
@@ -116,27 +115,28 @@ function dbTiruan({ peran = 'owner' } = {}) {
     const hasil = permintaan[1].body.messages[2].content;
     assert.strictEqual(hasil.length, 3, 'semua tool_result dalam satu pesan user');
     assert.ok(hasil[0].is_error && /YYYY-MM-DD/.test(hasil[0].content));
-    assert.ok(hasil[1].is_error && /wawancara/.test(hasil[1].content));
+    assert.ok(hasil[1].is_error && /tidak dikenal/.test(hasil[1].content));
     assert.ok(!db.panggilan.some(([f]) => f === 'simpan_data_principal'));
     assert.ok(!hasil[2].is_error && /Hanya 150 dari 400 baris/.test(hasil[2].content));
     assert.deepStrictEqual(r.alat.map((a) => a.error), [true, true, false]);
-    ok('masukan tidak valid & penyimpanan di mode tanya ditolak sebagai tool_result error; hasil besar dipotong 150 baris');
+    ok('masukan tidak valid & alat yang tidak ada ditolak sebagai tool_result error; hasil besar dipotong 150 baris');
   }
 
-  // 3. Mode wawancara: simpan_principal diteruskan ke database
+  // 3. Usulan beli tanpa principal; semua alat hanya membaca
   {
     const { anthropic, permintaan } = claudeTiruan([
-      { content: [{ type: 'tool_use', id: 'w', name: 'simpan_principal', input: { principal_id: 7, lead_time_hari: 5, selesai_wawancara: true } }], stop_reason: 'tool_use' },
-      { content: [{ type: 'text', text: 'Tersimpan.' }], stop_reason: 'end_turn' },
+      { content: [{ type: 'tool_use', id: 'u', name: 'usulan_beli', input: {} }], stop_reason: 'tool_use' },
+      { content: [{ type: 'text', text: 'Beli Barang A 24 Biji.' }], stop_reason: 'end_turn' },
     ]);
     const db = dbTiruan();
-    const r = await jalankanAsisten({ anthropic, db, permintaan: { pesan: 'Lead time 5 hari', mode: 'wawancara', principal_id: 7 }, hariIni: '2026-11-16' });
-    assert.deepStrictEqual(db.panggilan.find(([f]) => f === 'simpan_data_principal')[1], { p_id: 7, p: { lead_time_hari: 5, selesai_wawancara: true } });
-    assert.match(permintaan[0].body.system, /mewawancarai owner/);
-    assert.match(permintaan[0].body.messages[0].content, /Principal yang diwawancara: id 7, PT Uji/);
-    assert.strictEqual(r.judul, 'Wawancara PT Uji');
-    await assert.rejects(jalankanAsisten({ anthropic, db, permintaan: { pesan: 'x', mode: 'wawancara' } }), /Pilih principal/);
-    ok('mode wawancara: prompt khusus, data principal disimpan lewat simpan_data_principal');
+    const r = await jalankanAsisten({ anthropic, db, permintaan: { pesan: 'Apa yang perlu dibeli?' }, hariIni: '2026-11-16' });
+    assert.deepStrictEqual(db.panggilan.find(([f]) => f === 'laporan_usulan_beli')[1], {});
+    assert.strictEqual(r.jawaban, 'Beli Barang A 24 Biji.');
+    assert.ok(!ALAT.some((t) => /principal/.test(t.name)), 'tidak ada alat principal');
+    assert.deepStrictEqual(ALAT.find((t) => t.name === 'usulan_beli').input_schema.properties, {});
+    assert.doesNotMatch(permintaan[0].body.system, /wawancara|principal/i);
+    assert.strictEqual(r.judul, 'Apa yang perlu dibeli?');
+    ok('usulan beli semua barang (tanpa principal); tidak ada alat yang menulis atau mode wawancara');
   }
 
   // 4. Penolakan (refusal), pause_turn, max_tokens

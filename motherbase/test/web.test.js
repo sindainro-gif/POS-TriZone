@@ -199,8 +199,16 @@ function fileAccurate() {
     assert.ok(masuk1[0].n > 0);
     await page.click('#pbTab [data-t="usulan"]');
     await tunggu(600);
+    assert.strictEqual((await page.locator('#pbIsi .card').count()), 1, 'usulan beli satu daftar, tidak per principal');
+    await page.click('#pbAtur');
+    await page.fill('#atLead', '10');
+    await page.click('.modal-kaki .btn.primary');
+    await toastCocok(/Pengaturan usulan disimpan/);
+    await tunggu(600);
+    assert.match(await page.textContent('#pbAturTeks'), /Lead time 10 hari/);
+    assert.strictEqual(Number((await db("select nilai from pengaturan where kunci = 'usulan_lead_time_hari'"))[0].nilai), 10);
     await shot('05b-usulan-beli');
-    ok('pembelian: owner mengubah qty & menyetujui PO, ditandai dikirim (no. Accurate), barang diterima → stok gudang & status Selesai');
+    ok('pembelian: owner mengubah qty & menyetujui PO, ditandai dikirim (no. Accurate), barang diterima → stok gudang & status Selesai; usulan beli satu daftar, lead time diatur owner');
 
     await buka('barang');
     await page.click('#brIsiTabel tr.klik:has-text("RTN-001")');
@@ -249,8 +257,9 @@ function fileAccurate() {
     const rtn = master.find((r) => r.SKU === 'RTN-002');
     assert.strictEqual(rtn.Harga_Jual, 27500);
     rtn.Harga_Jual = 28000;
+    assert.ok(!('Principal' in master[0]), 'file master tanpa kolom principal');
     master.push({ Barcode: '2999000000017', SKU: 'IMP-WEB-1', Nama_Barang: 'Barang Import Web', Merk: 'Uji', Kategori: 'Uji', Harga_Jual: 15000,
-      Satuan_Masuk: 'Dus', Rasio_Isi_Dus: 6, Principal: 'PT Principal Web Baru', Isi_Dus_Principal: 12, Harga_Beli: 9000, Aktif: 'Ya' });
+      Satuan_Masuk: 'Dus', Rasio_Isi_Dus: 6, Harga_Beli: 9000, Aktif: 'Ya' });
     const fUbah = path.join(OUT, 'Master_diubah.xlsx');
     const wbUbah = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wbUbah, XLSX.utils.json_to_sheet(master), 'Barang');
@@ -260,15 +269,14 @@ function fileAccurate() {
     const ringkas = await page.textContent('#imHasil');
     assert.match(ringkas, /1 baru/);
     assert.match(ringkas, /1 diubah/);
-    assert.match(ringkas, /PT Principal Web Baru/);
     assert.match(ringkas, /harga jual: 27\.500 → 28\.000/);
-    assert.match(ringkas, /harga jual 15\.000 · 1 Coly = 6 Biji · PT Principal Web Baru · harga beli 9\.000/);
+    assert.match(ringkas, /harga jual 15\.000 · 1 Coly = 6 Biji · harga beli 9\.000/);
     await shot('06b-import-barang-pratinjau');
     await page.click('.modal-kaki .btn.primary');
     await toastCocok(/Import selesai: 1 barang baru, 1 diubah/);
     assert.strictEqual(Number((await db("select harga_jual_konsumen from produk where sku = 'RTN-002'"))[0].harga_jual_konsumen), 28000);
-    const [impBaru] = await db(`select p.rasio_isi, pr.nama from produk p join principal pr on pr.id = p.principal_id where p.sku = 'IMP-WEB-1'`);
-    assert.deepStrictEqual([impBaru.rasio_isi, impBaru.nama], [6, 'PT Principal Web Baru']);
+    const [impBaru] = await db(`select rasio_isi, satuan_masuk from produk where sku = 'IMP-WEB-1'`);
+    assert.deepStrictEqual([impBaru.rasio_isi, impBaru.satuan_masuk], [6, 'Coly']);
     // File bermasalah: pratinjau menampilkan kesalahan per baris, tombol simpan mati
     const fSalah = path.join(OUT, 'Import_salah.xlsx');
     const wbSalah = XLSX.utils.book_new();
@@ -287,19 +295,14 @@ function fileAccurate() {
     await page.click('.modal .tutup');
     ok('master barang: import Excel (unduh template & master, ubah, pratinjau, simpan; kesalahan per baris menahan simpan)');
 
-    await buka('principal');
-    await shot('07-principal');
-    await page.click('[data-ww]');
-    await page.waitForSelector('.msg.asisten:not(#aiTunggu)', { timeout: 15000 });
-    assert.match(await page.textContent('#aiMsgs'), /daftar_principal/);
-    ok('principal: tombol Wawancara AI membuka percakapan wawancara');
-
+    assert.strictEqual(await page.locator('.nav a[data-h="principal"]').count(), 0, 'menu Principal sudah dihapus');
+    await buka('asisten');
     await page.click('#aiBaru');
     await page.click('#aiSaran button:first-child');
     await page.waitForFunction(() => document.querySelectorAll('.msg.asisten:not(#aiTunggu)').length >= 1 && !document.querySelector('#aiTunggu'), null, { timeout: 15000 });
     assert.ok(await page.$('.msg.asisten table'));
     assert.match(await page.textContent('.msg.asisten .alat'), /tren produk/);
-    assert.strictEqual((await page.$$('#aiList [data-id]')).length, 2);
+    assert.strictEqual(await page.locator('#aiList [data-id]').count(), 1);
     await shot('08-asisten');
     ok('asisten: pertanyaan contoh dijawab dengan tabel dari data; percakapan tersimpan');
 

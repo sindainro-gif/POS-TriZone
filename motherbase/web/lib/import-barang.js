@@ -3,8 +3,8 @@
  *
  * Format yang diterima:
  * - Template import barang Trizone: Barcode, SKU, Nama_Barang, Merk, Kategori, Harga_Jual, Satuan_Masuk,
- *   Rasio_Isi_Dus (kolom stok awal & min alert diabaikan), ditambah kolom kantor: Principal,
- *   Isi_Dus_Principal, Harga_Beli, Aktif. File hasil "Unduh master" memakai format ini.
+ *   Rasio_Isi_Dus (kolom stok awal & min alert diabaikan), ditambah kolom kantor: Harga_Beli, Aktif.
+ *   File hasil "Unduh master" memakai format ini. Kolom lain (mis. Principal) diabaikan.
  *   Satuan_Masuk: Coly atau Biji (Dus/Karton dibaca Coly, Pcs dibaca Biji; diterjemahkan di database).
  * - "Data item" program lama: Kode Item, Nama Item, Jenis, Harga Jual. Barang baru memakai Kode Item
  *   sebagai barcode bila tidak ada kolom Barcode (sama dengan Trizone).
@@ -29,16 +29,14 @@
     harga_jual: ['hargajual', 'hargajualkonsumen', 'hargaecer'],
     satuan_masuk: ['satuanmasuk'],
     rasio_isi: ['rasioisidus', 'rasioisi', 'isisatuanmasuk', 'isipersatuanmasuk'],
-    principal: ['principal', 'pemasok', 'supplier'],
-    isi_dus: ['isidusprincipal'],
     harga_beli: ['hargabeli', 'hargapokok', 'hpp'],
     aktif: ['aktif'],
   };
-  const TEKS = ['sku', 'nama', 'barcode', 'merk', 'kategori', 'satuan_masuk', 'principal'];
-  const ANGKA = { harga_jual: 'Harga jual', harga_beli: 'Harga beli', rasio_isi: 'Isi per satuan masuk', isi_dus: 'Isi dus principal' };
+  const TEKS = ['sku', 'nama', 'barcode', 'merk', 'kategori', 'satuan_masuk'];
+  const ANGKA = { harga_jual: 'Harga jual', harga_beli: 'Harga beli', rasio_isi: 'Isi per satuan masuk' };
 
   const HEADER = ['Barcode', 'SKU', 'Nama_Barang', 'Merk', 'Kategori', 'Harga_Jual', 'Satuan_Masuk', 'Rasio_Isi_Dus',
-    'Principal', 'Isi_Dus_Principal', 'Harga_Beli', 'Aktif'];
+    'Harga_Beli', 'Aktif'];
 
   function petaKolom(row) {
     const h = (row || []).map(norm);
@@ -130,21 +128,21 @@
   }
 
   // Isi file untuk "Unduh master": SKU & barcode sebagai teks supaya Excel tidak mengubahnya.
-  function barisMaster(produk, namaPrincipal, hargaBeli) {
+  function barisMaster(produk, hargaBeli) {
     return produk.map((p) => ({
       Barcode: p.barcode || '', SKU: p.sku, Nama_Barang: p.nama, Merk: p.merk || '', Kategori: p.kategori || '',
       Harga_Jual: p.harga_jual_konsumen === null || p.harga_jual_konsumen === undefined ? '' : Number(p.harga_jual_konsumen),
-      Satuan_Masuk: p.satuan_masuk, Rasio_Isi_Dus: p.rasio_isi, Principal: namaPrincipal[p.principal_id] || '',
-      Isi_Dus_Principal: p.isi_dus, Harga_Beli: hargaBeli[p.sku] === null || hargaBeli[p.sku] === undefined ? '' : Number(hargaBeli[p.sku]),
+      Satuan_Masuk: p.satuan_masuk, Rasio_Isi_Dus: p.rasio_isi,
+      Harga_Beli: hargaBeli[p.sku] === null || hargaBeli[p.sku] === undefined ? '' : Number(hargaBeli[p.sku]),
       Aktif: p.aktif ? 'Ya' : 'Tidak',
     }));
   }
 
   const CONTOH = [
     { Barcode: '8991234567890', SKU: 'MNM-001', Nama_Barang: 'Air Mineral 600ml', Merk: 'Segar', Kategori: 'Minuman', Harga_Jual: 3500,
-      Satuan_Masuk: 'Coly', Rasio_Isi_Dus: 24, Principal: 'PT Sumber Segar', Isi_Dus_Principal: 24, Harga_Beli: 2400, Aktif: 'Ya' },
+      Satuan_Masuk: 'Coly', Rasio_Isi_Dus: 24, Harga_Beli: 2400, Aktif: 'Ya' },
     { Barcode: '8997654321098', SKU: 'SNK-010', Nama_Barang: 'Keripik Kentang 68g', Merk: 'Renyah', Kategori: 'Makanan Ringan', Harga_Jual: 11500,
-      Satuan_Masuk: 'Coly', Rasio_Isi_Dus: 40, Principal: 'PT Renyah Jaya', Isi_Dus_Principal: 40, Harga_Beli: 8900, Aktif: 'Ya' },
+      Satuan_Masuk: 'Coly', Rasio_Isi_Dus: 40, Harga_Beli: 8900, Aktif: 'Ya' },
   ];
 
   function workbook(rows) {

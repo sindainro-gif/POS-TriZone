@@ -5,7 +5,7 @@
 
 const CFG = window.MB_CONFIG || {};
 const sb = CFG.url && !/GANTI/.test(CFG.url) ? supabase.createClient(CFG.url, CFG.anonKey) : null;
-const S = { profil: null, toko: [], periode: null, mulaiWawancara: null, menu: false };
+const S = { profil: null, toko: [], periode: null, menu: false };
 
 // ================================================================ Utilitas
 const $ = (s, r = document) => r.querySelector(s);
@@ -205,7 +205,7 @@ const STATUS_SJ = {
   COCOK: ['ok', 'Cocok'], MENUNGGU: ['info', 'Menunggu'], BELUM_DIINPUT: ['bad', 'Belum diinput'], SELISIH_QTY: ['warn', 'Selisih qty'],
   BARANG_SALAH: ['bad', 'Barang salah'], SATUAN_BELUM_JELAS: ['warn', 'Satuan belum jelas'], PELANGGAN_BELUM_DIPETAKAN: ['warn', 'Pelanggan belum dipetakan'],
 };
-const STATUS_PO = { USULAN: ['warn', 'Usulan'], DISETUJUI: ['info', 'Disetujui'], DIKIRIM: ['info', 'Dikirim ke principal'], SEBAGIAN: ['warn', 'Diterima sebagian'], SELESAI: ['ok', 'Selesai'], BATAL: ['', 'Batal'] };
+const STATUS_PO = { USULAN: ['warn', 'Usulan'], DISETUJUI: ['info', 'Disetujui'], DIKIRIM: ['info', 'Dikirim ke pemasok'], SEBAGIAN: ['warn', 'Diterima sebagian'], SELESAI: ['ok', 'Selesai'], BATAL: ['', 'Batal'] };
 const pill = (map, v) => { const [k, l] = map[v] || ['', v]; return `<span class="pill ${k}">${esc(l)}</span>`; };
 
 // ================================================================ Halaman
@@ -216,7 +216,6 @@ const HALAMAN = [
   { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
   { id: 'pembelian', judul: 'Pembelian', ikon: '⊕', untuk: 'kantor' },
   { id: 'barang', judul: 'Master Barang', ikon: '☰', untuk: 'kantor' },
-  { id: 'principal', judul: 'Principal', ikon: '◎', untuk: 'kantor' },
   { id: 'toko', judul: 'Toko', ikon: '⌂', untuk: 'kantor' },
   { id: 'asisten', judul: 'Asisten AI', ikon: '✦', untuk: 'semua' },
   { id: 'pengguna', judul: 'Pengguna', ikon: '☺', untuk: 'owner' },
@@ -585,22 +584,16 @@ async function detailSj(sj) {
 async function hBarang(el) {
   el.innerHTML = `${head('Master Barang', 'Kode, barcode, harga jual, dan satuan yang dipakai semua toko. Toko dengan daftar barang terkunci mengambilnya otomatis tiap jam.',
     `<button class="btn" id="brImport">Import Excel…</button><button class="btn" id="brIsi">Isi dari toko…</button><button class="btn" id="brHarga">Catat harga beli…</button>${isOwner() ? '<button class="btn" id="brMarkup">Markup…</button>' : ''}<button class="btn primary" id="brTambah">+ Barang</button>`)}
-    <div class="card"><div class="card-head"><div class="row"><input id="brCari" placeholder="Cari nama atau SKU" style="min-width:220px"><select id="brPr" aria-label="Principal"><option value="">Semua principal</option></select></div>
+    <div class="card"><div class="card-head"><div class="row"><input id="brCari" placeholder="Cari nama atau SKU" style="min-width:220px"></div>
     <span class="muted small" id="brJumlah"></span></div><div id="brIsiTabel"></div></div>`;
-  const [principal, markupRow] = await Promise.all([
-    q(sb.from('principal').select('id,nama').order('nama')),
-    q(sb.from('pengaturan').select('nilai').eq('kunci', 'markup_jual_ke_toko')),
-  ]);
+  const markupRow = await q(sb.from('pengaturan').select('nilai').eq('kunci', 'markup_jual_ke_toko'));
   const markup = markupRow.length ? Number(markupRow[0].nilai) : null;
-  $('#brPr', el).insertAdjacentHTML('beforeend', principal.map((p) => `<option value="${p.id}">${esc(p.nama)}</option>`).join(''));
-  const prNama = Object.fromEntries(principal.map((p) => [p.id, p.nama]));
   let rows = [];
 
   async function muat() {
     const cari = $('#brCari', el).value.trim();
     let qy = sb.from('produk').select('*').order('nama').limit(1000);
     if (cari) qy = /^[A-Za-z0-9-]+$/.test(cari) && cari.length <= 20 ? qy.ilike('sku', `%${cari}%`) : qy.ilike('nama', `%${cari}%`);
-    if ($('#brPr', el).value) qy = qy.eq('principal_id', $('#brPr', el).value);
     let [produk, harga] = await Promise.all([q(qy), q(sb.from('v_harga_produk').select('sku,harga_beli_dasar,sumber,harga_jual_ke_toko').limit(5000))]);
     if (cari && !produk.length && /^[A-Za-z0-9-]+$/.test(cari)) produk = await q(sb.from('produk').select('*').ilike('nama', `%${cari}%`).order('nama').limit(1000));
     const h = Object.fromEntries(harga.map((x) => [x.sku, x]));
@@ -608,7 +601,7 @@ async function hBarang(el) {
     $('#brJumlah', el).textContent = `${num(rows.length)} barang${markup !== null ? ` · markup ke toko ${num(markup * 100, 1)}%` : ''}`;
     const box = $('#brIsiTabel', el);
     box.innerHTML = tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama', fmt: (v, r) => `${esc(v)}${r.aktif ? '' : ' <span class="pill">nonaktif</span>'}` },
-      { k: 'barcode', judul: 'Barcode', fmt: (v) => `<span class="mono small">${esc(v || '-')}</span>` }, { k: 'principal_id', judul: 'Principal', fmt: (v) => esc(prNama[v] || '-') },
+      { k: 'barcode', judul: 'Barcode', fmt: (v) => `<span class="mono small">${esc(v || '-')}</span>` },
       { k: 'harga_jual_konsumen', judul: 'Harga jual', num: true, fmt: rp }, { k: 'satuan_masuk', judul: 'Satuan masuk', fmt: (v, r) => (v === 'Biji' ? 'Biji' : `1 Coly = ${num(r.rasio_isi)} Biji`) },
       { k: 'harga_beli_dasar', judul: 'Harga beli', num: true, fmt: (v, r) => (v === null || v === undefined ? '<span class="muted">-</span>' : `${rp(v)} <span class="muted small">${r.sumber === 'PRICELIST' ? 'pricelist' : 'beli'}</span>`) },
       { k: 'harga_jual_ke_toko', judul: 'Harga ke toko', num: true, fmt: rp }], rows, { klik: true, kosong: 'Belum ada barang. Isi dari daftar barang salah satu toko atau tambah manual.' });
@@ -617,7 +610,7 @@ async function hBarang(el) {
 
   function formBarang(p) {
     const baru = !p;
-    p = p || { aktif: true, satuan_masuk: 'Coly', rasio_isi: 1, isi_dus: 1 };
+    p = p || { aktif: true, satuan_masuk: 'Coly', rasio_isi: 1 };
     const biji = p.satuan_masuk === 'Biji';
     modal({
       judul: baru ? 'Tambah barang' : `Ubah ${p.sku}`,
@@ -627,14 +620,11 @@ async function hBarang(el) {
         <label class="f">Nama barang<input id="fNama" value="${esc(p.nama || '')}" required></label>
         <div class="grid g2"><label class="f">Merk<input id="fMerk" value="${esc(p.merk || '')}"></label><label class="f">Kategori<input id="fKat" value="${esc(p.kategori || '')}"></label></div>
         <div class="grid g2"><label class="f">Harga jual di toko (Rp)<input id="fHarga" type="number" min="0" step="100" value="${esc(p.harga_jual_konsumen ?? '')}" required></label>
-          <label class="f">Principal<select id="fPr"><option value="">-</option>${principal.map((x) => `<option value="${x.id}" ${x.id === p.principal_id ? 'selected' : ''}>${esc(x.nama)}</option>`).join('')}</select></label></div>
+          <label class="f">Status<select id="fAktif"><option value="1" ${p.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${p.aktif ? '' : 'selected'}>Nonaktif</option></select></label></div>
         <div class="grid g2"><label class="f">Satuan masuk (kiriman kantor ke toko)<select id="fSatuan">
             <option value="Coly" ${biji ? '' : 'selected'}>Coly</option><option value="Biji" ${biji ? 'selected' : ''}>Biji</option></select></label>
           <label class="f">Isi 1 Coly (Biji)<input id="fRasio" type="number" min="1" value="${esc(biji ? 1 : p.rasio_isi || 1)}" ${biji ? 'disabled' : ''}></label></div>
-        <div class="grid g2"><label class="f">Isi 1 dus dari principal (Biji)<input id="fIsiDus" type="number" min="1" value="${esc(p.isi_dus || 1)}"></label>
-          <label class="f">Status<select id="fAktif"><option value="1" ${p.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${p.aktif ? '' : 'selected'}>Nonaktif</option></select></label></div>
-        <p class="muted small" style="margin:0"><b>Isi 1 Coly</b>: kemasan kiriman kantor ke toko, harus sama dengan isi 1 Coly di Accurate (untuk mencocokkan surat jalan).
-          <b>Isi 1 dus dari principal</b>: kemasan pembelian kantor dari principal (untuk membulatkan usulan PO).</p></form>`,
+        <p class="muted small" style="margin:0"><b>Isi 1 Coly</b> harus sama dengan isi 1 Coly di Accurate: dipakai untuk mencocokkan surat jalan dan untuk membulatkan usulan beli.</p></form>`,
       onBuka: (m) => $('#fSatuan', m).addEventListener('change', (e) => {
         const r = $('#fRasio', m);
         r.disabled = e.target.value === 'Biji';
@@ -643,8 +633,8 @@ async function hBarang(el) {
       aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
         const v = (id) => $(id, m).value.trim();
         const data = { nama: v('#fNama'), barcode: v('#fBarcode') || null, merk: v('#fMerk') || null, kategori: v('#fKat') || null,
-          harga_jual_konsumen: v('#fHarga') === '' ? null : Number(v('#fHarga')), principal_id: v('#fPr') ? Number(v('#fPr')) : null,
-          satuan_masuk: v('#fSatuan'), rasio_isi: v('#fSatuan') === 'Biji' ? 1 : Number(v('#fRasio')) || 1, isi_dus: Number(v('#fIsiDus')) || 1, aktif: v('#fAktif') === '1' };
+          harga_jual_konsumen: v('#fHarga') === '' ? null : Number(v('#fHarga')),
+          satuan_masuk: v('#fSatuan'), rasio_isi: v('#fSatuan') === 'Biji' ? 1 : Number(v('#fRasio')) || 1, aktif: v('#fAktif') === '1' };
         if (!data.nama || (baru && !v('#fSku'))) throw new Error('SKU dan nama wajib diisi.');
         if (baru) await q(sb.from('produk').insert({ sku: v('#fSku'), ...data }));
         else await q(sb.from('produk').update(data).eq('sku', p.sku));
@@ -656,7 +646,6 @@ async function hBarang(el) {
   $('#brTambah', el).addEventListener('click', () => formBarang(null));
   $('#brImport', el).addEventListener('click', () => importExcel(() => muat()));
   $('#brCari', el).addEventListener('input', () => { clearTimeout(S.tCari); S.tCari = setTimeout(() => muat().catch((e) => toast(pesanError(e), 'bad')), 250); });
-  $('#brPr', el).addEventListener('change', muat);
   $('#brIsi', el).addEventListener('click', () => modal({
     judul: 'Isi master dari daftar barang toko',
     isi: `<p style="margin-top:0">Barang dari daftar barang Trizone toko ini yang belum ada di master ditambahkan. Barang yang sudah ada tidak diubah.</p><label class="f">Toko${pilihToko('isiToko', '', '')}</label>`,
@@ -701,7 +690,7 @@ function importExcel(selesai) {
   let data = null;
   const m = modal({
     judul: 'Import barang dari Excel', lebar: true,
-    isi: `<p style="margin-top:0">Format sama dengan template import barang Trizone, ditambah kolom kantor <b>Principal</b>, <b>Isi_Dus_Principal</b>, <b>Harga_Beli</b> (per Biji), dan <b>Aktif</b>.
+    isi: `<p style="margin-top:0">Format sama dengan template import barang Trizone, ditambah kolom kantor <b>Harga_Beli</b> (per Biji) dan <b>Aktif</b>.
         File "data item" (Kode Item, Nama Item, Jenis, Harga Jual) juga bisa. Satuan_Masuk diisi <b>Coly</b> atau <b>Biji</b> (Dus / Karton dibaca Coly, Pcs dibaca Biji).
         <b>Sel kosong tidak mengubah data lama.</b> Barang yang tidak ada di file tidak dihapus.</p>
       <div class="row"><button class="btn sm" id="imTemplate">Unduh template</button><button class="btn sm" id="imMaster">Unduh master saat ini</button>
@@ -724,14 +713,12 @@ function importExcel(selesai) {
 
   $('#imTemplate', m.el).addEventListener('click', () => XLSX.writeFile(MbImportBarang.workbook(MbImportBarang.CONTOH), 'Template_Import_Barang.xlsx'));
   $('#imMaster', m.el).addEventListener('click', (e) => sibuk(e.target, async () => {
-    const [produk, principal, harga] = await Promise.all([
+    const [produk, harga] = await Promise.all([
       ambilSemua(() => sb.from('produk').select('*').order('sku')),
-      q(sb.from('principal').select('id,nama')),
       ambilSemua(() => sb.from('v_harga_produk').select('sku,harga_beli_dasar').order('sku')),
     ]);
-    const nmPr = Object.fromEntries(principal.map((p) => [p.id, p.nama]));
     const hb = Object.fromEntries(harga.map((h) => [h.sku, h.harga_beli_dasar]));
-    XLSX.writeFile(MbImportBarang.workbook(MbImportBarang.barisMaster(produk, nmPr, hb)), `Master_Barang_${hariIni()}.xlsx`);
+    XLSX.writeFile(MbImportBarang.workbook(MbImportBarang.barisMaster(produk, hb)), `Master_Barang_${hariIni()}.xlsx`);
   }));
 
   async function periksa() {
@@ -752,7 +739,6 @@ function importExcel(selesai) {
       box.innerHTML = `<div class="grid" style="margin-top:12px">
         <div class="alert ${nSalah ? 'bad' : 'ok'}"><b>${esc(file.name)}</b> · lembar ${esc(f.lembar)} · format ${esc(f.format)} · judul kolom di baris ${num(f.barisJudul)}<br>
           ${num(cek.jumlah)} barang: <b>${num(cek.baru)} baru</b>, <b>${num(cek.diubah)} diubah</b>, ${num(cek.sama)} sama${cek.harga_beli ? ` · ${num(cek.harga_beli)} harga beli baru` : ''}
-          ${cek.principal_baru.length ? `<br>Principal baru: ${cek.principal_baru.map(esc).join(', ')}` : ''}
           <br><span class="small">Kolom terbaca: ${f.kolom.map((k) => esc(k.judul)).join(', ')}</span>
           ${nSalah ? `<br><b>${num(nSalah)} kesalahan. Perbaiki di Excel, simpan, lalu pilih file lagi.</b>` : ''}</div>
         ${f.tanpaSku.length ? `<div class="alert warn">${num(f.tanpaSku.length)} baris tanpa SKU dilewati (baris ${f.tanpaSku.slice(0, 15).join(', ')}${f.tanpaSku.length > 15 ? ', …' : ''}).</div>` : ''}
@@ -769,58 +755,6 @@ function importExcel(selesai) {
   $('#imTgl', m.el).addEventListener('change', periksa);
 }
 
-// ---------------------------------------------------------------- Principal
-async function hPrincipal(el) {
-  el.innerHTML = `${head('Principal', 'Data pemasok untuk menghitung usulan beli. Lengkapi lewat wawancara dengan asisten AI atau isi langsung.', '<button class="btn primary" id="prTambah">+ Principal</button>')}
-    <div class="card" id="prDaftar"><div class="kosong">Memuat…</div></div>`;
-  async function muat() {
-    const rows = await rpc('laporan_principal');
-    const box = $('#prDaftar', el);
-    box.innerHTML = tabel([{ k: 'nama', judul: 'Principal', fmt: (v) => `<b>${esc(v)}</b>` },
-      { k: 'lead_time_hari', judul: 'Lead time', fmt: (v, r) => `${v === null ? '<span class="pill warn">belum</span>' : `${num(v)} hari`}${r.lead_time_aktual !== null ? `<div class="muted small">aktual ${num(r.lead_time_aktual, 1)} hari</div>` : ''}` },
-      { k: 'periode_order_hari', judul: 'Order', fmt: (v, r) => (v === null ? '<span class="pill warn">belum</span>' : `tiap ${num(v)} hari${r.jadwal_order ? `<div class="muted small">${esc(r.jadwal_order)}</div>` : ''}`) },
-      { k: 'minimum_order_qty', judul: 'Min. order', fmt: (v, r) => [v !== null ? `${num(v)} Biji` : '', r.minimum_order_rp !== null ? rp(r.minimum_order_rp) : ''].filter(Boolean).join('<br>') || '-' },
-      { k: 'stok_pengaman_hari', judul: 'Stok pengaman', fmt: (v) => `${num(v)} hari` }, { k: 'jumlah_produk', judul: 'Produk', num: true },
-      { k: 'diwawancara_at', judul: 'Diwawancara', fmt: (v) => esc(v ? fmtTgl(v) : '-') },
-      { k: 'id', judul: '', fmt: (v) => `<div class="row"><button class="btn sm" data-ubah="${v}">Ubah</button><button class="btn sm primary" data-ww="${v}">Wawancara AI</button></div>` }],
-    rows, { kosong: 'Belum ada principal.' });
-    box.onclick = (e) => {
-      const u = e.target.closest('[data-ubah]');
-      const w = e.target.closest('[data-ww]');
-      if (w) { S.mulaiWawancara = Number(w.dataset.ww); location.hash = 'asisten'; }
-      if (u) formPrincipal(rows.find((r) => String(r.id) === u.dataset.ubah));
-    };
-  }
-  function formPrincipal(p) {
-    const f = (id, label, v, type = 'number') => `<label class="f">${label}<input id="${id}" type="${type}" value="${esc(v ?? '')}"></label>`;
-    modal({
-      judul: `Ubah ${p.nama}`,
-      isi: `<form class="form" onsubmit="return false"><div class="grid g2">${f('pLead', 'Lead time (hari)', p.lead_time_hari)}${f('pPer', 'Periode order (hari)', p.periode_order_hari)}</div>
-        ${f('pJadwal', 'Jadwal order', p.jadwal_order, 'text')}
-        <div class="grid g2">${f('pMinQ', 'Minimum order (Biji)', p.minimum_order_qty)}${f('pMinRp', 'Minimum order (Rp)', p.minimum_order_rp)}</div>
-        ${f('pPengaman', 'Stok pengaman (hari)', p.stok_pengaman_hari)}
-        <label class="f">Catatan promo<textarea id="pPromo" rows="2">${esc(p.catatan_promo || '')}</textarea></label></form>`,
-      aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
-        const n = (id) => ($(id, m).value === '' ? undefined : Number($(id, m).value));
-        await rpc('simpan_data_principal', { p_id: p.id, p: { lead_time_hari: n('#pLead'), periode_order_hari: n('#pPer'), jadwal_order: $('#pJadwal', m).value || undefined,
-          minimum_order_qty: n('#pMinQ'), minimum_order_rp: n('#pMinRp'), stok_pengaman_hari: n('#pPengaman'), catatan_promo: $('#pPromo', m).value || undefined } });
-        tutup(); toast('Principal disimpan.'); muat();
-      } }],
-    });
-  }
-  $('#prTambah', el).addEventListener('click', () => modal({
-    judul: 'Tambah principal',
-    isi: '<label class="f">Nama principal<input id="prNama" required></label>',
-    aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
-      const nama = $('#prNama', m).value.trim();
-      if (!nama) throw new Error('Isi nama principal.');
-      await q(sb.from('principal').insert({ nama }));
-      tutup(); toast('Principal ditambahkan.'); muat();
-    } }],
-  }));
-  await muat();
-}
-
 // ---------------------------------------------------------------- Pembelian
 async function hPembelian(el) {
   let tab = S.tabPembelian || 'po';
@@ -828,8 +762,6 @@ async function hPembelian(el) {
     ${tabs('pbTab', [['po', 'Purchase order'], ['usulan', 'Usulan beli']], tab)}<div id="pbIsi"></div>`;
   pasangTabs(el, 'pbTab', (t) => { tab = t; S.tabPembelian = t; tampil(); });
   const isi = $('#pbIsi', el);
-  const principal = await q(sb.from('principal').select('id,nama').order('nama'));
-  const prNama = Object.fromEntries(principal.map((p) => [p.id, p.nama]));
 
   async function tampil() {
     isi.innerHTML = '<div class="card"><div class="kosong">Memuat…</div></div>';
@@ -837,37 +769,58 @@ async function hPembelian(el) {
   }
 
   async function usulan() {
-    const rows = await rpc('laporan_usulan_beli');
-    const g = new Map();
-    for (const r of rows) { if (!g.has(r.principal_id)) g.set(r.principal_id, []); g.get(r.principal_id).push(r); }
-    isi.innerHTML = g.size ? [...g.entries()].map(([pid, baris]) => `<div class="card"><div class="card-head"><h2>${esc(prNama[pid] || baris[0].principal)}</h2>
-        <button class="btn primary sm" data-buat="${pid}">Buat usulan PO</button></div>
-        ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
-          { k: 'rata_harian', judul: 'Jual / hari', num: true, fmt: (v) => num(v, 1) }, { k: 'lead_time', judul: 'Lead + periode', num: true, fmt: (v, r) => `${num(v)} + ${num(r.periode_order)} hr` },
-          { k: 'stok_gudang', judul: 'Stok gudang', num: true, fmt: (v) => num(v) }, { k: 'stok_toko', judul: 'Stok toko', num: true, fmt: (v) => num(v) },
-          { k: 'po_belum_datang', judul: 'PO jalan', num: true, fmt: (v) => num(v) }, { k: 'usulan_qty', judul: 'Usulan', num: true, fmt: (v) => `<b>${num(v)}</b>` }], baris)}</div>`).join('')
-      : '<div class="card"><div class="kosong">Tidak ada barang yang perlu dibeli saat ini.</div></div>';
+    const [rows, atur] = await Promise.all([rpc('laporan_usulan_beli'), q(sb.from('pengaturan').select('kunci,nilai').in('kunci', ['usulan_lead_time_hari', 'usulan_periode_order_hari', 'usulan_stok_pengaman_hari']))]);
+    const a = Object.fromEntries(atur.map((x) => [x.kunci, Number(x.nilai)]));
+    const lead = a.usulan_lead_time_hari ?? 7;
+    const per = a.usulan_periode_order_hari ?? 7;
+    const aman = a.usulan_stok_pengaman_hari ?? 3;
+    isi.innerHTML = `<div class="card"><div class="card-head"><div><h2>Usulan beli</h2>
+        <div class="muted small" id="pbAturTeks">Lead time ${num(lead)} hari · order tiap ${num(per)} hari · stok pengaman ${num(aman)} hari · dibulatkan ke isi 1 Coly</div></div>
+        <div class="row">${isOwner() ? '<button class="btn sm" id="pbAtur">Pengaturan…</button>' : ''}${rows.length ? '<button class="btn primary sm" id="pbBuat">Buat usulan PO</button>' : ''}</div></div>
+      ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+        { k: 'rata_harian', judul: 'Jual / hari', num: true, fmt: (v) => num(v, 1) },
+        { k: 'stok_gudang', judul: 'Stok gudang', num: true, fmt: (v) => num(v) }, { k: 'stok_toko', judul: 'Stok toko', num: true, fmt: (v) => num(v) },
+        { k: 'po_belum_datang', judul: 'PO jalan', num: true, fmt: (v) => num(v) },
+        { k: 'usulan_qty', judul: 'Usulan', num: true, fmt: (v, r) => `<b>${num(v)} Biji</b>${r.satuan_masuk === 'Coly' && Number(r.isi_kemasan) > 1 ? `<div class="muted small">${num(Number(v) / Number(r.isi_kemasan))} Coly</div>` : ''}` }],
+      rows, { kosong: 'Tidak ada barang yang perlu dibeli saat ini.' })}</div>`;
     isi.onclick = (e) => {
-      const b = e.target.closest('[data-buat]');
-      if (b) sibuk(b, async () => { const no = await rpc('buat_po_dari_usulan', { p_principal_id: Number(b.dataset.buat) }); toast(`Usulan ${no} dibuat.`); tab = 'po'; S.tabPembelian = 'po'; route(); });
+      if (e.target.closest('#pbBuat')) {
+        sibuk(e.target.closest('#pbBuat'), async () => { const no = await rpc('buat_po_dari_usulan'); toast(`Usulan ${no} dibuat.`); tab = 'po'; S.tabPembelian = 'po'; route(); });
+      }
+      if (e.target.closest('#pbAtur')) {
+        modal({
+          judul: 'Pengaturan usulan beli',
+          isi: `<div class="grid g2"><label class="f">Lead time (hari: dari pesan sampai barang tiba)<input id="atLead" type="number" min="0" value="${lead}"></label>
+            <label class="f">Periode order (hari: order tiap berapa hari)<input id="atPer" type="number" min="1" value="${per}"></label></div>
+            <label class="f">Stok pengaman (hari penjualan cadangan)<input id="atAman" type="number" min="0" value="${aman}"></label>
+            <p class="muted small">Usulan = rata-rata jual harian × (lead time + periode order) + stok pengaman − (stok gudang + stok toko + PO belum datang), dibulatkan ke isi 1 Coly.</p>`,
+          aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+            const n = (id) => Number($(id, m).value);
+            if (!(n('#atLead') >= 0 && n('#atPer') >= 1 && n('#atAman') >= 0)) throw new Error('Isi angka hari yang benar.');
+            await q(sb.from('pengaturan').upsert([{ kunci: 'usulan_lead_time_hari', nilai: n('#atLead') }, { kunci: 'usulan_periode_order_hari', nilai: n('#atPer') },
+              { kunci: 'usulan_stok_pengaman_hari', nilai: n('#atAman') }], { onConflict: 'kunci' }));
+            tutup(); toast('Pengaturan usulan disimpan.'); tampil();
+          } }],
+        });
+      }
     };
   }
 
   async function daftarPo() {
     const rows = await q(sb.from('po').select('*').order('tanggal', { ascending: false }).order('no_po', { ascending: false }).limit(200));
     isi.innerHTML = `<div class="card">${tabel([{ k: 'no_po', judul: 'No. PO', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'tanggal', judul: 'Tanggal', fmt: (v) => esc(fmtTgl(v)) },
-      { k: 'principal_id', judul: 'Principal', fmt: (v) => esc(prNama[v] || v) }, { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_PO, v) },
+      { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_PO, v) },
       { k: 'no_po_accurate', judul: 'No. PO Accurate', fmt: (v) => esc(v || '-') }, { k: 'disetujui_at', judul: 'Disetujui', fmt: (v) => esc(v ? fmtWaktu(v) : '-') }],
     rows, { klik: true, kosong: 'Belum ada PO. Buat dari tab Usulan beli.' })}</div>`;
     onBaris(isi, rows, (po) => detailPo(po, tampil));
   }
 
   async function detailPo(po, segarkan) {
-    const [baris, produk, terima] = await Promise.all([
+    const [baris, terima] = await Promise.all([
       q(sb.from('po_baris').select('*').eq('no_po', po.no_po).order('sku')),
-      q(sb.from('produk').select('sku,nama').eq('principal_id', po.principal_id)),
       q(sb.from('penerimaan_principal').select('no_terima').eq('no_po', po.no_po)),
     ]);
+    const produk = baris.length ? await q(sb.from('produk').select('sku,nama').in('sku', baris.map((b) => b.sku))) : [];
     const nm = Object.fromEntries(produk.map((p) => [p.sku, p.nama]));
     let sudah = {};
     if (terima.length) {
@@ -882,7 +835,7 @@ async function hPembelian(el) {
       if (!(await konfirmasi('Batalkan PO', `Batalkan ${esc(po.no_po)}?`, 'Batalkan', true))) return;
       await rpc('ubah_status_po', { p_no_po: po.no_po, p_status: 'BATAL' }); tutup(); toast('PO dibatalkan.'); segarkan();
     } });
-    if (po.status === 'DISETUJUI') aksi.push({ label: 'Tandai sudah dikirim ke principal', onClick: async ({ tutup, el: m }) => {
+    if (po.status === 'DISETUJUI') aksi.push({ label: 'Tandai sudah dikirim ke pemasok', onClick: async ({ tutup, el: m }) => {
       await rpc('ubah_status_po', { p_no_po: po.no_po, p_status: 'DIKIRIM', p_no_po_accurate: ($('#poAcc', m) || {}).value || null }); tutup(); toast('PO ditandai dikirim.'); segarkan();
     } });
     if (['DISETUJUI', 'DIKIRIM', 'SEBAGIAN'].includes(po.status)) aksi.push({ label: 'Terima barang…', onClick: ({ tutup }) => { tutup(); formTerima(po, baris, nm, sudah, segarkan); } });
@@ -892,7 +845,7 @@ async function hPembelian(el) {
       await rpc('setujui_po', { p_no_po: po.no_po, p }); tutup(); toast(`${po.no_po} disetujui.`); segarkan();
     } });
     modal({
-      judul: `${po.no_po} · ${prNama[po.principal_id] || ''}`, lebar: true,
+      judul: po.no_po, lebar: true,
       isi: `<p class="muted" style="margin-top:0">${esc(fmtTgl(po.tanggal))} · ${pill(STATUS_PO, po.status)} · perkiraan nilai ${rp(total)}${po.status === 'USULAN' && !isOwner() ? ' · menunggu persetujuan owner' : ''}</p>
         ${po.status === 'DISETUJUI' ? '<label class="f" style="margin-bottom:12px">No. PO di Accurate (diisi setelah dimasukkan ke Accurate)<input id="poAcc"></label>' : ''}
         ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama', fmt: (v, r) => esc(nm[r.sku] || '') },
@@ -1066,34 +1019,34 @@ function riwayatTampil(pesan) {
 
 const NAMA_ALAT = { daftar_toko: 'daftar toko', ringkasan_penjualan: 'ringkasan penjualan', penjualan_harian: 'penjualan harian', produk_terlaris: 'produk terlaris',
   tren_produk: 'tren produk', analisa_abc: 'analisa ABC', cari_stok: 'stok', stok_lambat: 'stok lambat', usulan_beli: 'usulan beli', status_surat_jalan: 'surat jalan',
-  selisih_stok_opname: 'selisih SO', daftar_principal: 'data principal', simpan_principal: 'menyimpan data principal' };
+  selisih_stok_opname: 'selisih SO' };
 
 async function hAsisten(el) {
   el.innerHTML = `${head('Asisten AI', 'Tanya tentang penjualan, stok, surat jalan, atau pembelian. Jawaban diambil dari data mother base dengan hak akses Anda.')}
     <div class="chat-layout"><div class="card"><div class="card-head"><h2>Percakapan</h2><button class="btn sm primary" id="aiBaru">+ Baru</button></div><div class="chat-list" id="aiList"></div></div>
     <div class="card chat-panel"><div class="chat-msgs" id="aiMsgs"></div><div class="saran" id="aiSaran"></div>
       <form class="chat-input" id="aiForm"><textarea id="aiInput" rows="2" placeholder="Tulis pertanyaan…" aria-label="Pertanyaan"></textarea><button class="btn primary" id="aiKirim">Kirim</button></form></div></div>`;
-  let aktif = null; // { id, mode, principal_id }
+  let aktif = null; // { id }
   let pending = null;
   const SARAN = ['Produk apa yang naik minggu ini?', 'Bandingkan omzet semua toko bulan ini', 'Barang apa yang stoknya lambat di TRP?', 'Jelaskan usulan beli saat ini', 'Surat jalan mana yang bermasalah?'];
 
   async function daftar() {
     const rows = await q(sb.from('ai_percakapan').select('id,judul,mode,diubah_at').order('diubah_at', { ascending: false }).limit(50));
     $('#aiList', el).innerHTML = rows.length ? rows.map((r) => `<button data-id="${r.id}" class="${aktif && aktif.id === r.id ? 'aktif' : ''}"><div>${esc(r.judul || 'Tanpa judul')}</div>
-      <div class="muted small">${r.mode === 'wawancara' ? 'Wawancara · ' : ''}${esc(relatif(r.diubah_at))}</div></button>`).join('') : '<div class="muted small">Belum ada percakapan.</div>';
+      <div class="muted small">${esc(relatif(r.diubah_at))}</div></button>`).join('') : '<div class="muted small">Belum ada percakapan.</div>';
   }
   function render(list) {
     const box = $('#aiMsgs', el);
     box.innerHTML = list.length ? list.map((m) => (m.dari === 'pengguna' ? `<div class="msg pengguna">${esc(m.teks)}</div>`
       : `<div class="msg asisten">${markdown(m.teks)}${m.alat && m.alat.length ? `<div class="alat">Data: ${m.alat.map((a) => esc(NAMA_ALAT[a.nama] || a.nama) + (a.error ? ' (gagal)' : '')).join(', ')}</div>` : ''}</div>`)).join('')
-      : `<div class="kosong">${aktif && aktif.mode === 'wawancara' ? 'Memulai wawancara…' : 'Mulai dengan pertanyaan, atau pilih salah satu contoh di bawah.'}</div>`;
+      : '<div class="kosong">Mulai dengan pertanyaan, atau pilih salah satu contoh di bawah.</div>';
     box.scrollTop = box.scrollHeight;
     $('#aiSaran', el).innerHTML = list.length ? '' : SARAN.map((s) => `<button type="button">${esc(s)}</button>`).join('');
   }
   let tampilan = [];
   async function buka(id) {
     const [r] = await q(sb.from('ai_percakapan').select('*').eq('id', id).limit(1));
-    aktif = { id: r.id, mode: r.mode, principal_id: r.principal_id };
+    aktif = { id: r.id };
     tampilan = riwayatTampil(r.pesan);
     render(tampilan);
     daftar();
@@ -1104,7 +1057,7 @@ async function hAsisten(el) {
     render(tampilan);
     $('#aiMsgs', el).insertAdjacentHTML('beforeend', '<div class="msg asisten muted" id="aiTunggu">Sedang mencari jawaban…</div>');
     $('#aiKirim', el).disabled = true;
-    pending = sb.functions.invoke('asisten', { body: { pesan, percakapan_id: aktif && aktif.id, mode: aktif ? aktif.mode : 'tanya', principal_id: aktif && aktif.principal_id } });
+    pending = sb.functions.invoke('asisten', { body: { pesan, percakapan_id: aktif && aktif.id } });
     try {
       const { data, error } = await pending;
       if (error) {
@@ -1112,7 +1065,7 @@ async function hAsisten(el) {
         try { const j = await error.context.json(); msg = j.error || msg; } catch (_) { /* bukan JSON */ }
         throw new Error(msg);
       }
-      aktif = { id: data.percakapan_id, mode: aktif ? aktif.mode : 'tanya', principal_id: aktif && aktif.principal_id };
+      aktif = { id: data.percakapan_id };
       tampilan.push({ dari: 'asisten', teks: data.jawaban || '(tidak ada jawaban)', alat: data.alat });
       render(tampilan);
       daftar();
@@ -1133,19 +1086,11 @@ async function hAsisten(el) {
   $('#aiBaru', el).addEventListener('click', () => { aktif = null; tampilan = []; render(tampilan); daftar(); $('#aiInput', el).focus(); });
 
   await daftar();
-  if (S.mulaiWawancara) {
-    aktif = { id: null, mode: 'wawancara', principal_id: S.mulaiWawancara };
-    S.mulaiWawancara = null;
-    tampilan = [];
-    render(tampilan);
-    kirim('Mulai wawancara.');
-  } else {
-    render(tampilan);
-  }
+  render(tampilan);
 }
 
 // ================================================================ Kerangka aplikasi
-const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, stok: hStok, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, principal: hPrincipal, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, stok: hStok, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
 
 function tampilLogin(pesan = '') {
   $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>

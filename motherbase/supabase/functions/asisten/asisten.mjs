@@ -3,8 +3,7 @@
 //
 // Claude hanya membaca data lewat fungsi laporan di database yang dipanggil dengan token
 // pengguna yang login, jadi Row Level Security tetap berlaku (pemilik toko hanya melihat tokonya).
-// Satu-satunya alat yang menulis adalah simpan_principal (wawancara principal), dan itu pun
-// hanya berhasil untuk pengguna kantor.
+// Semua alat hanya membaca.
 //
 // Angka dihitung database; Claude menjelaskan, merangkum, dan mengusulkan. Owner yang memutuskan.
 
@@ -69,8 +68,8 @@ export const ALAT = [
   },
   {
     name: 'usulan_beli',
-    description: 'Usulan beli ke principal yang dihitung database, dengan rata-rata jual harian, lead time, stok gudang, stok toko, PO belum datang, dan qty usulan.',
-    input_schema: { type: 'object', properties: { principal_id: { type: 'integer' } }, additionalProperties: false },
+    description: 'Usulan beli semua barang yang dihitung database: rata-rata jual harian, lead time, periode order, stok pengaman, stok gudang, stok toko, PO belum datang, dan qty usulan dalam Biji (dibulatkan ke isi 1 Coly).',
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'status_surat_jalan',
@@ -81,30 +80,6 @@ export const ALAT = [
     name: 'selisih_stok_opname',
     description: 'Selisih stok opname per produk beserta nilai rupiahnya. Status review: BARU, DISETUJUI, DITOLAK.',
     input_schema: { type: 'object', properties: { status: { type: 'string', enum: ['BARU', 'DISETUJUI', 'DITOLAK'] }, kode_toko: kodeToko, batas }, additionalProperties: false },
-  },
-  {
-    name: 'daftar_principal',
-    description: 'Daftar principal dengan lead time perkiraan dan aktual, periode & jadwal order, minimum order, stok pengaman, catatan promo, dan kapan terakhir diwawancara.',
-    input_schema: { type: 'object', properties: {}, additionalProperties: false },
-  },
-  {
-    name: 'simpan_principal',
-    description: 'Simpan data principal yang sudah DIKONFIRMASI owner dalam percakapan ini. Isi hanya field yang disebut owner. Jangan menebak angka. Set selesai_wawancara true setelah semua data principal itu terkumpul.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        principal_id: { type: 'integer' },
-        lead_time_hari: { type: 'integer', description: 'Hari dari PO sampai barang tiba' },
-        periode_order_hari: { type: 'integer', description: 'Jarak antar-order dalam hari, mis. 7 = mingguan' },
-        jadwal_order: { type: 'string', description: 'Mis. "tiap Senin" atau "tanggal 1 dan 15"' },
-        minimum_order_qty: { type: 'integer', description: 'Minimum order dalam Biji' },
-        minimum_order_rp: { type: 'number' },
-        stok_pengaman_hari: { type: 'integer' },
-        catatan_promo: { type: 'string' },
-        selesai_wawancara: { type: 'boolean' },
-      },
-      required: ['principal_id'], additionalProperties: false,
-    },
   },
 ];
 
@@ -121,14 +96,9 @@ const KE_RPC = {
   analisa_abc: (a) => ['laporan_abc', { p_dari: a.dari, p_sampai: a.sampai, p_kode_toko: a.kode_toko || null }],
   cari_stok: (a) => ['laporan_stok_produk', { p_cari: a.cari || null, p_kode_toko: a.kode_toko || null, p_batas: a.batas || 50 }],
   stok_lambat: (a) => ['laporan_stok_lambat', { p_hari: a.hari || 30, p_kode_toko: a.kode_toko || null, p_batas: a.batas || 50 }],
-  usulan_beli: (a) => ['laporan_usulan_beli', { p_principal_id: a.principal_id || null }],
+  usulan_beli: () => ['laporan_usulan_beli', {}],
   status_surat_jalan: (a) => ['laporan_status_sj', { p_status: a.status || null, p_kode_toko: a.kode_toko || null, p_batas: a.batas || 50 }],
   selisih_stok_opname: (a) => ['laporan_selisih_so', { p_status: a.status || 'BARU', p_kode_toko: a.kode_toko || null, p_batas: a.batas || 50 }],
-  daftar_principal: () => ['laporan_principal', {}],
-  simpan_principal: (a) => {
-    const { principal_id, ...data } = a;
-    return ['simpan_data_principal', { p_id: principal_id, p: data }];
-  },
 };
 
 const TGL_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -183,28 +153,11 @@ Aturan:
 - Tulis rupiah dengan format Rp 1.234.567 dan jumlah barang dalam Biji.
 - Tampilkan daftar lebih dari 3 baris sebagai tabel Markdown sederhana. Sebutkan rentang tanggal yang dipakai.
 - Anda boleh menjelaskan, membandingkan, dan menyarankan tindakan, tetapi keputusan (pembelian, persetujuan PO, persetujuan stok opname) tetap di tangan owner.
-- Jangan mengubah data. Alat simpan_principal hanya untuk wawancara principal yang diminta pengguna.`;
+- Jangan mengubah data.`;
 
-const SISTEM_WAWANCARA = `Anda mewawancarai owner sebuah perusahaan distribusi untuk melengkapi data satu principal (pemasok) di sistem mother base. Bahasa Indonesia, ramah, dan singkat.
-
-Data yang perlu dikumpulkan:
-1. Lead time: berapa hari dari PO dikirim sampai barang tiba di gudang.
-2. Periode order: berapa hari sekali order (mis. 7 = mingguan) dan jadwalnya (mis. tiap Senin).
-3. Minimum order: dalam Biji dan/atau rupiah.
-4. Stok pengaman: berapa hari penjualan yang ingin disimpan sebagai cadangan.
-5. Promo atau catatan khusus (diskon periodik, musim ramai, barang sering kosong).
-
-Cara kerja:
-- Mulai dengan daftar_principal untuk melihat data yang sudah ada, lalu tanyakan yang masih kosong atau perlu dikonfirmasi. Bila ada lead time aktual dari PO sebelumnya, sebutkan dan minta owner membandingkan.
-- Tanyakan satu atau dua hal per pesan.
-- Setelah owner menjawab, ulangi singkat apa yang Anda tangkap. Simpan dengan simpan_principal hanya angka yang disebut owner dengan jelas. Jangan menebak.
-- Setelah semua butir terjawab, simpan dengan selesai_wawancara = true, lalu ringkas data akhirnya.`;
-
-function konteks(pengguna, hariIni, principal) {
+function konteks(pengguna, hariIni) {
   const d = new Date(`${hariIni}T00:00:00Z`);
-  const baris = [`[Konteks] Tanggal hari ini: ${hariIni} (${HARI[d.getUTCDay()]}). Pengguna: ${pengguna.nama} (${pengguna.peran}${pengguna.kode_toko ? `, toko ${pengguna.kode_toko}` : ''}).`];
-  if (principal) baris.push(`Principal yang diwawancara: id ${principal.id}, ${principal.nama}.`);
-  return baris.join(' ');
+  return `[Konteks] Tanggal hari ini: ${hariIni} (${HARI[d.getUTCDay()]}). Pengguna: ${pengguna.nama} (${pengguna.peran}${pengguna.kode_toko ? `, toko ${pengguna.kode_toko}` : ''}).`;
 }
 
 function teksDari(content) {
@@ -215,7 +168,7 @@ const hariIniWib = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0
 
 /**
  * Satu giliran percakapan.
- * permintaan = { pesan, percakapan_id?, mode?: 'tanya' | 'wawancara', principal_id? }
+ * permintaan = { pesan, percakapan_id? }
  * db = { rpc(fn, args), ambilPercakapan(id), simpanPercakapan(row) } — lihat dbDariSupabase.
  * Hasil: { percakapan_id, jawaban, alat: [{ nama, masukan, error }], berhenti }
  */
@@ -226,20 +179,12 @@ export async function jalankanAsisten({ anthropic, db, permintaan, hariIni = har
   const pengguna = await db.rpc('saya', {});
   if (!pengguna || !pengguna.aktif) throw Object.assign(new Error('Akun belum terdaftar sebagai pengguna mother base'), { status: 401 });
 
-  let percakapan = permintaan.percakapan_id ? await db.ambilPercakapan(permintaan.percakapan_id) : null;
+  const percakapan = permintaan.percakapan_id ? await db.ambilPercakapan(permintaan.percakapan_id) : null;
   if (permintaan.percakapan_id && !percakapan) throw Object.assign(new Error('Percakapan tidak ditemukan'), { status: 404 });
-  const mode = percakapan ? percakapan.mode : permintaan.mode === 'wawancara' ? 'wawancara' : 'tanya';
-  const principalId = percakapan ? percakapan.principal_id : permintaan.principal_id || null;
-  if (mode === 'wawancara' && !principalId) throw Object.assign(new Error('Pilih principal untuk wawancara'), { status: 400 });
-  let principal = null;
-  if (mode === 'wawancara') {
-    principal = (await db.rpc('laporan_principal', {})).find((p) => Number(p.id) === Number(principalId));
-    if (!principal) throw Object.assign(new Error('Principal tidak ditemukan'), { status: 404 });
-  }
 
   const messages = percakapan ? [...percakapan.pesan] : [];
   const awalBaru = messages.length;
-  messages.push({ role: 'user', content: `${konteks(pengguna, hariIni, principal)}\n\n${pesan}` });
+  messages.push({ role: 'user', content: `${konteks(pengguna, hariIni)}\n\n${pesan}` });
 
   const dipakai = [];
   let berhenti = null;
@@ -252,7 +197,7 @@ export async function jalankanAsisten({ anthropic, db, permintaan, hariIni = har
       fallbacks: 'default',
       output_config: { effort: 'medium' },
       cache_control: { type: 'ephemeral' },
-      system: mode === 'wawancara' ? SISTEM_WAWANCARA : SISTEM_TANYA,
+      system: SISTEM_TANYA,
       tools: ALAT,
       messages,
     });
@@ -273,11 +218,6 @@ export async function jalankanAsisten({ anthropic, db, permintaan, hariIni = har
     const hasil = [];
     for (const blok of response.content) {
       if (blok.type !== 'tool_use') continue;
-      if (blok.name === 'simpan_principal' && mode !== 'wawancara') {
-        hasil.push({ type: 'tool_result', tool_use_id: blok.id, is_error: true, content: JSON.stringify({ error: 'Penyimpanan hanya boleh dalam mode wawancara principal.' }) });
-        dipakai.push({ nama: blok.name, masukan: blok.input, error: true });
-        continue;
-      }
       const r = await jalankanAlat(db, blok.name, blok.input);
       hasil.push({ type: 'tool_result', tool_use_id: blok.id, content: r.isi, ...(r.error ? { is_error: true } : {}) });
       dipakai.push({ nama: blok.name, masukan: blok.input, error: r.error });
@@ -286,10 +226,8 @@ export async function jalankanAsisten({ anthropic, db, permintaan, hariIni = har
     if (putaran === MAX_PUTARAN - 1) jawaban = teksDari(response.content) || 'Pertanyaan ini butuh terlalu banyak langkah. Coba persempit pertanyaannya.';
   }
 
-  const judul = percakapan ? percakapan.judul : (mode === 'wawancara' ? `Wawancara ${principal.nama}` : pesan.slice(0, 70));
-  const disimpan = await db.simpanPercakapan({
-    id: percakapan ? percakapan.id : undefined, mode, principal_id: principalId, judul, pesan: messages,
-  });
+  const judul = percakapan ? percakapan.judul : pesan.slice(0, 70);
+  const disimpan = await db.simpanPercakapan({ id: percakapan ? percakapan.id : undefined, judul, pesan: messages });
   return { percakapan_id: disimpan.id, judul, jawaban, alat: dipakai, berhenti, pesan_baru: messages.length - awalBaru };
 }
 
@@ -324,7 +262,7 @@ export function dbDariSupabase(sb) {
         if (!rows.length) throw new Error('Percakapan tidak bisa disimpan');
         return rows[0];
       }
-      const rows = cek(await sb.from('ai_percakapan').insert({ mode: row.mode, principal_id: row.principal_id, judul: row.judul, pesan: row.pesan }).select('id'));
+      const rows = cek(await sb.from('ai_percakapan').insert({ judul: row.judul, pesan: row.pesan }).select('id'));
       return rows[0];
     },
   };
