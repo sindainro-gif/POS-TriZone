@@ -742,6 +742,40 @@ app.on('browser-window-created', (_e, win) => {
           await shot('11b-nota-dibatalkan');
         }
       }
+
+      // Reset Program (Admin): pengaman dulu, lalu semua data toko terhapus & dicadangkan; kembali ke Buat Akun Admin
+      await run(`document.querySelector('#logoutBtn').click()`);
+      await wait(1500);
+      await login('Pemilik', '111111');
+      const reset = (a) => run(`window.posBridge.call('app:reset', ${JSON.stringify(a)})`);
+      const rShift = await reset({ confirm: 'RESET', pin: '111111' });
+      svc.archiveShift({});
+      const rPending = await reset({ confirm: 'RESET', pin: '111111' }); // mother base diatur (alamat uji) & ada data belum terkirim
+      svc.mbSaveConfig({ url: '' });
+      const rWord = await reset({ confirm: 'hapus', pin: '111111' });
+      const rPin = await reset({ confirm: 'RESET', pin: '222222' });
+      console.log('reset ditolak:', JSON.stringify([rShift.error, rPending.error, rWord.error, rPin.error]));
+      if (rShift.ok || !/Shift masih berjalan/.test(rShift.error) || rPending.ok || !/belum terkirim/.test(rPending.error)
+        || rWord.ok || !/Ketik RESET/.test(rWord.error) || rPin.ok || !/PIN Admin salah/.test(rPin.error) || svc.needsSetup()) {
+        throw new Error('pengaman Reset Program tidak bekerja');
+      }
+      await run(`document.querySelector('[data-view=settings]').click()`);
+      await wait(700);
+      await run(`(() => { document.querySelector('#stReset').scrollIntoView(); document.querySelector('#stReset').click(); })()`);
+      await wait(500);
+      await shot('12-reset-program');
+      await run(`(() => { document.querySelector('#rsConfirm').value = 'RESET'; document.querySelector('#rsPin').value = '111111'; document.querySelector('#modalRoot .modal-foot .btn.danger').click(); })()`);
+      await wait(3000);
+      const backups = fs.readdirSync(path.join(process.env.POS_DATA_DIR, 'backup')).filter((f) => /^sebelum-reset-\d{14}\.db$/.test(f));
+      const repLeft = fs.readdirSync(process.env.POS_REPORTS_DIR).filter((d) => /^Shift_/.test(d));
+      const afterSub = await run(`document.querySelector('#lgSub').textContent`);
+      const fresh = getServices();
+      console.log('setelah reset:', JSON.stringify({ setup: fresh.needsSetup(), barang: fresh.listProducts({}).length, backup: backups.length, laporan: repLeft.length, layar: afterSub }));
+      if (!fresh.needsSetup() || fresh.listProducts({}).length || backups.length !== 1 || repLeft.length || !/ADMIN/.test(afterSub)
+        || fs.existsSync(path.join(process.env.POS_DATA_DIR, 'drafts.json'))) {
+        throw new Error('Reset Program tidak menghapus semua data / tidak membuat cadangan');
+      }
+      await shot('12b-setelah-reset');
     } catch (e) {
       console.error('SMOKE GAGAL:', e);
       process.exitCode = 1;

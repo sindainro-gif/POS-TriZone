@@ -504,6 +504,43 @@ function requireDemo() {
 }
 
 // Kembalikan data latihan ke kondisi awal (database dibuat ulang lalu diisi data contoh)
+// Reset Program (hanya Admin, di PC Server / Mandiri): semua data toko dihapus seperti baru dipasang —
+// barang, stok, transaksi, akun, pengaturan toko, mother base, draft penjualan, dan file laporan.
+// Database dicadangkan dulu ke backup\sebelum-reset-*.db (bisa dipulihkan lewat "Pulihkan dari Cadangan").
+// Pengaturan komputer ini (mode jaringan & printer di device.json) tetap.
+async function resetProgram({ confirm, pin } = {}) {
+  if (isClient()) throw userError('Komputer ini terhubung ke PC Server. Reset program dilakukan di PC Server.');
+  if (DEMO) throw userError('Versi DEMO: gunakan tombol Reset Data Demo di layar login.');
+  if (String(confirm || '').trim().toUpperCase() !== 'RESET') throw userError('Ketik RESET untuk melanjutkan.');
+  let u = null;
+  try { u = localSvc.verifyLogin({ name: session && session.name, pin }); } catch (_) { u = null; }
+  if (!u || u.role !== 'admin') {
+    await new Promise((r) => setTimeout(r, 800)); // memperlambat tebak-tebakan PIN
+    throw userError('PIN Admin salah.');
+  }
+  if (localSvc.getShift()) throw userError('Shift masih berjalan. Tutup shift dulu agar penjualannya tersimpan dan terkirim.');
+  const st = localSvc.mbStatus();
+  const docs = Object.values(st.pending_docs || {}).reduce((a, b) => a + Number(b || 0), 0);
+  if (st.ready && (st.pending_shifts || docs)) {
+    throw userError(`Masih ada data yang belum terkirim ke kantor (${st.pending_shifts} shift, ${docs} dokumen). Tekan Kirim Sekarang di kartu Mother Base, lalu coba lagi.`);
+  }
+  const fresh = await Database.open(null);
+  const res = await db.replaceWith(fresh.exportBuffer(), path.join(DATA_DIR, 'backup'), { prefix: 'sebelum-reset' });
+  localSvc = createServices(db, secrets);
+  svc = localSvc;
+  // Data toko lain di komputer ini: draft penjualan & file laporan tutup shift
+  try { fs.rmSync(path.join(DATA_DIR, 'drafts.json'), { force: true }); } catch (_) { /* dibiarkan */ }
+  drafts = createDraftStore(DATA_DIR);
+  const repRoot = reportsRoot();
+  for (const d of fs.existsSync(repRoot) ? fs.readdirSync(repRoot) : []) {
+    if (/^Shift_/.test(d)) { try { fs.rmSync(path.join(repRoot, d), { recursive: true, force: true }); } catch (_) { /* dicoba lagi saat pembersihan 7 hari */ } }
+  }
+  clearOpenDir();
+  session = null;
+  setTimeout(() => win && win.reload(), 300);
+  return { backupFile: res.backupFile };
+}
+
 async function resetDemo() {
   requireDemo();
   const fresh = await Database.open(null);
@@ -680,6 +717,7 @@ const handlers = {
   'reports:open': (a) => openReport(a),
   'db:backup': () => backupDatabase(),
   'db:restore': () => restoreDatabase(),
+  'app:reset': (a) => resetProgram(a), // hanya Admin (tidak tercantum di ACCESS)
   'db:openFolder': () => shell.openPath(DATA_DIR),
 
   // Mother base (hanya Admin; pengiriman berjalan di PC pemilik database)

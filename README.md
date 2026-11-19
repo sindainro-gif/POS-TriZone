@@ -243,6 +243,7 @@ Satu database di **PC Server**; komputer lain (mode **Terhubung ke Server**) mem
 - **Pengaturan → Cadangkan Database…** menyimpan seluruh data (barang, stok, riwayat, pengaturan, desain label) ke satu file `.db`.
 - **Pengaturan → Pulihkan dari Cadangan…** mengganti data dengan isi file cadangan. Data lama disimpan dulu otomatis ke `backup/sebelum-pulih-*.db`.
 - Pindah komputer: Cadangkan → salin file `.db` → instal aplikasi di komputer baru → Pulihkan.
+- **Reset Program** (Pengaturan → Informasi, hanya Admin, di PC Server / Mandiri): menghapus semua data toko seperti baru dipasang (barang, stok, transaksi, akun, pengaturan toko, mother base, PIN Pembatalan, draft, file laporan). Harus mengetik `RESET` dan PIN Admin; ditolak bila shift masih berjalan atau masih ada data yang belum terkirim ke kantor. Database dicadangkan dulu ke `backup\sebelum-reset-*.db` (bisa dikembalikan dengan Pulihkan dari Cadangan). Mode jaringan & printer komputer ini tetap.
 - Selalu buka aplikasi lewat `Jalankan POS.bat` atau shortcut Start menu. Jika dijalankan dari dalam aplikasi lain yang terisolasi (misalnya aplikasi Microsoft Store), Windows bisa mengalihkan data ke folder lain sehingga data tampak "hilang".
 
 ## Penyesuaian terhadap spesifikasi

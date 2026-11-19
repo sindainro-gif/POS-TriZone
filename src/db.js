@@ -366,13 +366,13 @@ class Database {
   }
 
   // Ganti seluruh isi database dengan file cadangan; database lama disimpan dulu ke backupDir
-  async replaceWith(buffer, backupDir) {
+  async replaceWith(buffer, backupDir, { prefix = 'sebelum-pulih' } = {}) {
     await Database.validateFile(buffer);
     let saved = null;
     if (backupDir) {
       fs.mkdirSync(backupDir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-      saved = path.join(backupDir, `sebelum-pulih-${stamp}.db`);
+      saved = path.join(backupDir, `${prefix}-${stamp}.db`);
       fs.writeFileSync(saved, Buffer.from(this.db.export()));
     }
     const SQL = await loadSql();

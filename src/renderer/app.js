@@ -2212,7 +2212,7 @@ const modeCard = (() => {
     $('#mdTestResult').textContent = '';
     renderPanels();
     // Cadangkan / pulihkan hanya di PC pemilik database
-    ['#stBackup', '#stRestore', '#stOpenData', '#stOpenReports'].forEach((s) => { $(s).disabled = info.mode === 'client'; });
+    ['#stBackup', '#stRestore', '#stOpenData', '#stOpenReports', '#stReset'].forEach((s) => { $(s).disabled = info.mode === 'client'; });
   }
 
   $('#mdNewKey').addEventListener('click', async () => {
@@ -2694,6 +2694,45 @@ views.settings = (() => {
     });
   });
   $('#stOpenData').addEventListener('click', () => api('db:openFolder'));
+  // Reset Program: semua data toko dihapus (dicadangkan dulu). Harus ketik RESET + PIN Admin.
+  $('#stReset').addEventListener('click', () => {
+    modal({
+      title: 'Reset Program',
+      body: `<div class="alert danger" style="margin-bottom:10px"><b>Semua data toko di komputer ini akan dihapus</b> seperti aplikasi baru dipasang:
+          daftar barang &amp; stok, semua transaksi &amp; riwayat, akun pengguna, pengaturan toko &amp; nota, pengaturan mother base &amp; PIN Pembatalan,
+          draft penjualan, dan file laporan tutup shift.</div>
+        <ul class="notes">
+          <li>Database <b>dicadangkan otomatis</b> dulu ke folder backup (<code>sebelum-reset-….db</code>) dan bisa dikembalikan lewat <b>Pulihkan dari Cadangan</b>.</li>
+          <li>Pengaturan komputer ini (mode jaringan &amp; printer) tidak berubah.</li>
+          <li>Ditolak bila shift masih berjalan atau masih ada data yang belum terkirim ke kantor.</li>
+          <li>Setelah reset, aplikasi kembali ke layar <b>Buat Akun Admin</b>.</li>
+        </ul>
+        <div class="row-2" style="margin-top:10px">
+          <div class="field"><label>Ketik <b>RESET</b></label><input id="rsConfirm" autocomplete="off" placeholder="RESET"></div>
+          <div class="field"><label>PIN Admin Anda</label><input id="rsPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>
+        </div>`,
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        {
+          label: 'Reset Sekarang',
+          kind: 'danger',
+          onClick: async ({ close, el, btn }) => {
+            btn.disabled = true;
+            try {
+              const r = await api('app:reset', { confirm: $('#rsConfirm', el).value, pin: $('#rsPin', el).value });
+              close();
+              toast(`Program direset. Cadangan: ${r.backupFile || '-'}`, 'ok', 8000);
+            } catch (err) {
+              btn.disabled = false;
+              toast(err.message, 'err', 8000);
+              if (/PIN/.test(err.message)) { $('#rsPin', el).value = ''; $('#rsPin', el).focus(); }
+            }
+          },
+        },
+      ],
+      onOpen: (el) => $('#rsConfirm', el).focus(),
+    });
+  });
   $('#stBackup').addEventListener('click', async () => {
     try { const f = await api('db:backup'); if (f) toast(`Database dicadangkan ke: ${f}`, 'ok', 8000); } catch (e) { toast(e.message, 'err', 8000); }
   });
