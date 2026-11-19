@@ -17,6 +17,7 @@
     </div>
     <nav id="nav">
       <button class="nav-btn" data-view="checkout"><span class="nav-ico">⌁</span><span>Kasir / Pembayaran</span><kbd>F1</kbd></button>
+      <button class="nav-btn" data-view="orders"><span class="nav-ico">◫</span><span>Pesanan Pelanggan</span></button>
       <button class="nav-btn" data-view="transfers"><span class="nav-ico">⇄</span><span>Mutasi &amp; Pindah Stok</span><kbd>F3</kbd></button>
       <button class="nav-btn" data-view="receiving"><span class="nav-ico">⇩</span><span>Penerimaan Barang</span><kbd>F4</kbd></button>
       <button class="nav-btn" data-view="opname"><span class="nav-ico">✓</span><span>Stok Opname</span><kbd>F7</kbd></button>
@@ -96,6 +97,7 @@
             <button class="btn ghost" id="draftHoldBtn" title="Simpan keranjang ini, layani pelanggan lain dulu">Tahan (Draft)</button>
             <button class="btn ghost" id="draftListBtn">Daftar Draft</button>
           </div>
+          <button class="btn ghost" id="orderBtn" title="Barang dipesan / belum dibawa: stok belum dipotong, pelanggan membayar deposit">Jadikan Pesanan</button>
           <button class="btn ghost" id="clearBtn">Kosongkan Keranjang <kbd>F8</kbd></button>
         </div>
       </div>
@@ -103,6 +105,28 @@
     </section>
 
     <!-- ======================= MUTASI ======================= -->
+    <!-- ======================= PESANAN PELANGGAN ======================= -->
+    <section class="view" id="view-orders">
+      <header class="page-head">
+        <div><h1>Pesanan Pelanggan</h1><p>Barang dipesan / belum dibawa pelanggan. Stok baru dipotong saat barang diambil.</p></div>
+      </header>
+      <div class="card">
+        <div class="card-head">
+          <div class="btn-row">
+            <div class="seg or-tabs" id="orTabs">
+              <button data-st="baru" class="active">Belum diambil</button><button data-st="diambil">Sudah diambil</button><button data-st="batal">Dibatalkan</button><button data-st="semua">Semua</button>
+            </div>
+            <input id="orSearch" class="search wide" placeholder="Cari no. pesanan, nama, atau no. HP…">
+          </div>
+        </div>
+        <div class="tbl-wrap tall"><table class="tbl">
+          <thead><tr><th>No. Pesanan</th><th>Pelanggan</th><th>Tgl Pesan</th><th>Ambil Tgl</th><th class="r">Biji</th><th class="r">Total</th><th class="r">Deposit</th><th class="r">Sisa Bayar</th><th>Status</th><th class="w-act2">Aksi</th></tr></thead>
+          <tbody id="orBody"></tbody>
+        </table></div>
+        <div id="orCount" class="muted small"></div>
+      </div>
+    </section>
+
     <section class="view" id="view-transfers">
       <header class="page-head">
         <div><h1>Mutasi &amp; Pindah Stok</h1><p>Pindahkan stok antar zona: Display Toko, Gudang Utama, Gudang BS / Retur, dan Gudang Shopee.</p></div>

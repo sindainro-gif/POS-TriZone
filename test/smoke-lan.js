@@ -95,7 +95,7 @@ app.on('browser-window-created', (_e, win) => {
       // Peran Kasir: menu Pengaturan & Mutasi tersembunyi, perintah admin ditolak
       const nav = await run(`[...document.querySelectorAll('.nav-btn')].filter((b) => !b.classList.contains('hidden')).map((b) => b.dataset.view).join(',')`);
       console.log('menu kasir:', nav);
-      if (nav !== 'checkout,products,shift') throw new Error('menu kasir tidak sesuai peran');
+      if (nav !== 'checkout,orders,products,shift') throw new Error('menu kasir tidak sesuai peran');
       const denied = await run(`window.posBridge.call('device:get')`);
       if (denied.ok) throw new Error('kasir bisa membuka pengaturan mode komputer');
       // Versi sama di PC Server & PC Kasir → tidak ada peringatan beda versi
@@ -116,6 +116,17 @@ app.on('browser-window-created', (_e, win) => {
       console.log('ambil master dari PC kasir:', JSON.stringify(pull));
       if (pull.ok || !/belum diatur/.test(pull.error) || /mother base/i.test(pull.error)) throw new Error('Perbarui Daftar Barang dari PC kasir tidak diteruskan ke PC gudang / pesannya tidak netral');
       await shot('lan-03-menu-kasir');
+      // Pesanan dari PC kasir: tersimpan di PC server, stok belum dipotong, bisa dibatalkan dengan PIN Admin
+      const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+      const lanOrder = await run(`window.posBridge.call('orders:create', { items: [{ sku: 'BRS-001', qty: 4 }], customer_name: 'Pelanggan LAN', pickup_date: '${tomorrow}', deposit: 10000 })`);
+      const lanList = await run(`window.posBridge.call('orders:list', { status: 'baru' })`);
+      console.log('pesanan dari PC kasir:', JSON.stringify(lanOrder.ok ? [lanOrder.data.order_no, lanOrder.data.created_by, lanOrder.data.total, lanOrder.data.deposit] : lanOrder.error));
+      if (!lanOrder.ok || lanOrder.data.created_by !== 'Kasir LAN' || !lanList.ok || !lanList.data.some((o) => o.order_no === lanOrder.data.order_no)
+        || (await readGudangStock()).floor_stock !== 17) {
+        throw new Error('pesanan dari PC kasir tidak tersimpan di PC server / stok ikut terpotong');
+      }
+      const lanCancel = await run(`window.posBridge.call('orders:cancel', { order_no: '${lanOrder.data.order_no}', reason: 'Uji LAN', deposit_action: 'kembali', approver_pin: '123456' })`);
+      if (!lanCancel.ok || lanCancel.data.status !== 'batal' || lanCancel.data.done_by !== 'Kasir LAN') throw new Error(`batal pesanan dari PC kasir gagal: ${JSON.stringify(lanCancel)}`);
 
       // Matikan PC gudang → kasir keluar lalu login lagi (login darurat dari cache akun)
       gudang.kill();
@@ -142,6 +153,8 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#quickCash [data-v]').click()`); // Uang Pas (Tunai)
       const payDisabled = await run(`document.querySelector('#payBtn').disabled`);
       if (payDisabled) throw new Error('tombol Bayar nonaktif di mode darurat');
+      // Pesanan disimpan di PC server: tidak bisa dibuat saat MODE DARURAT
+      if (!(await run(`document.querySelector('#orderBtn').disabled`))) throw new Error('Jadikan Pesanan seharusnya nonaktif di mode darurat');
       await run(`document.querySelector('#payBtn').click()`);
       await wait(1500);
       const title = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);

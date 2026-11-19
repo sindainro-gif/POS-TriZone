@@ -7,7 +7,7 @@ const XLSX = require('xlsx');
 const { Database } = require('./db');
 const { createServices, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, OPNAME_TEMPLATE_HEADERS, localNow } = require('./services');
 const reports = require('./reports');
-const { buildReceiptLines, buildReceiptRows, buildShiftRows, receiptFragment, receiptPage, FONT_SCALES } = require('./receipt');
+const { buildReceiptLines, buildReceiptRows, buildShiftRows, buildOrderRows, receiptFragment, receiptPage, FONT_SCALES } = require('./receipt');
 const { labelPages, labelPreview } = require('./labels');
 const { startServer, createRemoteClient, newPairKey, DEFAULT_PORT } = require('./remote');
 const { loadDevice, saveDevice, PRINTER_KEYS, MODES } = require('./device');
@@ -160,6 +160,14 @@ async function printPage(page, { deviceName, pdfName, what }) {
 }
 
 // Rekap tutup shift di printer nota komputer ini (tempat shift ditutup)
+// Bukti pesanan di printer nota komputer ini
+async function printOrder(order, { reprint = false } = {}) {
+  if (!order || !order.order_no) throw userError('Pesanan tidak ditemukan.');
+  const s = await getSettings();
+  const page = receiptPage(buildOrderRows(order, s, { reprint }), s.paper_width, { offsetMm: s.receipt_offset, fontScale: s.receipt_font_scale });
+  return printPage(page, { deviceName: s.printer_name, pdfName: order.order_no, what: 'Bukti pesanan' });
+}
+
 async function printShiftRecap(recap, { reprint = false } = {}) {
   if (!recap || typeof recap !== 'object') throw userError('Data rekap shift tidak ada.');
   const s = await getSettings();
@@ -248,6 +256,7 @@ async function closeShiftLocal({ notes } = {}) {
     cashier: summary.shift.cashier_name, shift_start: summary.shift.shift_start, closed_at: closedAt,
     receipts: summary.totals.receipts, qty: summary.totals.qty, revenue: summary.totals.revenue, cash_sales: summary.cashSales,
     voids: { count: summary.voids ? summary.voids.count : 0, total: summary.voids ? summary.voids.total : 0 }, notes: ctx ? ctx.notes : '',
+    orders: summary.orders || null,
   };
   return { revenue: summary.totals.revenue, receipts: summary.totals.receipts, recap };
 }
@@ -283,14 +292,26 @@ async function pullMasterLocal() {
 }
 
 // Perintah yang boleh dipanggil PC kasir lewat jaringan
+// Pesanan: ditahan selama proses tutup shift (deposit & penjualannya masuk laci shift yang sedang ditutup)
+function createOrderLocal(a) {
+  if (closingShift) throw userError('Sedang proses tutup shift. Pesanan ditahan.');
+  return localSvc.createOrder(a);
+}
+function completeOrderLocal(a) {
+  if (closingShift) throw userError('Sedang proses tutup shift. Pengambilan pesanan ditahan.');
+  return localSvc.completeOrder(a);
+}
+
 const SERVER_MAIN = {
   'main.checkout': checkoutLocal,
+  'main.createOrder': createOrderLocal,
+  'main.completeOrder': completeOrderLocal,
   'main.voidReceipt': (a) => localSvc.voidReceipt(a),
   'main.closeShift': closeShiftLocal,
   'main.pullMaster': pullMasterLocal,
 };
 const REMOTE_BLOCKED = new Set([
-  'archiveShift', 'pruneShiftHistory', 'checkout', 'shiftData',
+  'archiveShift', 'pruneShiftHistory', 'checkout', 'shiftData', 'createOrder', 'completeOrder',
   // Mother base: kunci toko & antrean kiriman hanya di PC pemilik database (mbStatus boleh, tanpa rahasia)
   'mbConfig', 'mbSaveConfig', 'mbState', 'mbSetState', 'mbQueueHistory', 'mbBatch', 'mbAck', 'mbApplyMaster', 'mbMasterSince',
 ]);
@@ -701,6 +722,9 @@ const ACCESS = {
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR, 'shift:printRecap': KASIR,
+  // Pesanan: semua peran boleh melihat (Gudang tahu barang yang perlu dipesan); membuat/mengambil/membatalkan = Kasir & Admin
+  'orders:list': ALL, 'orders:get': ALL, 'orders:due': ALL,
+  'orders:create': KASIR, 'orders:complete': KASIR, 'orders:cancel': KASIR, 'orders:print': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'receipt:void': KASIR,
 };
 
@@ -833,6 +857,34 @@ const handlers = {
     return r;
   },
   'shift:printRecap': ({ recap } = {}) => printShiftRecap(recap, { reprint: true }),
+
+  // Pesanan pelanggan (data di PC Server; cetak di printer komputer ini)
+  'orders:list': (a) => svc.listOrders(a),
+  'orders:get': (a) => svc.getOrder(a),
+  'orders:due': () => svc.ordersDue(),
+  'orders:create': async (a = {}) => {
+    const o = await runMain('main.createOrder', { ...a, created_by: session.name });
+    if ((await getSettings()).auto_print !== '0') {
+      try { await printOrder(o); } catch (err) { o.print_error = err.message; }
+    }
+    return o;
+  },
+  'orders:complete': async (a = {}) => {
+    const r = await runMain('main.completeOrder', { ...a, done_by: session.name });
+    if ((await getSettings()).auto_print !== '0') {
+      try { await printReceipt(r.receipt); } catch (err) { r.print_error = err.message; }
+    }
+    return r;
+  },
+  'orders:cancel': async (a = {}) => {
+    try {
+      return await svc.cancelOrder({ ...a, requested_by: session.name });
+    } catch (err) {
+      if (/PIN Admin \/ PIN Pembatalan salah/.test(err.message)) await new Promise((r) => setTimeout(r, 800)); // memperlambat tebak-tebakan PIN
+      throw err;
+    }
+  },
+  'orders:print': async ({ order_no, reprint = true } = {}) => printOrder(await svc.getOrder({ order_no }), { reprint: reprint !== false }),
   'products:pullMaster': () => runMain('main.pullMaster'),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
   'offline:markChecked': (a) => svc.markOfflineChecked(a),

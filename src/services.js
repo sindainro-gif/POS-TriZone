@@ -425,6 +425,28 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return `INV-${d}-${String(seq).padStart(4, '0')}`;
   }
 
+  // Baris penjualan + potong Display Toko (dipanggil di dalam transaksi). Display toko boleh jadi 0/minus:
+  // barang fisik sudah keluar; barang muncul merah di "Saran Restock Rak Toko". Hasil: barang yang habis.
+  function insertSaleLines(receipt_no, lines, payment_method, created_at) {
+    const short = [];
+    for (const l of lines) {
+      db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [l.sku]);
+      db.run('UPDATE inventory SET floor_stock = floor_stock - ? WHERE sku = ?', [l.qty, l.sku]);
+      const p = getProduct(l.sku);
+      const after = p ? p.floor_stock : 0;
+      if (after <= 0) {
+        short.push({ sku: l.sku, name: l.name, floor_stock: after });
+        markSoldOut(l.sku, created_at);
+      }
+      db.run(
+        `INSERT INTO shift_sales(receipt_no, sku, product_name, qty_sold, unit_price, line_total, payment_method, created_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+        [receipt_no, l.sku, l.name, l.qty, l.unit_price, l.line_total, payment_method, created_at],
+      );
+    }
+    return short;
+  }
+
   // client_ref: penanda unik tiap percobaan bayar dari PC kasir (lihat importOfflineSale)
   function checkout({ items = [], payment_method, cash_received, client_ref } = {}) {
     const shift = getShift();
@@ -461,21 +483,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       const receipt_no = nextReceiptNo();
       const created_at = localNow();
       if (ref) db.run('INSERT INTO checkout_refs(client_ref, receipt_no, created_at) VALUES(?, ?, ?)', [ref, receipt_no, created_at]);
-      const short = [];
-      for (const l of lines) {
-        db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [l.sku]);
-        db.run('UPDATE inventory SET floor_stock = floor_stock - ? WHERE sku = ?', [l.qty, l.sku]);
-        const after = getProduct(l.sku).floor_stock;
-        if (after <= 0) {
-          short.push({ sku: l.sku, name: l.name, floor_stock: after });
-          markSoldOut(l.sku, created_at);
-        }
-        db.run(
-          `INSERT INTO shift_sales(receipt_no, sku, product_name, qty_sold, unit_price, line_total, payment_method, created_at)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-          [receipt_no, l.sku, l.name, l.qty, l.unit_price, l.line_total, payment_method, created_at],
-        );
-      }
+      const short = insertSaleLines(receipt_no, lines, payment_method, created_at);
       return {
         receipt_no, created_at, payment_method, lines, total,
         cash_received: cash, change: cash - total, cashier: shift.cashier_name, short,
@@ -508,12 +516,19 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const voidList = db.all('SELECT * FROM receipt_voids WHERE void_no IN (SELECT receipt_no FROM shift_sales) ORDER BY created_at');
     const voids = { count: voidList.length, total: voidList.reduce((s, v) => s + v.total, 0), list: voidList };
     const cashSales = byMethod.filter((m) => m.method === 'Tunai').reduce((s, m) => s + m.total, 0);
+    // Uang pesanan shift ini: deposit masuk laci (bukan omset), deposit terpakai saat barang diambil
+    // (omsetnya sudah penuh di penjualan), deposit dikembalikan (keluar laci), deposit hangus (tanpa uang)
+    const oc = shift && shift.shift_uid
+      ? db.all('SELECT kind, COALESCE(SUM(amount), 0) AS amount FROM order_cash WHERE shift_uid = ? GROUP BY kind', [shift.shift_uid]) : [];
+    const ocv = (k) => (oc.find((r) => r.kind === k) || {}).amount || 0;
+    const orders = { deposit_in: ocv('deposit'), deposit_used: ocv('pakai'), refunded: ocv('kembali'), forfeited: ocv('hangus') };
+    orders.cash_total = cashSales - orders.deposit_used + orders.deposit_in - orders.refunded;
     const offline = {
       receipts: db.get("SELECT COUNT(DISTINCT receipt_no) AS n FROM shift_sales WHERE receipt_no LIKE 'OFF-%'").n,
       checks: offlineChecks(),
     };
     return {
-      shift, totals, byMethod, byItem, receipts, offline, voids,
+      shift, totals, byMethod, byItem, receipts, offline, voids, orders,
       cashSales,
     };
   }
@@ -530,9 +545,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const total = rows.reduce((s, r) => s + r.line_total, 0);
     const shift = getShift();
     const v = db.get('SELECT void_no FROM receipt_voids WHERE receipt_no = ?', [receipt_no]);
+    const ord = db.get('SELECT order_no, deposit FROM customer_orders WHERE receipt_no = ?', [receipt_no]);
     return {
       receipt_no, created_at: rows[0].created_at, payment_method: rows[0].payment_method,
       cashier: shift ? shift.cashier_name : '-', total, cash_received: total, change: 0, voided_by: v ? v.void_no : '',
+      order_no: ord ? ord.order_no : '', deposit: ord ? ord.deposit : 0,
       lines: rows.map((r) => ({ sku: r.sku, name: r.product_name, qty: r.qty_sold, unit_price: r.unit_price, line_total: r.line_total })),
     };
   }
@@ -651,6 +668,152 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   function shiftSalesRows() {
     return db.all('SELECT * FROM shift_sales ORDER BY id');
+  }
+
+  // ---------------------------------------------------------------- Pesanan pelanggan
+  // Barang dipesan / belum dibawa: stok BELUM dipotong. Deposit = uang masuk laci shift (bukan omset).
+  // Saat diambil: sisa dilunasi & dicatat sebagai penjualan biasa (omset penuh, harga terkunci saat pesan).
+  function nextOrderNo() {
+    const d = localNow().slice(0, 10).replace(/-/g, '');
+    const seq = getSetting('order_date') === d ? Number(getSetting('order_seq', '0')) + 1 : 1;
+    setSetting('order_date', d);
+    setSetting('order_seq', seq);
+    return `PSN-${d}-${String(seq).padStart(4, '0')}`;
+  }
+
+  function orderCash(order_no, kind, amount, at) {
+    const s = getShift();
+    db.run('INSERT INTO order_cash(shift_uid, order_no, kind, amount, created_at) VALUES(?, ?, ?, ?, ?)',
+      [s ? (s.shift_uid || ensureShiftUid()) : '', order_no, kind, amount, at]);
+  }
+
+  function getOrder({ order_no } = {}) {
+    const o = db.get('SELECT * FROM customer_orders WHERE order_no = ?', [String(order_no || '').trim()]);
+    if (!o) return null;
+    o.items = db.all('SELECT sku, name, qty, unit_price, line_total FROM customer_order_items WHERE order_id = ? ORDER BY id', [o.id]);
+    o.remaining = o.total - o.deposit;
+    return o;
+  }
+
+  // status: 'baru' (belum diambil) | 'diambil' | 'batal' | 'semua'; q: no. pesanan / nama / HP
+  function listOrders({ status = 'baru', q = '' } = {}) {
+    const where = [];
+    const params = [];
+    if (['baru', 'diambil', 'batal'].includes(status)) { where.push('o.status = ?'); params.push(status); }
+    const term = String(q || '').trim();
+    if (term) {
+      where.push('(o.order_no LIKE ? OR o.customer_name LIKE ? OR o.customer_phone LIKE ?)');
+      params.push(`%${term}%`, `%${term}%`, `%${term}%`);
+    }
+    return db.all(
+      `SELECT o.*, o.total - o.deposit AS remaining,
+              (SELECT COUNT(*) FROM customer_order_items i WHERE i.order_id = o.id) AS item_count,
+              (SELECT COALESCE(SUM(qty), 0) FROM customer_order_items i WHERE i.order_id = o.id) AS qty
+       FROM customer_orders o ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY ${status === 'baru' ? 'o.pickup_date, o.id' : 'o.id DESC'} LIMIT 500`,
+      params,
+    );
+  }
+
+  // Jumlah pesanan belum diambil yang tanggal ambilnya hari ini atau sudah lewat (angka di menu Pesanan)
+  function ordersDue() {
+    return db.get("SELECT COUNT(*) AS n FROM customer_orders WHERE status = 'baru' AND pickup_date <= ?", [localNow().slice(0, 10)]).n;
+  }
+
+  function createOrder({ items = [], customer_name, customer_phone, pickup_date, deposit, notes, created_by } = {}) {
+    const shift = getShift();
+    if (!shift) fail('Shift belum dibuka. Buka shift terlebih dahulu.');
+    const name = toStr(customer_name, 'Nama pelanggan', { required: true, max: 80 });
+    const phone = toStr(customer_phone, 'No. HP', { max: 30 });
+    const date = String(pickup_date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(`${date}T00:00:00Z`).getTime())) fail('Tanggal ambil tidak valid.');
+    if (date < localNow().slice(0, 10)) fail('Tanggal ambil tidak boleh sebelum hari ini.');
+    if (!Array.isArray(items) || !items.length) fail('Keranjang masih kosong.');
+    const merged = new Map();
+    for (const it of items) merged.set(it.sku, (merged.get(it.sku) || 0) + toInt(it.qty, 'Jumlah', { min: 1 }));
+    const lines = [...merged].map(([sku, qty]) => {
+      const p = getProduct(sku);
+      if (!p) fail(`Barang dengan SKU ${sku} tidak ditemukan.`);
+      return { sku, name: p.name, qty, unit_price: p.unit_price, line_total: p.unit_price * qty };
+    });
+    const total = lines.reduce((s, l) => s + l.line_total, 0);
+    const dep = toInt(deposit, 'Deposit', { def: 0, min: 0 });
+    if (dep > total) fail('Deposit tidak boleh melebihi total pesanan.');
+    const note = toStr(notes, 'Catatan', { max: 200 });
+    const by = toStr(created_by, 'Kasir', { max: 80 }) || shift.cashier_name;
+    return db.tx(() => {
+      const order_no = nextOrderNo();
+      const now = localNow();
+      db.run(
+        `INSERT INTO customer_orders(order_no, customer_name, customer_phone, pickup_date, notes, total, deposit, status, created_at, created_by)
+         VALUES(?, ?, ?, ?, ?, ?, ?, 'baru', ?, ?)`,
+        [order_no, name, phone, date, note, total, dep, now, by],
+      );
+      const id = db.lastId();
+      for (const l of lines) {
+        db.run('INSERT INTO customer_order_items(order_id, sku, name, qty, unit_price, line_total) VALUES(?, ?, ?, ?, ?, ?)',
+          [id, l.sku, l.name, l.qty, l.unit_price, l.line_total]);
+      }
+      if (dep > 0) orderCash(order_no, 'deposit', dep, now);
+      return getOrder({ order_no });
+    });
+  }
+
+  // Barang pesanan diambil: stok dipotong dari Display Toko atau Gudang Utama (lewat dokumen mutasi ke Display Toko,
+  // agar riwayat stok tetap konsisten), sisa dilunasi tunai, dan tercatat sebagai penjualan biasa di shift ini.
+  function completeOrder({ order_no, zone, cash_received, done_by } = {}) {
+    const shift = getShift();
+    if (!shift) fail('Shift belum dibuka. Buka shift terlebih dahulu.');
+    const o = getOrder({ order_no });
+    if (!o) fail('Pesanan tidak ditemukan.');
+    if (o.status === 'diambil') fail(`Pesanan ini sudah diambil (nota ${o.receipt_no}).`);
+    if (o.status === 'batal') fail('Pesanan ini sudah dibatalkan.');
+    if (!['floor', 'warehouse'].includes(zone)) fail('Pilih stok yang diambil: Display Toko atau Gudang Utama.');
+    const cash = toInt(cash_received, 'Uang diterima', { def: 0, min: 0 });
+    if (cash < o.remaining) fail(`Uang diterima kurang Rp ${(o.remaining - cash).toLocaleString('id-ID')}.`);
+    const by = toStr(done_by, 'Kasir', { max: 80 }) || shift.cashier_name;
+    return db.tx(() => {
+      const now = localNow();
+      if (zone === 'warehouse') {
+        writeTransferDoc('warehouse', 'floor', `Pesanan ${o.order_no} diambil pelanggan`,
+          o.items.map((i) => ({ p: getProduct(i.sku) || { sku: i.sku, name: i.name }, qty: i.qty })), now, { allowShort: true });
+      }
+      const receipt_no = nextReceiptNo();
+      const lines = o.items.map((i) => ({ sku: i.sku, name: i.name, qty: i.qty, unit_price: i.unit_price, line_total: i.line_total }));
+      const short = insertSaleLines(receipt_no, lines, 'Tunai', now);
+      if (o.deposit > 0) orderCash(o.order_no, 'pakai', o.deposit, now);
+      db.run("UPDATE customer_orders SET status = 'diambil', done_at = ?, done_by = ?, receipt_no = ?, pickup_zone = ? WHERE id = ?",
+        [now, by, receipt_no, zone, o.id]);
+      return {
+        receipt: {
+          receipt_no, created_at: now, payment_method: 'Tunai', lines, total: o.total, deposit: o.deposit, order_no: o.order_no,
+          cash_received: cash, change: cash - o.remaining, cashier: shift.cashier_name,
+        },
+        short,
+        order: getOrder({ order_no: o.order_no }),
+      };
+    });
+  }
+
+  // Batal pesanan (PIN Admin / PIN Pembatalan): deposit dikembalikan (keluar dari laci shift ini) atau hangus
+  function cancelOrder({ order_no, reason, deposit_action, approver_pin, requested_by } = {}) {
+    const o = getOrder({ order_no });
+    if (!o) fail('Pesanan tidak ditemukan.');
+    if (o.status !== 'baru') fail(o.status === 'diambil' ? 'Pesanan yang sudah diambil tidak bisa dibatalkan (gunakan Batal Nota).' : 'Pesanan ini sudah dibatalkan.');
+    const why = toStr(reason, 'Alasan pembatalan', { required: true, max: 200 });
+    if (why.length < 3) fail('Alasan pembatalan minimal 3 huruf.');
+    const action = o.deposit > 0 ? deposit_action : null;
+    if (o.deposit > 0 && !['kembali', 'hangus'].includes(action)) fail('Pilih deposit dikembalikan atau hangus.');
+    if (action === 'kembali' && !getShift()) fail('Shift belum dibuka: deposit dikembalikan dari laci shift yang sedang berjalan.');
+    const approved_by = approverAdmin(approver_pin);
+    const by = toStr(requested_by, 'Diminta oleh', { max: 80 });
+    return db.tx(() => {
+      const now = localNow();
+      if (action) orderCash(o.order_no, action, o.deposit, now);
+      db.run(`UPDATE customer_orders SET status = 'batal', done_at = ?, done_by = ?, cancel_reason = ?, cancel_deposit = ?, cancel_approved_by = ?
+              WHERE id = ?`, [now, by, why, action, approved_by, o.id]);
+      return getOrder({ order_no: o.order_no });
+    });
   }
 
   // ---------------------------------------------------------------- Riwayat shift (cadangan 4 hari)
@@ -1711,6 +1874,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     getProduct, listProducts, categories, findByCode, searchProducts, saveProduct, deleteProduct, importRows,
     stockSnapshot, lowStock,
     getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, voidReceipt, voidPinInfo, setVoidPin, clearVoidPin, shiftSalesRows,
+    createOrder, getOrder, listOrders, ordersDue, completeOrder, cancelOrder,
     archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,

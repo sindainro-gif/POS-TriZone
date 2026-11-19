@@ -12,6 +12,19 @@ function bindMoney(input) {
 const moneyVal = (input) => Number(String(input.value).replace(/\D/g, '')) || 0;
 const setMoney = (input, n) => { input.value = n ? Number(n).toLocaleString('id-ID') : ''; };
 
+// Tanggal lokal komputer ini (YYYY-MM-DD), bisa digeser beberapa hari
+function ymd(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+// '2026-11-20' → 'Jum, 20 Nov 2026'
+function fmtYmd(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || ''));
+  if (!m) return esc(s || '-');
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString('id-ID', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 const zoneTag = (z) => `<span class="badge ${ZONE_CLASS[z]}">${esc(state.meta.zones[z] || z)}</span>`;
 
 // Tebalkan bagian teks yang sama dengan kata yang diketik (aman: setiap potongan di-escape)
@@ -102,9 +115,9 @@ const state = {
 
 // Menu yang boleh dibuka per peran (Admin: semua)
 const ROLE_VIEWS = {
-  admin: ['checkout', 'transfers', 'receiving', 'opname', 'products', 'barcode', 'shift', 'settings'],
-  gudang: ['transfers', 'receiving', 'opname', 'products', 'barcode'],
-  kasir: ['checkout', 'shift', 'products'],
+  admin: ['checkout', 'orders', 'transfers', 'receiving', 'opname', 'products', 'barcode', 'shift', 'settings'],
+  gudang: ['transfers', 'receiving', 'opname', 'products', 'barcode', 'orders'], // Pesanan: Gudang hanya melihat
+  kasir: ['checkout', 'orders', 'shift', 'products'],
 };
 const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', kasir: 'Kasir' };
 const role = () => (state.user ? state.user.role : '');
@@ -457,6 +470,8 @@ views.checkout = (() => {
     el.classList.toggle('neg', c > 0 && diff < 0);
     const ok = cart.length > 0 && !!state.shift && (state.connected !== false || emergencyMode()) && c >= t;
     $('#payBtn').disabled = !ok || busy;
+    // Pesanan disimpan di PC Server: tidak bisa dibuat saat MODE DARURAT
+    $('#orderBtn').disabled = busy || !cart.length || !state.shift || state.connected === false;
   }
 
   async function pay() {
@@ -635,6 +650,130 @@ views.checkout = (() => {
 
   $('#draftHoldBtn').addEventListener('click', holdCart);
   $('#draftListBtn').addEventListener('click', openDrafts);
+
+  // ---- Pesanan: barang dipesan / belum dibawa pelanggan. Stok belum dipotong sampai diambil;
+  // deposit masuk laci shift ini (bukan omset), omset dihitung penuh saat barang diambil.
+  function makeOrder() {
+    if (busy) return;
+    if (!cart.length) { sound('err'); toast('Keranjang masih kosong.', 'err'); return; }
+    if (!state.shift) { sound('err'); toast('Shift belum dibuka.', 'err'); return; }
+    if (state.connected === false) { sound('err'); toast('Pesanan tidak bisa dibuat saat terputus dari PC Server.', 'err'); return; }
+    const t = total();
+    const qty = cart.reduce((s, l) => s + l.qty, 0);
+    const half = Math.ceil(t / 2 / 1000) * 1000;
+    const quick = [['Tanpa', 0]];
+    if (half > 0 && half < t) quick.push(['50%', half]);
+    for (const v of [50000, 100000]) if (v < t && !quick.some((q) => q[1] === v)) quick.push([rp(v), v]);
+    quick.push(['Lunas', t]);
+    modal({
+      title: 'Jadikan Pesanan',
+      wide: true,
+      body: `<p class="muted small" style="margin-top:0">Barang dipesan / belum dibawa pelanggan. Stok <b>belum dipotong</b> sampai barang diambil.
+          Deposit masuk laci shift ini dan <b>bukan omset</b>; omset dihitung penuh saat barang diambil.</p>
+        <table class="receipt-lines">${cart.map((l) => `<tr><td>${esc(l.name)}</td><td class="r muted">${num(l.qty)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.unit_price * l.qty)}</td></tr>`).join('')}</table>
+        <div class="kv total-line"><span>Total pesanan · ${num(qty)} Biji</span><span>${rp(t)}</span></div>
+        <div class="row-2">
+          <div class="field"><label>Nama pelanggan *</label><input id="odName" maxlength="80" autocomplete="off"></div>
+          <div class="field"><label>No. HP</label><input id="odPhone" maxlength="30" inputmode="tel" autocomplete="off" placeholder="Contoh: 0812…"></div>
+        </div>
+        <div class="row-2">
+          <div class="field"><label>Tanggal barang diambil *</label><input id="odDate" type="date" min="${ymd()}" value="${ymd(1)}"></div>
+          <div class="field"><label>Uang deposit</label><input id="odDep" class="money" inputmode="numeric" autocomplete="off" placeholder="0">
+            <div class="quick-cash" id="odQuick">${quick.map(([l, v]) => `<button data-v="${v}">${l}</button>`).join('')}</div></div>
+        </div>
+        <div class="field"><label>Catatan <span class="muted">(opsional)</span></label><input id="odNotes" maxlength="200" placeholder="Contoh: warna merah, ukuran L"></div>
+        <div class="change-row"><span>Sisa bayar saat diambil</span><strong id="odRest">${rp(t)}</strong></div>`,
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        {
+          label: 'Simpan Pesanan',
+          kind: 'primary',
+          onClick: async ({ close, el, btn }) => {
+            const name = $('#odName', el).value.trim();
+            if (!name) { sound('err'); toast('Nama pelanggan wajib diisi.', 'err'); $('#odName', el).focus(); return; }
+            const date = $('#odDate', el).value;
+            if (!date || date < ymd()) { sound('err'); toast('Tanggal ambil tidak boleh kosong atau sebelum hari ini.', 'err'); $('#odDate', el).focus(); return; }
+            const dep = moneyVal($('#odDep', el));
+            if (dep > t) { sound('err'); toast('Deposit tidak boleh melebihi total pesanan.', 'err'); $('#odDep', el).focus(); return; }
+            btn.disabled = true;
+            busy = true;
+            updateChange();
+            try {
+              const o = await api('orders:create', {
+                items: cart.map((l) => ({ sku: l.sku, qty: l.qty })),
+                customer_name: name, customer_phone: $('#odPhone', el).value, pickup_date: date, deposit: dep, notes: $('#odNotes', el).value,
+              });
+              emptyCart();
+              close();
+              showOrderSaved(o);
+              if (o.print_error) { sound('err'); toast(o.print_error, 'err', 8000); }
+              refreshOrderBadge();
+            } catch (e) {
+              btn.disabled = false;
+              sound('err');
+              toast(e.message, 'err', 7000);
+            } finally {
+              busy = false;
+              updateChange();
+            }
+          },
+        },
+      ],
+      onOpen: (el) => {
+        const dep = $('#odDep', el);
+        const rest = () => {
+          const v = moneyVal(dep);
+          const out = $('#odRest', el);
+          out.textContent = v > t ? `Deposit lebih ${rp(v - t)}` : rp(t - v);
+          out.classList.toggle('neg', v > t);
+        };
+        bindMoney(dep);
+        dep.addEventListener('input', rest);
+        $('#odQuick', el).addEventListener('click', (e) => {
+          const b = e.target.closest('[data-v]');
+          if (!b) return;
+          setMoney(dep, Number(b.dataset.v));
+          rest();
+          dep.focus();
+        });
+        // Enter = pindah ke kolom berikutnya; Enter di kolom terakhir = simpan
+        const order = ['#odName', '#odPhone', '#odDate', '#odDep', '#odNotes'].map((s) => $(s, el));
+        order.forEach((f, i) => f.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          if (order[i + 1]) order[i + 1].focus();
+          else $('.modal-foot .btn.primary', el).click();
+        }));
+        order[0].focus();
+      },
+    });
+  }
+
+  function showOrderSaved(o) {
+    sound('ok');
+    const auto = state.settings.auto_print !== '0';
+    modal({
+      title: `Pesanan Tersimpan — ${o.order_no}`,
+      body: `<div class="alert ok or-big"><div class="muted small">No. Pesanan</div><div class="no mono">${esc(o.order_no)}</div>
+          <div class="small">${esc(o.customer_name)} · diambil ${fmtYmd(o.pickup_date)}</div></div>
+        <div class="kv"><span>Total pesanan</span><b>${rp(o.total)}</b></div>
+        <div class="kv"><span>Deposit diterima</span><b>${rp(o.deposit)}</b></div>
+        <div class="kv total-line"><span>Sisa bayar saat diambil</span><span>${rp(o.remaining)}</span></div>
+        <p class="muted small">Stok belum dipotong. Pesanan bisa dilihat di menu <b>Pesanan Pelanggan</b>.</p>`,
+      actions: [
+        {
+          label: auto ? 'Cetak Ulang Bukti' : 'Cetak Bukti',
+          kind: 'ghost',
+          onClick: () => api('orders:print', { order_no: o.order_no, reprint: auto })
+            .then(() => toast('Bukti pesanan dicetak.', 'ok'))
+            .catch((err) => { sound('err'); toast(err.message, 'err', 8000); }),
+        },
+        { label: 'Transaksi Baru <kbd>Enter</kbd>', kind: 'primary' },
+      ],
+    });
+  }
+
+  $('#orderBtn').addEventListener('click', makeOrder);
 
   function focusScan() {
     if (state.view === 'checkout' && state.shift && !$('#modalRoot').children.length) scan.focus();
@@ -2005,6 +2144,315 @@ views.barcode = (() => {
 })();
 
 // ================================================================ 5. SHIFT
+// ================================================================ Pesanan pelanggan
+// Barang dipesan / belum dibawa: dibuat dari keranjang Kasir (Jadikan Pesanan). Stok baru dipotong saat diambil.
+// Semua peran boleh melihat; Ambil / Batalkan / Cetak Bukti hanya Kasir & Admin.
+views.orders = (() => {
+  let status = 'baru';
+  let list = [];
+  let searchTimer = null;
+  const body = $('#orBody');
+  const canAct = () => ['admin', 'kasir'].includes(role());
+  const zoneName = (z) => (state.meta.zones && state.meta.zones[z]) || z || '-';
+
+  function dueInfo(o) {
+    if (o.status !== 'baru') return { cls: '', tag: '' };
+    const today = ymd();
+    if (o.pickup_date < today) {
+      const days = Math.round((new Date(`${today}T00:00:00`) - new Date(`${o.pickup_date}T00:00:00`)) / 86400000);
+      return { cls: 'due-late', tag: `<span class="badge due-late">Lewat ${days} hari</span>` };
+    }
+    if (o.pickup_date === today) return { cls: 'due-today', tag: '<span class="badge due-today">Hari ini</span>' };
+    return { cls: '', tag: '' };
+  }
+
+  function statusBadge(o) {
+    if (o.status === 'diambil') return '<span class="badge st-done">Sudah diambil</span>';
+    if (o.status === 'batal') {
+      const dep = o.cancel_deposit === 'kembali' ? 'deposit dikembalikan' : o.cancel_deposit === 'hangus' ? 'deposit hangus' : '';
+      return `<span class="badge bs">Dibatalkan</span>${dep ? ` <span class="small muted">${dep}</span>` : ''}`;
+    }
+    return '<span class="badge wh">Belum diambil</span>';
+  }
+
+  function render() {
+    const empty = { baru: 'Tidak ada pesanan yang menunggu diambil.', diambil: 'Belum ada pesanan yang diambil.', batal: 'Tidak ada pesanan yang dibatalkan.', semua: 'Belum ada pesanan.' }[status];
+    body.innerHTML = list.map((o) => {
+      const d = dueInfo(o);
+      return `<tr data-no="${esc(o.order_no)}" class="${d.cls}">
+        <td class="mono">${esc(o.order_no)}</td>
+        <td><div class="pname">${esc(o.customer_name)}</div>${o.customer_phone ? `<div class="psub mono">${esc(o.customer_phone)}</div>` : ''}</td>
+        <td class="muted">${fmtTime(o.created_at)}</td>
+        <td><b>${fmtYmd(o.pickup_date)}</b> ${d.tag}</td>
+        <td class="r">${num(o.qty)}</td><td class="r">${rp(o.total)}</td><td class="r">${rp(o.deposit)}</td>
+        <td class="r"><b>${o.status === 'baru' ? rp(o.remaining) : '-'}</b></td>
+        <td>${statusBadge(o)}</td>
+        <td><div class="btn-row"><button class="btn sm ghost" data-act="detail">Detail</button>${o.status === 'baru' && canAct() ? '<button class="btn sm primary" data-act="take">Ambil</button>' : ''}</div></td></tr>`;
+    }).join('') || `<tr><td colspan="10" class="empty-row">${empty}</td></tr>`;
+    const open = list.filter((o) => o.status === 'baru');
+    $('#orCount').textContent = list.length
+      ? `${num(list.length)} pesanan${open.length ? ` · belum diambil ${num(open.length)} (sisa bayar ${rp(open.reduce((s, o) => s + o.remaining, 0))}, deposit ${rp(open.reduce((s, o) => s + o.deposit, 0))})` : ''}`
+      : '';
+  }
+
+  async function load() {
+    try {
+      list = await api('orders:list', { status, q: $('#orSearch').value });
+    } catch (e) {
+      list = [];
+      body.innerHTML = `<tr><td colspan="10" class="empty-row">${esc(e.message)}</td></tr>`;
+      $('#orCount').textContent = '';
+      return;
+    }
+    render();
+  }
+
+  $('#orTabs').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-st]');
+    if (!b) return;
+    status = b.dataset.st;
+    $('#orTabs [data-st]').forEach((x) => x.classList.toggle('active', x === b));
+    load();
+  });
+  $('#orSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(load, 250); });
+  body.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const no = b.closest('tr').dataset.no;
+    if (b.dataset.act === 'detail') openDetail(no);
+    if (b.dataset.act === 'take') openTake(no);
+  });
+
+  const printProof = (order_no, reprint = true) => api('orders:print', { order_no, reprint })
+    .then(() => toast('Bukti pesanan dicetak.', 'ok'))
+    .catch((err) => { sound('err'); toast(err.message, 'err', 8000); });
+
+  function itemsTable(o) {
+    return `<table class="receipt-lines">${o.items.map((l) => `<tr><td>${esc(l.name)}</td><td class="r muted">${num(l.qty)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>`;
+  }
+
+  async function openDetail(order_no) {
+    let o;
+    try { o = await api('orders:get', { order_no }); } catch (e) { toast(e.message, 'err'); return; }
+    if (!o) { toast('Pesanan tidak ditemukan.', 'err'); load(); return; }
+    const info = [
+      ['Pelanggan', esc(o.customer_name)], ['No. HP', esc(o.customer_phone || '-')],
+      ['Tgl pesan', fmtTime(o.created_at)], ['Ambil tgl', `${fmtYmd(o.pickup_date)} ${dueInfo(o).tag}`],
+      ['Dicatat oleh', esc(o.created_by || '-')], ['Status', statusBadge(o)],
+    ];
+    if (o.status === 'diambil') {
+      info.push(['Diambil', fmtTime(o.done_at)], ['Nota', `<span class="mono">${esc(o.receipt_no || '-')}</span>`],
+        ['Stok dari', esc(zoneName(o.pickup_zone))], ['Kasir', esc(o.done_by || '-')]);
+    }
+    if (o.status === 'batal') {
+      info.push(['Dibatalkan', fmtTime(o.done_at)], ['Deposit', o.cancel_deposit === 'kembali' ? 'Dikembalikan' : o.cancel_deposit === 'hangus' ? 'Hangus' : '-'],
+        ['Disetujui', esc(o.cancel_approved_by || '-')], ['Diminta', esc(o.done_by || '-')]);
+    }
+    const open = o.status === 'baru';
+    modal({
+      title: `Pesanan ${o.order_no}`,
+      wide: true,
+      body: `<dl class="or-info">${info.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+        ${o.status === 'batal' && o.cancel_reason ? `<div class="alert warn" style="margin-bottom:10px">Alasan batal: ${esc(o.cancel_reason)}</div>` : ''}
+        ${String(o.notes || '').trim() ? `<div class="alert note" style="margin-bottom:10px">Catatan: ${esc(o.notes)}</div>` : ''}
+        ${itemsTable(o)}
+        <div class="kv"><span>Total</span><b>${rp(o.total)}</b></div>
+        <div class="kv"><span>Deposit</span><b>${rp(o.deposit)}</b></div>
+        ${open ? `<div class="kv total-line"><span>Sisa bayar saat diambil</span><span>${rp(o.remaining)}</span></div>` : ''}`,
+      actions: [
+        ...(canAct() ? [{ label: 'Cetak Bukti', kind: 'ghost', onClick: () => printProof(o.order_no) }] : []),
+        ...(canAct() && open ? [{ label: 'Batalkan Pesanan', kind: 'danger', onClick: ({ close }) => { close(); openCancel(o); } }] : []),
+        ...(canAct() && open ? [{ label: 'Ambil Barang', kind: 'primary', onClick: ({ close }) => { close(); openTake(o.order_no); } }] : []),
+        { label: 'Tutup', kind: canAct() && open ? 'ghost' : 'primary' },
+      ],
+    });
+  }
+
+  // Barang pesanan diambil: pilih stok sumber, lunasi sisa bayar → tercatat sebagai penjualan shift ini & nota tercetak
+  async function openTake(order_no) {
+    if (!state.shift) await refreshShift().catch(() => null);
+    if (!state.shift) { sound('err'); toast('Shift belum dibuka. Buka shift di menu Kasir dulu.', 'err'); return; }
+    let o;
+    try { o = await api('orders:get', { order_no }); } catch (e) { toast(e.message, 'err'); return; }
+    if (!o || o.status !== 'baru') { toast(o ? 'Pesanan ini sudah tidak menunggu diambil.' : 'Pesanan tidak ditemukan.', 'err'); load(); return; }
+    const stock = await Promise.all(o.items.map((i) => api('products:get', { sku: i.sku }).catch(() => null)));
+    const field = { floor: 'floor_stock', warehouse: 'warehouse_stock' };
+    const lacking = (zone) => o.items.filter((i, k) => !stock[k] || stock[k][field[zone]] < i.qty);
+    const defZone = !lacking('floor').length ? 'floor' : !lacking('warehouse').length ? 'warehouse' : 'floor';
+    const cell = (i, k, zone) => {
+      const have = stock[k] ? stock[k][field[zone]] : 0;
+      return `<td class="c"><span class="badge ${zone === 'floor' ? 'floor' : 'wh'} ${have < i.qty ? 'zero' : 'ok'}">${num(have)}</span></td>`;
+    };
+    const rest = o.remaining;
+    const quick = [];
+    quick.push(['Uang Pas', rest]);
+    for (const d of [5000, 10000, 20000, 50000, 100000]) {
+      const v = Math.ceil(rest / d) * d;
+      if (v > rest && !quick.some((q) => q[1] === v)) quick.push([rp(v), v]);
+    }
+    modal({
+      title: `Ambil Pesanan ${o.order_no}`,
+      wide: true,
+      body: `<p class="muted small" style="margin-top:0">Atas nama <b>${esc(o.customer_name)}</b>${o.customer_phone ? ` (${esc(o.customer_phone)})` : ''}.
+          Barang dipotong dari stok yang dipilih lalu tercatat sebagai penjualan di shift ini (omset penuh ${rp(o.total)}), dan nota tercetak.</p>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Barang</th><th class="r">Biji</th><th class="r">Subtotal</th><th class="c">${esc(zoneName('floor'))}</th><th class="c">${esc(zoneName('warehouse'))}</th></tr></thead><tbody>
+          ${o.items.map((i, k) => `<tr><td>${esc(i.name)}</td><td class="r">${num(i.qty)}</td><td class="r">${rp(i.line_total)}</td>${cell(i, k, 'floor')}${cell(i, k, 'warehouse')}</tr>`).join('')}
+        </tbody></table></div>
+        <div class="row-2" style="margin-top:12px">
+          <div>
+            <div class="field"><label>Barang diambil dari *</label>
+              <select id="tkZone"><option value="floor">${esc(zoneName('floor'))}</option><option value="warehouse">${esc(zoneName('warehouse'))}</option></select>
+              <div class="hint" id="tkHint"></div></div>
+            <div class="kv"><span>Total</span><b>${rp(o.total)}</b></div>
+            <div class="kv"><span>Deposit (sudah dibayar)</span><b>${rp(o.deposit)}</b></div>
+            <div class="kv total-line"><span>Sisa bayar</span><span>${rp(rest)}</span></div>
+          </div>
+          <div>
+            <div class="field"><label>Uang diterima</label><input id="tkCash" class="money big-input" inputmode="numeric" autocomplete="off" placeholder="0">
+              <div class="quick-cash" id="tkQuick">${quick.slice(0, 4).map(([l, v]) => `<button data-v="${v}">${l}</button>`).join('')}</div></div>
+            <div class="change-row"><span>Kembalian</span><strong id="tkChange">Rp 0</strong></div>
+          </div>
+        </div>`,
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        {
+          label: 'Selesaikan Pengambilan',
+          kind: 'primary',
+          onClick: async ({ close, el, btn }) => {
+            const cash = moneyVal($('#tkCash', el));
+            if (cash < rest) { sound('err'); toast(`Uang diterima kurang ${rp(rest - cash)}.`, 'err'); $('#tkCash', el).focus(); return; }
+            btn.disabled = true;
+            try {
+              const r = await api('orders:complete', { order_no: o.order_no, zone: $('#tkZone', el).value, cash_received: cash });
+              close();
+              showTaken(r);
+              if (r.print_error) { sound('err'); toast(r.print_error, 'err', 8000); }
+              if (r.short && r.short.length) {
+                toast(`${r.short.length} barang display tokonya habis (${r.short.map((s) => `${s.name}: ${s.floor_stock}`).join(', ')}) — sudah masuk Saran Restock gudang.`, 'warn', 9000);
+              }
+              load();
+              refreshOrderBadge();
+            } catch (err) {
+              btn.disabled = false;
+              sound('err');
+              toast(err.message, 'err', 7000);
+            }
+          },
+        },
+      ],
+      onOpen: (el) => {
+        const zone = $('#tkZone', el);
+        const cashIn = $('#tkCash', el);
+        zone.value = defZone;
+        const hint = () => {
+          const miss = lacking(zone.value);
+          $('#tkHint', el).innerHTML = miss.length
+            ? `<span style="color:var(--red)">Stok ${esc(zoneName(zone.value))} tidak cukup: ${miss.map((i) => esc(i.name)).join(', ')}. Tetap bisa disimpan; stoknya menjadi minus.</span>`
+            : '';
+        };
+        const change = () => {
+          const c = moneyVal(cashIn);
+          const out = $('#tkChange', el);
+          out.textContent = c - rest < 0 ? `Kurang ${rp(rest - c)}` : rp(c - rest);
+          out.classList.toggle('neg', c - rest < 0);
+        };
+        bindMoney(cashIn);
+        cashIn.addEventListener('input', change);
+        cashIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('.modal-foot .btn.primary', el).click(); } });
+        $('#tkQuick', el).addEventListener('click', (e) => {
+          const b = e.target.closest('[data-v]');
+          if (!b) return;
+          setMoney(cashIn, Number(b.dataset.v));
+          change();
+          cashIn.focus();
+        });
+        zone.addEventListener('change', hint);
+        if (rest === 0) setMoney(cashIn, 0);
+        hint();
+        change();
+        cashIn.focus();
+      },
+    });
+  }
+
+  function showTaken(r) {
+    sound('ok');
+    const rc = r.receipt;
+    modal({
+      title: `Pesanan Diambil — ${rc.receipt_no}`,
+      body: `<div class="alert ok" style="text-align:center">
+          <div class="muted small">Kembalian</div><div style="font-size:34px;font-weight:800">${rp(rc.change)}</div>
+          <div class="small">Total ${rp(rc.total)} · Deposit ${rp(rc.deposit)} · Diterima ${rp(rc.cash_received)}</div></div>
+        <table class="receipt-lines">${rc.lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="r muted">${num(l.qty)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>`,
+      actions: [
+        { label: state.settings.auto_print !== '0' ? 'Cetak Ulang Nota' : 'Cetak Nota', kind: 'ghost', onClick: () => api('receipt:print', rc).catch((err) => toast(err.message, 'err', 8000)) },
+        { label: 'Selesai', kind: 'primary' },
+      ],
+    });
+  }
+
+  // Batal pesanan: stok tidak berubah; deposit dikembalikan (keluar dari laci shift ini) atau hangus. Perlu PIN.
+  function openCancel(o) {
+    modal({
+      title: `Batalkan Pesanan ${o.order_no}`,
+      body: `<div class="alert warn" style="margin-bottom:10px">Pesanan <b>${esc(o.customer_name)}</b> (${rp(o.total)}) dibatalkan. Stok tidak berubah.
+          Perlu persetujuan <b>PIN Admin</b> atau <b>PIN Pembatalan</b> (kepala toko).</div>
+        ${o.deposit > 0 ? `<div class="field"><label>Deposit ${rp(o.deposit)} *</label><select id="ocDep">
+            <option value="">— pilih —</option>
+            <option value="kembali">Dikembalikan ke pelanggan (uang keluar dari laci shift ini)</option>
+            <option value="hangus">Hangus (tidak dikembalikan)</option></select></div>` : '<p class="muted small">Pesanan ini tanpa deposit.</p>'}
+        <div class="row-2">
+          <div class="field"><label>Alasan pembatalan *</label><input id="ocReason" maxlength="200" placeholder="Contoh: pelanggan tidak jadi / barang tidak tersedia"></div>
+          <div class="field"><label>PIN Admin / PIN Pembatalan *</label><input id="ocPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>
+        </div>`,
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        {
+          label: 'Batalkan Pesanan',
+          kind: 'danger',
+          onClick: async ({ close, el, btn }) => {
+            const dep = $('#ocDep', el);
+            if (dep && !dep.value) { sound('err'); toast('Pilih deposit dikembalikan atau hangus.', 'err'); dep.focus(); return; }
+            btn.disabled = true;
+            try {
+              const r = await api('orders:cancel', {
+                order_no: o.order_no, reason: $('#ocReason', el).value, approver_pin: $('#ocPin', el).value, deposit_action: dep ? dep.value : null,
+              });
+              close();
+              const msg = r.cancel_deposit === 'kembali' ? ` Kembalikan deposit ${rp(r.deposit)} ke pelanggan.` : r.cancel_deposit === 'hangus' ? ' Deposit hangus.' : '';
+              toast(`Pesanan ${r.order_no} dibatalkan.${msg}`, 'ok', 8000);
+              load();
+              refreshOrderBadge();
+            } catch (err) {
+              btn.disabled = false;
+              sound('err');
+              toast(err.message, 'err', 7000);
+              if (/PIN/.test(err.message)) { $('#ocPin', el).value = ''; $('#ocPin', el).focus(); }
+            }
+          },
+        },
+      ],
+      onOpen: (el) => {
+        const order = ['#ocDep', '#ocReason', '#ocPin'].map((s) => $(s, el)).filter(Boolean);
+        order[0].focus();
+        order.forEach((f, i) => f.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          if (order[i + 1]) order[i + 1].focus();
+          else $('.modal-foot .btn.danger', el).click();
+        }));
+      },
+    });
+  }
+
+  function show() {
+    load();
+    refreshOrderBadge();
+  }
+
+  return { show, load };
+})();
+
 views.shift = (() => {
   const root = $('#shiftContent');
 
@@ -2078,6 +2526,15 @@ views.shift = (() => {
     });
   }
 
+  // Uang pesanan (deposit) di laci shift ini: deposit bukan omset, jadi uang tunai di laci dihitung terpisah
+  function orderCashRows(o) {
+    if (!o || !(o.deposit_in || o.deposit_used || o.refunded || o.forfeited)) return '';
+    return [['Deposit pesanan masuk', o.deposit_in, '+'], ['Deposit terpakai (pesanan diambil)', o.deposit_used, '−'],
+      ['Deposit dikembalikan', o.refunded, '−'], ['Deposit hangus (tetap di laci)', o.forfeited, '']]
+      .filter(([, v]) => v).map(([k, v, sign]) => `<div class="kv"><span>${k}</span><b>${sign ? `${sign} ` : ''}${rp(v)}</b></div>`).join('')
+      + `<div class="kv total-line"><span>Uang tunai di laci</span><span>${rp(o.cash_total)}</span></div>`;
+  }
+
   function checksCard(checks) {
     if (!checks || !checks.length) return '';
     return `<div class="card">
@@ -2126,6 +2583,7 @@ views.shift = (() => {
         <div class="card">
           <h2>Tutup Shift / Cetak Rekap</h2>
           <div class="kv"><span>Penjualan tunai</span><b>${rp(s.cashSales)}</b></div>
+          ${orderCashRows(s.orders)}
           <div class="field"><label>Catatan Kasir <span class="muted">(opsional)</span></label><input id="shNotes" maxlength="300" placeholder="Contoh: ada uang palsu Rp 50.000"></div>
           <button class="btn primary xl" id="shClose">Tutup Shift</button>
         </div>
@@ -2477,6 +2935,19 @@ async function refreshOutBadge(rows) {
   b.classList.toggle('hidden', !n);
 }
 
+// Angka merah di menu Pesanan: pesanan belum diambil yang tanggal ambilnya hari ini atau sudah lewat
+async function refreshOrderBadge() {
+  const btn = $('#nav [data-view="orders"]');
+  if (!btn || !canView('orders')) return;
+  const n = await api('orders:due').catch(() => null);
+  if (typeof n !== 'number') return;
+  let b = $('.nav-badge', btn);
+  if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; btn.appendChild(b); }
+  b.textContent = n;
+  b.title = `${n} pesanan sudah waktunya diambil (hari ini / lewat tanggal) — lihat Pesanan Pelanggan`;
+  b.classList.toggle('hidden', !n);
+}
+
 // ================================================================ Login
 function refreshUserBadge() {
   const b = $('#userBadge');
@@ -2824,6 +3295,7 @@ function tick() {
   setInterval(refreshConnection, 10000);
   refreshOutBadge();
   refreshDraftBadge();
-  setInterval(() => { refreshOutBadge(); refreshDraftBadge(); }, 30000);
+  refreshOrderBadge();
+  setInterval(() => { refreshOutBadge(); refreshDraftBadge(); refreshOrderBadge(); }, 30000);
   go(ROLE_VIEWS[role()][0]);
 }());

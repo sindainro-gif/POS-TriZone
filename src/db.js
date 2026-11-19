@@ -228,6 +228,52 @@ CREATE TABLE IF NOT EXISTS receipt_voids (
     created_at DATETIME NOT NULL
 );
 
+-- Pesanan pelanggan: barang dipesan / belum dibawa, stok BELUM dipotong. Deposit = uang masuk (bukan omset);
+-- saat diambil, sisa dilunasi dan dicatat sebagai penjualan biasa (shift_sales). Tidak ikut dihapus saat tutup shift.
+CREATE TABLE IF NOT EXISTS customer_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_no TEXT NOT NULL UNIQUE,
+    customer_name TEXT NOT NULL,
+    customer_phone TEXT,
+    pickup_date TEXT NOT NULL,
+    notes TEXT,
+    total INTEGER NOT NULL,
+    deposit INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'baru' CHECK(status IN ('baru', 'diambil', 'batal')),
+    created_at DATETIME NOT NULL,
+    created_by TEXT,
+    done_at DATETIME,
+    done_by TEXT,
+    receipt_no TEXT,
+    pickup_zone TEXT,
+    cancel_reason TEXT,
+    cancel_deposit TEXT CHECK(cancel_deposit IS NULL OR cancel_deposit IN ('kembali', 'hangus')),
+    cancel_approved_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON customer_orders(status, pickup_date);
+
+CREATE TABLE IF NOT EXISTS customer_order_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL REFERENCES customer_orders(id) ON DELETE CASCADE,
+    sku TEXT NOT NULL,
+    name TEXT NOT NULL,
+    qty INTEGER NOT NULL CHECK(qty > 0),
+    unit_price INTEGER NOT NULL,
+    line_total INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_order_items ON customer_order_items(order_id);
+
+-- Uang pesanan per shift (untuk uang laci): deposit masuk, deposit terpakai saat diambil, dikembalikan, hangus
+CREATE TABLE IF NOT EXISTS order_cash (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shift_uid TEXT NOT NULL,
+    order_no TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('deposit', 'pakai', 'kembali', 'hangus')),
+    amount INTEGER NOT NULL,
+    created_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_order_cash_shift ON order_cash(shift_uid);
+
 -- Penanda unik tiap percobaan bayar dari PC kasir, agar transaksi yang sudah masuk online
 -- tidak tercatat lagi lewat antrian darurat (mis. koneksi putus tepat saat menunggu balasan).
 CREATE TABLE IF NOT EXISTS checkout_refs (

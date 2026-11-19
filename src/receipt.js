@@ -83,6 +83,7 @@ function buildReceiptRows(receipt, settings = {}, { reprint = false } = {}) {
   // Nomor struk tidak dicetak (tetap tersimpan & tampil di Laporan Shift)
   rows.push({ t: 'lr', l: `Tgl: ${tm ? `${tm.d}-${tm.mo}-${tm.y.slice(2)}` : '-'}`, r: tm ? `${tm.h}:${tm.mi}:${tm.s}` : '' });
   rows.push({ t: 'l', s: `Ksr: ${receipt.cashier || '-'}` });
+  if (receipt.order_no) rows.push({ t: 'l', s: `Pesanan: ${receipt.order_no}` });
   if (receipt.void_of) {
     const o = parseTime(receipt.void_of_at);
     rows.push({ t: 'l', s: `Batal nota: ${o ? `${o.d}-${o.mo}-${o.y.slice(2)} ${o.h}:${o.mi}:${o.s}` : '-'}` });
@@ -104,12 +105,20 @@ function buildReceiptRows(receipt, settings = {}, { reprint = false } = {}) {
     rows.push({ t: 'hr' });
     rows.push({ t: 'l', s: `Alasan: ${receipt.reason || '-'}` });
     rows.push({ t: 'l', s: `Disetujui: ${receipt.approved_by || '-'}` });
-  } else if (isCash && !reprint) {
-    rows.push({ t: 'kv', k: 'Tunai', v: num(receipt.cash_received) });
-    rows.push({ t: 'hr' });
-    rows.push({ t: 'kv', k: 'Kembali', v: num(receipt.change) });
   } else {
-    rows.push({ t: 'kv', k: `${receipt.payment_method}`, v: num(receipt.total) });
+    // Pesanan yang diambil: deposit sudah dibayar saat pesan, yang dibayar sekarang = sisa
+    const dep = Number(receipt.deposit) || 0;
+    if (dep > 0) {
+      rows.push({ t: 'kv', k: 'Deposit', v: num(dep) });
+      rows.push({ t: 'kv', k: 'Sisa bayar', v: num(receipt.total - dep) });
+    }
+    if (isCash && !reprint) {
+      rows.push({ t: 'kv', k: 'Tunai', v: num(receipt.cash_received) });
+      rows.push({ t: 'hr' });
+      rows.push({ t: 'kv', k: 'Kembali', v: num(receipt.change) });
+    } else {
+      rows.push({ t: 'kv', k: `${receipt.payment_method}`, v: num(receipt.total - dep) });
+    }
   }
   rows.push({ t: 'hr' });
 
@@ -142,6 +151,16 @@ function buildShiftRows(recap = {}, settings = {}, { reprint = false, now = new 
   rows.push({ t: 'hr' });
   rows.push({ t: 'kv', k: 'Total omset', v: num(recap.revenue) });
   rows.push({ t: 'kv', k: 'Tunai', v: num(recap.cash_sales) });
+  // Uang pesanan (hanya bila ada): deposit bukan omset, jadi uang tunai di laci dihitung terpisah
+  const ord = recap.orders || {};
+  if (ord.deposit_in || ord.deposit_used || ord.refunded || ord.forfeited) {
+    rows.push({ t: 'hr' });
+    if (ord.deposit_in) rows.push({ t: 'kv', k: 'Deposit masuk', v: num(ord.deposit_in) });
+    if (ord.deposit_used) rows.push({ t: 'kv', k: 'Deposit pakai', v: num(ord.deposit_used) });
+    if (ord.refunded) rows.push({ t: 'kv', k: 'Deposit kembali', v: num(ord.refunded) });
+    if (ord.forfeited) rows.push({ t: 'kv', k: 'Deposit hangus', v: num(ord.forfeited) });
+    rows.push({ t: 'kv', k: 'Tunai di laci', v: num(ord.cash_total) });
+  }
   rows.push({ t: 'hr' });
   if (String(recap.notes || '').trim()) {
     rows.push({ t: 'l', s: `Catatan: ${String(recap.notes).trim()}` });
@@ -216,4 +235,43 @@ function receiptPage(rows, paperWidth, opts = {}) {
   return { html, widthMicrons: f.width * 1000, heightMicrons: Math.max(heightMm, 40) * 1000, measure: '.nota' };
 }
 
-module.exports = { buildReceiptLines, buildReceiptRows, buildShiftRows, rowsToText, receiptFragment, receiptPage, COLS, FONT_SCALES };
+/**
+ * Bukti pesanan untuk pelanggan.
+ * order: { order_no, created_at, pickup_date, customer_name, customer_phone, items:[{name, qty, unit_price, line_total}], total, deposit, notes, status }
+ */
+function buildOrderRows(order = {}, settings = {}, { reprint = false } = {}) {
+  const tm = parseTime(order.created_at);
+  const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(order.pickup_date || ''));
+  const total = Number(order.total) || 0;
+  const dep = Number(order.deposit) || 0;
+  const rows = [...headerRows(settings), { t: 'c', s: '** BUKTI PESANAN **' }];
+  if (reprint) rows.push({ t: 'c', s: '** CETAK ULANG **' });
+  if (settings.demo) rows.push({ t: 'c', s: '** DEMO - BUKAN NOTA ASLI **' });
+  if (order.status === 'diambil') rows.push({ t: 'c', s: '** SUDAH DIAMBIL **' });
+  if (order.status === 'batal') rows.push({ t: 'c', s: '** PESANAN DIBATALKAN **' });
+  rows.push({ t: 'hr' });
+  rows.push({ t: 'lr', l: 'No. Pesanan', r: String(order.order_no || '-') });
+  rows.push({ t: 'lr', l: 'Tgl pesan', r: tm ? `${tm.d}-${tm.mo}-${tm.y.slice(2)} ${tm.h}:${tm.mi}` : '-' });
+  rows.push({ t: 'lr', l: 'Ambil tgl', r: d ? `${d[3]}-${d[2]}-${d[1]}` : '-' });
+  rows.push({ t: 'l', s: `Pelanggan: ${order.customer_name || '-'}` });
+  if (order.customer_phone) rows.push({ t: 'l', s: `HP: ${order.customer_phone}` });
+  rows.push({ t: 'hr' });
+  for (const l of order.items || []) {
+    rows.push({ t: 'l', s: l.name });
+    rows.push({ t: 'lr', l: `${num(l.unit_price)} x ${num(l.qty)} =`, r: num(l.line_total) });
+  }
+  rows.push({ t: 'hr' });
+  rows.push({ t: 'kv', k: 'Total', v: num(total) });
+  rows.push({ t: 'kv', k: 'Deposit', v: num(dep) });
+  rows.push({ t: 'kv', k: 'Sisa bayar', v: num(total - dep) });
+  rows.push({ t: 'hr' });
+  if (String(order.notes || '').trim()) {
+    rows.push({ t: 'l', s: `Catatan: ${String(order.notes).trim()}` });
+    rows.push({ t: 'hr' });
+  }
+  rows.push({ t: 'c', s: 'Tunjukkan bukti ini saat mengambil barang.' });
+  rows.push(...textRows(settings.receipt_footer));
+  return rows;
+}
+
+module.exports = { buildReceiptLines, buildReceiptRows, buildShiftRows, buildOrderRows, rowsToText, receiptFragment, receiptPage, COLS, FONT_SCALES };

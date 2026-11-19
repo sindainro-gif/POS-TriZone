@@ -129,6 +129,23 @@ Di layar Kasir, kursor selalu kembali ke kolom **scan barcode**. Kolom **Jumlah*
 
 **Draft penjualan:** bila pelanggan belum siap bayar, klik **Tahan (Draft)** (boleh diberi nama pelanggan / catatan). Keranjang tersimpan di komputer kasir itu dan layar kosong untuk pelanggan berikutnya. **Daftar Draft** menampilkan semua draft; **Lanjutkan** memasukkan isinya kembali ke keranjang (keranjang yang sedang berisi bisa ditahan otomatis dulu). Stok tidak dipesan: harga & stok dicek ulang saat dilanjutkan dan saat bayar. Draft tetap ada walau aplikasi ditutup, juga saat MODE DARURAT.
 
+**Pesanan pelanggan (barang dipesan / belum dibawa):** isi keranjang seperti biasa, lalu klik **Jadikan Pesanan** (di bawah Tahan / Daftar Draft).
+- Isi **Nama pelanggan*** dan No. HP, **Tanggal barang diambil*** (bawaan besok), **Uang deposit** (tombol cepat Tanpa / 50% / Lunas), dan Catatan. Enter = pindah ke kolom berikutnya.
+- Saat pesanan disimpan, **stok belum dipotong**. Harga dikunci saat pesan. Nomor pesanan `PSN-YYYYMMDD-NNNN`. **Bukti pesanan** (No. Pesanan, tanggal ambil, barang, Total / Deposit / Sisa bayar) tercetak otomatis di printer nota, mengikuti "Cetak nota otomatis".
+- **Deposit bukan omset.** Deposit masuk laci shift yang sedang berjalan. Omset dihitung penuh saat barang diambil.
+- Menu **Pesanan Pelanggan** memiliki tab **Belum diambil**, Sudah diambil, Dibatalkan, dan Semua, plus kotak cari no. pesanan / nama / HP.
+  - Tanggal ambil hari ini diberi tanda kuning, yang sudah lewat merah.
+  - Angka merah di menu = jumlah pesanan yang waktunya diambil (hari ini / lewat).
+  - **Detail** menampilkan isi pesanan dan tombol **Cetak Bukti** (cetak ulang).
+- **Ambil:** pilih stok sumber, **Display Toko** atau **Gudang Utama**. Jumlah stok tiap barang di kedua zona ditampilkan. Kasir mengisi uang diterima untuk **sisa bayar** (total − deposit).
+  - Dari Gudang Utama, stok dicatat sebagai mutasi `MT-…` "Pesanan PSN-… diambil pelanggan" ke Display Toko, lalu terjual.
+  - Penjualannya tercatat sebagai nota `INV-…` biasa di shift itu (omset penuh, terkirim ke kantor seperti penjualan lain). Nota memuat No. Pesanan, Deposit, dan Sisa bayar.
+- **Batalkan:** isi alasan, pilih deposit **Dikembalikan** (uang keluar dari laci shift berjalan) atau **Hangus**, lalu setujui dengan **PIN Admin / PIN Pembatalan**. Stok tidak berubah.
+- **Kartu Tutup Shift dan Rekap** (layar, PDF, dan cetak di printer nota) menampilkan Deposit masuk / terpakai / dikembalikan / hangus dan **Uang tunai di laci**. Rumusnya: penjualan tunai − deposit terpakai + deposit masuk − deposit dikembalikan. Bagian ini hanya muncul bila shift itu punya transaksi pesanan.
+- **Hak akses:** Kasir & Admin membuat, mengambil, dan membatalkan pesanan; Gudang hanya melihat daftar pesanan.
+- Pesanan disimpan di PC Server, jadi tidak bisa dibuat atau diambil saat MODE DARURAT.
+- Data pesanan dan deposit belum dikirim ke kantor (mother base). Penjualannya tetap terkirim saat barang diambil.
+
 **Menjual melebihi display toko:** kasir selalu boleh menjual walaupun display toko di sistem kurang (barangnya ada di tangan pelanggan). Keranjang hanya menampilkan peringatan kuning, dan display toko menjadi 0 atau minus. Stok Gudang Utama dan Gudang BS tidak pernah dipotong. Barang yang display tokonya habis/minus muncul **merah dan paling atas** di **Mutasi → Saran Restock Rak Toko** (label HABIS / MINUS −N), dan menu Mutasi menampilkan angka merah berisi jumlah barang tersebut untuk akun Gudang & Admin. Klik **Isi Rak** untuk mencatat mutasi Gudang Utama → Toko.
 
 Kolom scan / cari barang (Kasir, Mutasi, Penerimaan, Cetak Barcode) menampilkan dropdown barang yang mirip setelah 2 huruf diketik. Bagian yang cocok diberi warna.
@@ -194,8 +211,8 @@ Setiap orang login dengan **nama + PIN 6 digit**. Menu yang tidak diizinkan dise
 | Peran | Menu |
 |---|---|
 | **Admin** | Semua menu, termasuk Pengaturan, Pengguna, Mode Komputer, Cadangkan / Pulihkan |
-| **Gudang** | Mutasi, Penerimaan Barang, Stok Opname **hanya lewat Excel** (Unduh Template → isi Fisik → Import), Daftar Barang (tambah / ubah / hapus / import), Cetak Barcode |
-| **Kasir** | Kasir / Pembayaran, Laporan Shift & Tutup Kasir, Daftar Barang (hanya lihat) |
+| **Gudang** | Mutasi, Penerimaan Barang, Stok Opname **hanya lewat Excel** (Unduh Template → isi Fisik → Import), Daftar Barang (tambah / ubah / hapus / import), Cetak Barcode, Pesanan Pelanggan (hanya lihat) |
+| **Kasir** | Kasir / Pembayaran, Pesanan Pelanggan, Laporan Shift & Tutup Kasir, Daftar Barang (hanya lihat) |
 
 - **Akun pertama:** saat database belum punya akun, layar login menjadi **Buat Akun Admin**. Tidak ada PIN bawaan.
 - Admin menambah, mengubah, atau menonaktifkan akun di **Pengaturan → Pengguna & Hak Akses**. Minimal harus selalu ada satu Admin aktif.

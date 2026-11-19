@@ -659,7 +659,7 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#mbCard').scrollIntoView()`);
       await shot('10b-pengaturan-mother-base');
       const navOf = () => run(`[...document.querySelectorAll('.nav-btn')].filter((b) => !b.classList.contains('hidden')).map((b) => b.dataset.view).join(',')`);
-      for (const [name, pin, want] of [['Rina', '222222', 'checkout,products,shift'], ['Budi', '333333', 'transfers,receiving,opname,products,barcode']]) {
+      for (const [name, pin, want] of [['Rina', '222222', 'checkout,orders,products,shift'], ['Budi', '333333', 'orders,transfers,receiving,opname,products,barcode']]) {
         await run(`document.querySelector('#logoutBtn').click()`);
         await wait(1500);
         await run(`document.querySelector('#lgPin').value='999999'; document.querySelector('#lgName').value=${JSON.stringify(name)}; document.querySelector('#lgBtn').click();`);
@@ -679,6 +679,11 @@ app.on('browser-window-created', (_e, win) => {
         const repL = await run(`window.posBridge.call('reports:list')`);
         const repO = await run(`window.posBridge.call('reports:open', { folder: 'Shift_x', file: 'a.enc' })`);
         if (repL.ok || repO.ok || !/Akses ditolak/.test(repL.error) || !/Akses ditolak/.test(repO.error)) throw new Error(`laporan bisa dibuka oleh ${name}`);
+        // Pesanan: semua peran boleh melihat; membuat / mengambil / membatalkan hanya Kasir & Admin
+        const orList = await run(`window.posBridge.call('orders:list', {})`);
+        const orMake = await run(`window.posBridge.call('orders:create', { items: [{ sku: 'MNM-001', qty: 1 }], customer_name: 'X', pickup_date: '2099-01-01' })`);
+        if (!orList.ok || (name === 'Budi') !== (!orMake.ok && /Akses ditolak/.test(orMake.error))) throw new Error(`akses Pesanan untuk ${name} salah: ${JSON.stringify(orMake)}`);
+        if (orMake.ok) svc.cancelOrder({ order_no: orMake.data.order_no, reason: 'uji akses', deposit_action: null, approver_pin: '111111' });
         if (name === 'Budi') {
           // Gudang: stok opname hanya lewat Excel — form manual tersembunyi & ditolak, import tetap bisa
           await run(`go('opname')`);
@@ -744,6 +749,83 @@ app.on('browser-window-created', (_e, win) => {
             throw new Error('batal nota tidak tercatat dengan benar');
           }
           await shot('11b-nota-dibatalkan');
+
+          // Pesanan: keranjang → Jadikan Pesanan (stok BELUM dipotong, bukti tercetak) → menu Pesanan → Ambil dari Gudang Utama → nota
+          const today = require('../src/services').localNow().slice(0, 10);
+          const st0 = { fl: svc.getProduct('SNK-010').floor_stock, wh: svc.getProduct('SNK-010').warehouse_stock };
+          await run(`go('checkout')`);
+          await wait(800);
+          await scan('8997654321098', 3);
+          if (await run(`document.querySelector('#orderBtn').disabled`)) throw new Error('tombol Jadikan Pesanan tidak aktif');
+          await run(`document.querySelector('#orderBtn').click()`);
+          await wait(500);
+          await run(`(() => { const m = document.querySelector('#modalRoot');
+            m.querySelector('#odName').value = 'Bu Ani'; m.querySelector('#odPhone').value = '0812-1111';
+            [...m.querySelectorAll('#odQuick [data-v]')].find((b) => b.textContent === '50%').click();
+            m.querySelector('#odNotes').value = 'Rasa balado'; })()`);
+          const odForm = await run(`({ date: document.querySelector('#odDate').value, rest: document.querySelector('#odRest').innerText })`);
+          await shot('13a-jadikan-pesanan');
+          await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
+          await wait(1500);
+          const ordTitle = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);
+          const ord = svc.listOrders().find((o) => o.customer_name === 'Bu Ani');
+          console.log('pesanan:', ordTitle, JSON.stringify(odForm), JSON.stringify(ord && [ord.order_no, ord.total, ord.deposit, ord.pickup_date, ord.notes]));
+          if (!/Pesanan Tersimpan/.test(ordTitle) || !ord || ord.total !== 34500 || ord.deposit !== 18000 || ord.pickup_date <= today || ord.notes !== 'Rasa balado'
+            || !/16\.500/.test(odForm.rest) || svc.getProduct('SNK-010').floor_stock !== st0.fl || svc.getProduct('SNK-010').warehouse_stock !== st0.wh) {
+            throw new Error('pesanan tidak tersimpan dengan benar / stok ikut terpotong');
+          }
+          if (!fs.existsSync(path.join(out, `${ord.order_no}.pdf`))) throw new Error('bukti pesanan tidak tercetak');
+          if (await run(`document.querySelectorAll('#cartBody tr').length`)) throw new Error('keranjang tidak dikosongkan setelah pesanan');
+          await shot('13b-pesanan-tersimpan');
+          await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+          // Pesanan lain jatuh tempo hari ini → angka di menu Pesanan
+          const ord2 = svc.createOrder({ items: [{ sku: 'MNM-001', qty: 6 }], customer_name: 'Pak Joko', customer_phone: '0899', pickup_date: today, deposit: 10000, created_by: 'Rina' });
+          await run(`go('orders')`);
+          await wait(1000);
+          const orText = await run(`document.querySelector('#orBody').innerText`);
+          const badge = await run(`(document.querySelector('#nav [data-view="orders"] .nav-badge') || {}).textContent || ''`);
+          if (!orText.includes(ord.order_no) || !orText.includes(ord2.order_no) || !/Hari ini/.test(orText) || badge !== '1') throw new Error(`menu Pesanan tidak sesuai (badge ${badge})`);
+          await shot('13c-menu-pesanan');
+          await run(`document.querySelector('#orBody tr[data-no="${ord.order_no}"] [data-act=take]').click()`);
+          await wait(1200);
+          await run(`(() => { const m = document.querySelector('#modalRoot'); const z = m.querySelector('#tkZone'); z.value = 'warehouse'; z.dispatchEvent(new Event('change'));
+            m.querySelector('#tkQuick [data-v]').click(); })()`);
+          await shot('13d-ambil-pesanan');
+          await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
+          await wait(1500);
+          const takeTitle = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);
+          const done = svc.getOrder({ order_no: ord.order_no });
+          console.log('ambil pesanan:', takeTitle, JSON.stringify([done.status, done.pickup_zone, done.receipt_no]));
+          if (!/Pesanan Diambil/.test(takeTitle) || done.status !== 'diambil' || done.pickup_zone !== 'warehouse'
+            || svc.getProduct('SNK-010').warehouse_stock !== st0.wh - 3 || svc.getProduct('SNK-010').floor_stock !== st0.fl) {
+            throw new Error('pengambilan pesanan dari Gudang Utama tidak sesuai');
+          }
+          if (!fs.existsSync(path.join(out, `${done.receipt_no}.pdf`))) throw new Error('nota pengambilan pesanan tidak tercetak');
+          await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+          await wait(800);
+          // Batalkan pesanan kedua: PIN kasir ditolak; PIN Pembatalan menyetujui; deposit dikembalikan dari laci
+          await run(`document.querySelector('#orBody tr[data-no="${ord2.order_no}"] [data-act=detail]').click()`);
+          await wait(800);
+          await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Batalkan Pesanan').click()`);
+          await wait(500);
+          await run(`(() => { const m = document.querySelector('#modalRoot'); m.querySelector('#ocDep').value = 'kembali'; m.querySelector('#ocReason').value = 'Pelanggan tidak jadi';
+            m.querySelector('#ocPin').value = '222222'; m.querySelector('.modal-foot .btn.danger').click(); })()`);
+          await wait(1600);
+          if (svc.getOrder({ order_no: ord2.order_no }).status !== 'baru') throw new Error('PIN kasir seharusnya tidak bisa membatalkan pesanan');
+          await shot('13e-batal-pesanan');
+          await run(`(() => { const m = document.querySelector('#modalRoot'); m.querySelector('#ocPin').value = '765432'; m.querySelector('.modal-foot .btn.danger').click(); })()`);
+          await wait(1500);
+          const c2 = svc.getOrder({ order_no: ord2.order_no });
+          const oSum = svc.shiftSummary().orders;
+          console.log('batal pesanan:', JSON.stringify([c2.status, c2.cancel_deposit, c2.cancel_approved_by]), 'uang pesanan shift:', JSON.stringify(oSum));
+          if (c2.status !== 'batal' || c2.cancel_deposit !== 'kembali' || oSum.deposit_in !== 28000 || oSum.deposit_used !== 18000 || oSum.refunded !== 10000) {
+            throw new Error('pembatalan pesanan tidak sesuai');
+          }
+          await run(`go('shift')`);
+          await wait(1000);
+          const shText = await run(`document.querySelector('#shiftContent').innerText`);
+          if (!/Deposit pesanan masuk/.test(shText) || !/Uang tunai di laci/.test(shText)) throw new Error('kartu Tutup Shift tidak menampilkan uang pesanan');
+          await shot('13f-shift-uang-pesanan');
         }
       }
 

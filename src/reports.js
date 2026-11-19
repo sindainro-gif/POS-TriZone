@@ -58,6 +58,13 @@ function summaryHtml({ store, summary, closedAt, notes, lowStock }) {
 </div>
 <table style="margin-top:10px">
   <tr><td>Penjualan tunai</td><td class="r">${rp(summary.cashSales)}</td></tr>
+  ${(() => {
+    const o = summary.orders || {};
+    if (!(o.deposit_in || o.deposit_used || o.refunded || o.forfeited)) return '';
+    return [['Deposit pesanan masuk', o.deposit_in], ['Deposit terpakai (pesanan diambil)', o.deposit_used], ['Deposit dikembalikan', o.refunded], ['Deposit hangus', o.forfeited]]
+      .filter(([, v]) => v).map(([k, v]) => `<tr><td>${k}</td><td class="r">${rp(v)}</td></tr>`).join('')
+      + `<tr><td><b>Uang tunai di laci</b></td><td class="r"><b>${rp(o.cash_total)}</b></td></tr>`;
+  })()}
 </table>
 ${notes ? `<p><b>Catatan kasir:</b> ${esc(notes)}</p>` : ''}
 <h2>Omset per Metode Pembayaran</h2>
