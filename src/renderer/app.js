@@ -110,6 +110,7 @@ const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', kasir: 'Kasir' };
 const role = () => (state.user ? state.user.role : '');
 const canView = (v) => !!state.user && ROLE_VIEWS[role()].includes(v);
 const canEditProducts = () => ['admin', 'gudang'].includes(role());
+const canManualOpname = () => role() === 'admin'; // Gudang: stok opname hanya lewat template Excel
 
 // PC kasir terputus dari PC gudang tetapi data darurat siap → transaksi masuk antrian lokal
 const emergencyMode = () => state.connected === false && !!(state.emergency && state.emergency.ready);
@@ -1374,7 +1375,7 @@ views.opname = (() => {
     Promise.all(items.map((i) => api('products:get', { sku: i.product.sku }).then((p) => { if (p) i.product = p; }))).then(render);
     render();
     loadHistory();
-    setTimeout(() => picker.focus(), 30);
+    if (canManualOpname()) setTimeout(() => picker.focus(), 30);
   }
   return { show };
 })();
@@ -2485,6 +2486,8 @@ async function logout() {
 function applyRole() {
   $$('#nav .nav-btn, .sidebar-foot .nav-btn').forEach((b) => b.classList.toggle('hidden', !canView(b.dataset.view)));
   ['#pdAdd', '#pdImport', '#pdTemplate'].forEach((sel) => $(sel).classList.toggle('hidden', !canEditProducts()));
+  $('#opFormCard').classList.toggle('hidden', !canManualOpname());
+  $('#opGudangNote').classList.toggle('hidden', canManualOpname());
   refreshUserBadge();
 }
 

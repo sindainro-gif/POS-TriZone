@@ -669,6 +669,20 @@ app.on('browser-window-created', (_e, win) => {
         const repL = await run(`window.posBridge.call('reports:list')`);
         const repO = await run(`window.posBridge.call('reports:open', { folder: 'Shift_x', file: 'a.enc' })`);
         if (repL.ok || repO.ok || !/Akses ditolak/.test(repL.error) || !/Akses ditolak/.test(repO.error)) throw new Error(`laporan bisa dibuka oleh ${name}`);
+        if (name === 'Budi') {
+          // Gudang: stok opname hanya lewat Excel — form manual tersembunyi & ditolak, import tetap bisa
+          await run(`go('opname')`);
+          await wait(600);
+          const opUi = await run(`({ form: document.querySelector('#opFormCard').offsetParent !== null, note: document.querySelector('#opGudangNote').offsetParent !== null, imp: document.querySelector('#opImport').offsetParent !== null, tpl: document.querySelector('#opTemplate').offsetParent !== null })`);
+          const opManual = await run(`window.posBridge.call('opname:create', { zone: 'warehouse', items: [{ sku: 'IMP-SMK', counted: 1 }] })`);
+          const whBefore = svc.getProduct('IMP-SMK').warehouse_stock;
+          const opExcel = await run(`window.posBridge.call('opname:import', { notes: 'Opname gudang', rows: [{ Kode: 'IMP-SMK', 'Fisik Gudang Utama': ${whBefore + 1} }] })`);
+          console.log('opname akun Gudang:', JSON.stringify({ ...opUi, manual: opManual.error, excel: opExcel.ok }));
+          if (opUi.form || !opUi.note || !opUi.imp || !opUi.tpl || opManual.ok || !/Akses ditolak/.test(opManual.error) || !opExcel.ok || svc.getProduct('IMP-SMK').warehouse_stock !== whBefore + 1) {
+            throw new Error('akses stok opname Gudang tidak sesuai (seharusnya hanya lewat Excel)');
+          }
+          await shot('11c-opname-gudang-excel');
+        }
         const vpSeen = await run(`window.posBridge.call('settings:voidPin', { reveal: true })`);
         if (vpSeen.ok || !/Akses ditolak/.test(vpSeen.error)) throw new Error(`PIN Pembatalan bisa dilihat oleh ${name}`);
         // Perbarui Daftar Barang boleh untuk semua peran (mother base sengaja tidak terjangkau → pesan netral, bukan Akses ditolak)

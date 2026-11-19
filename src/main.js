@@ -602,7 +602,8 @@ const ACCESS = {
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
-  'opname:create': GUDANG, 'opname:list': GUDANG, 'opname:get': GUDANG, 'opname:template': GUDANG, 'opname:importFile': GUDANG, 'opname:import': GUDANG,
+  // Stok opname manual (form scan) hanya Admin; Gudang hanya lewat template Excel (unduh → isi Fisik → import)
+  'opname:list': GUDANG, 'opname:get': GUDANG, 'opname:template': GUDANG, 'opname:importFile': GUDANG, 'opname:import': GUDANG,
   'rcDrafts:list': GUDANG, 'rcDrafts:count': GUDANG, 'rcDrafts:create': GUDANG, 'rcDrafts:process': GUDANG, 'rcDrafts:delete': GUDANG,
   'labels:designs': GUDANG, 'labels:saveDesign': GUDANG, 'labels:deleteDesign': GUDANG, 'labels:setDefault': GUDANG,
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,

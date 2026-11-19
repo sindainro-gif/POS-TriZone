@@ -217,7 +217,17 @@
           <button class="btn ghost" id="opImport">Import Excel / CSV</button>
         </div>
       </header>
-      <div class="card">
+      <div class="card hidden" id="opGudangNote">
+        <h2>Stok Opname lewat Excel</h2>
+        <p>Akun Gudang melakukan stok opname <b>hanya lewat Excel</b>:</p>
+        <ol class="notes">
+          <li>Klik <b>Unduh Template</b> (berisi semua barang dan stok sistem tiap zona).</li>
+          <li>Isi kolom <b>Fisik</b> zona yang dihitung. Kolom Fisik yang kosong tidak mengubah stok.</li>
+          <li>Klik <b>Import Excel / CSV</b>, periksa ringkasan selisih, lalu <b>Simpan</b>.</li>
+        </ol>
+        <p class="muted small">Opname manual (scan per barang) hanya bisa dilakukan Admin.</p>
+      </div>
+      <div class="card" id="opFormCard">
         <h2>Form Opname</h2>
         <div class="field">
           <label>Zona yang Dihitung</label>
