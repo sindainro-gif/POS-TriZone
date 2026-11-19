@@ -118,9 +118,14 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(voidWith(sell(), '765432').approved_by, 'Kepala Toko - Sari (PIN Pembatalan)');
     assert.strictEqual(voidWith(sell(), '111111').approved_by, 'Bos'); // PIN Admin tetap berlaku
     throwsMsg(() => voidWith(sell(), '222222'), /PIN Admin \/ PIN Pembatalan salah/);
+    // Persetujuan cetak ulang nota memakai PIN yang sama
+    assert.deepStrictEqual(sv.checkApprover({ approver_pin: '765432' }), { approved_by: 'Kepala Toko - Sari (PIN Pembatalan)' });
+    assert.deepStrictEqual(sv.checkApprover({ approver_pin: '111111' }), { approved_by: 'Bos' });
+    for (const pin of ['222222', '333333', '', undefined]) throwsMsg(() => sv.checkApprover({ approver_pin: pin }), /PIN Admin \/ PIN Pembatalan salah/);
     // Dihapus → PIN lama tidak berlaku lagi
     assert.strictEqual(sv.clearVoidPin().set, false);
     throwsMsg(() => voidWith(sell(), '765432'), /PIN Admin \/ PIN Pembatalan salah/);
+    throwsMsg(() => sv.checkApprover({ approver_pin: '765432' }), /PIN Admin \/ PIN Pembatalan salah/);
   });
 
   console.log(`\n${passed} tes batal nota lulus${process.exitCode ? ', ada yang GAGAL' : ''}.`);

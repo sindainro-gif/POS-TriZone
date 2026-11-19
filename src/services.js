@@ -575,6 +575,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return u.name;
   }
 
+  // Persetujuan tindakan lain yang perlu izin (mis. cetak ulang nota): PIN yang sama dengan batal nota
+  function checkApprover({ approver_pin } = {}) {
+    return { approved_by: approverAdmin(approver_pin) };
+  }
+
   // ---------------------------------------------------------------- PIN Pembatalan (kepala toko)
   // Diatur Admin di Pengaturan agar kepala toko bisa menyetujui batal nota tanpa mengetahui PIN Admin.
   // Disimpan terenkripsi akun Windows (Admin bisa menampilkannya lagi). Tidak termasuk SETTING_KEYS,
@@ -1873,7 +1878,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     meta, getSettings, saveSettings,
     getProduct, listProducts, categories, findByCode, searchProducts, saveProduct, deleteProduct, importRows,
     stockSnapshot, lowStock,
-    getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, voidReceipt, voidPinInfo, setVoidPin, clearVoidPin, shiftSalesRows,
+    getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, voidReceipt, checkApprover, voidPinInfo, setVoidPin, clearVoidPin, shiftSalesRows,
     createOrder, getOrder, listOrders, ordersDue, completeOrder, cancelOrder,
     archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,

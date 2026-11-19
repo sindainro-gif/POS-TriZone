@@ -170,7 +170,9 @@ Di kiri bawah sidebar:
 1. Pasang driver printer nota (58 mm / 80 mm) sampai printernya muncul di Windows (Settings → Printers & scanners).
 2. Di aplikasi: **Pengaturan → Printer Nota** → pilih printer, lebar kertas, lalu isi Header dan Footer (pratinjau tampil langsung).
 3. Klik **Cetak Tes**. Setelah itu nota tercetak otomatis setiap transaksi selesai (bisa dimatikan).
-4. Cetak ulang: tombol di layar transaksi berhasil, atau **Laporan Shift → Detail → Cetak Ulang Nota**.
+4. Cetak ulang: tombol di layar transaksi berhasil, atau **Laporan Shift → Detail → Cetak Ulang Nota**. Cetak ulang perlu **PIN Admin** atau **PIN Pembatalan** (kepala toko), sama seperti batal nota, dan nota tercetak dengan tanda **CETAK ULANG**.
+   - Setiap nota hanya tercetak sekali tanpa PIN. Bila cetak pertama gagal (printer mati / kertas habis), tombol cetak masih bisa dipakai tanpa PIN sampai nota berhasil tercetak.
+   - PIN dicek di PC Server, jadi cetak ulang tidak bisa saat MODE DARURAT.
 
 Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter per baris). Nota tidak mencetak nomor struk; nomornya tetap tersimpan dan tampil di layar transaksi serta Laporan Shift.
 

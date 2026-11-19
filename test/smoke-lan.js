@@ -111,6 +111,13 @@ app.on('browser-window-created', (_e, win) => {
       if (!lanVoid2.ok || lanVoid2.data.requested_by !== 'Kasir LAN' || lanVoid2.data.approved_by !== 'Admin' || (await readGudangStock()).floor_stock !== 17) {
         throw new Error('batal nota dari PC kasir tidak diteruskan ke PC server');
       }
+      // Cetak ulang nota dari PC kasir: PIN dicek di PC server (PIN kasir ditolak, PIN Admin menyetujui)
+      const rpBad = await run(`window.posBridge.call('receipt:reprint', { receipt_no: ${JSON.stringify(lanSale.data.receipt_no)}, approver_pin: '135790' })`);
+      const rpOk = await run(`window.posBridge.call('receipt:reprint', { receipt_no: ${JSON.stringify(lanSale.data.receipt_no)}, approver_pin: '123456' })`);
+      console.log('cetak ulang dari PC kasir:', rpBad.error, '·', JSON.stringify(rpOk.data || rpOk.error));
+      if (rpBad.ok || !rpOk.ok || rpOk.data.approved_by !== 'Admin' || !fs.existsSync(path.join(out, `${lanSale.data.receipt_no}.pdf`))) {
+        throw new Error('cetak ulang nota dari PC kasir tidak sesuai');
+      }
       // Ambil Master Barang dari PC kasir diteruskan ke PC gudang (di sana mother base belum diatur)
       const pull = await run(`window.posBridge.call('products:pullMaster')`);
       console.log('ambil master dari PC kasir:', JSON.stringify(pull));
@@ -163,6 +170,9 @@ app.on('browser-window-created', (_e, win) => {
       const offNo = (title.match(/OFF-[\w-]+/) || [])[0];
       if (!offNo || !/MODE DARURAT/.test(title)) throw new Error('struk darurat OFF- tidak dibuat');
       if (!fs.existsSync(path.join(out, `${offNo}.pdf`))) throw new Error('nota darurat tidak tercetak');
+      // PIN cetak ulang dicek di PC Server → tidak bisa saat MODE DARURAT
+      const offReprint = await run(`window.posBridge.call('receipt:reprint', { receipt_no: '${offNo}', approver_pin: '123456' })`);
+      if (offReprint.ok || !/MODE DARURAT/.test(offReprint.error)) throw new Error('cetak ulang saat MODE DARURAT seharusnya ditolak');
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
       const queued = await run(`api('app:status').then((s) => s.emergency.pending)`);
       if (queued !== 1) throw new Error(`antrian darurat seharusnya 1, tercatat ${queued}`);

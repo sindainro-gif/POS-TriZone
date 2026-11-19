@@ -181,6 +181,43 @@ async function printReceipt(receipt, { reprint = false } = {}) {
   return printPage(page, { deviceName: s.printer_name, pdfName: receipt.receipt_no, what: 'Nota' });
 }
 
+// Nota hanya boleh tercetak SEKALI tanpa izin. Cetak berikutnya = cetak ulang (receipt:reprint) yang perlu
+// PIN Admin / PIN Pembatalan. Dicatat di komputer ini sejak aplikasi dibuka; bila cetak gagal (printer mati,
+// kertas habis) nota dianggap belum tercetak sehingga boleh dicoba lagi.
+const printedReceipts = new Set();
+const REPRINT_NEEDS_PIN = 'Nota ini sudah dicetak. Cetak ulang perlu PIN Admin / PIN Pembatalan.';
+async function printReceiptOnce(receipt) {
+  const no = String((receipt && receipt.receipt_no) || '');
+  if (!no) throw userError('Data nota tidak lengkap.');
+  if (printedReceipts.has(no)) throw userError(REPRINT_NEEDS_PIN);
+  printedReceipts.add(no);
+  try {
+    return await printReceipt(receipt);
+  } catch (err) {
+    printedReceipts.delete(no);
+    throw err;
+  }
+}
+
+// Cetak ulang nota: disetujui PIN Admin / PIN Pembatalan (dicek di PC Server), tercetak dengan tanda CETAK ULANG.
+// receipt (opsional) = data nota dari layar transaksi berhasil (memuat nota MODE DARURAT yang belum terkirim).
+async function reprintReceipt({ receipt_no, approver_pin, receipt } = {}) {
+  const no = String(receipt_no || (receipt && receipt.receipt_no) || '').trim();
+  if (!no) throw userError('Nomor nota tidak ada.');
+  if (isClient() && !online) throw userError('Cetak ulang nota tidak bisa saat MODE DARURAT: PIN persetujuan dicek di PC Server.');
+  let approved;
+  try {
+    approved = await svc.checkApprover({ approver_pin });
+  } catch (err) {
+    if (/PIN Admin \/ PIN Pembatalan salah/.test(err.message)) await new Promise((r) => setTimeout(r, 800)); // memperlambat tebak-tebakan PIN
+    throw err;
+  }
+  const data = receipt && String(receipt.receipt_no) === no ? receipt : await svc.receiptForReprint({ receipt_no: no });
+  await printReceipt(data, { reprint: true });
+  printedReceipts.add(no);
+  return { receipt_no: no, approved_by: approved.approved_by };
+}
+
 // ---------------------------------------------------------------- Cetak label barcode
 const SAMPLE_PRODUCT = { sku: 'MNM-001', barcode: '8991234567890', name: 'Air Mineral 600ml', brand: 'Segar', unit_price: 3500 };
 
@@ -872,7 +909,7 @@ const handlers = {
   'orders:complete': async (a = {}) => {
     const r = await runMain('main.completeOrder', { ...a, done_by: session.name });
     if ((await getSettings()).auto_print !== '0') {
-      try { await printReceipt(r.receipt); } catch (err) { r.print_error = err.message; }
+      try { await printReceiptOnce(r.receipt); } catch (err) { r.print_error = err.message; }
     }
     return r;
   },
@@ -890,8 +927,8 @@ const handlers = {
   'offline:markChecked': (a) => svc.markOfflineChecked(a),
 
   'printer:list': async () => (await win.webContents.getPrintersAsync()).map((p) => ({ name: p.name, displayName: p.displayName || p.name, isDefault: !!p.isDefault })),
-  'receipt:print': (receipt) => printReceipt(receipt),
-  'receipt:reprint': async (a) => printReceipt(await svc.receiptForReprint(a), { reprint: true }),
+  'receipt:print': (receipt) => printReceiptOnce(receipt), // cetak pertama; berikutnya harus lewat receipt:reprint
+  'receipt:reprint': (a) => reprintReceipt(a),
   // Batal nota: kasir meminta, Admin menyetujui dengan PIN. Peminta diambil dari akun yang login, bukan dari layar.
   'receipt:void': async (a = {}) => {
     try {

@@ -12,6 +12,57 @@ function bindMoney(input) {
 const moneyVal = (input) => Number(String(input.value).replace(/\D/g, '')) || 0;
 const setMoney = (input, n) => { input.value = n ? Number(n).toLocaleString('id-ID') : ''; };
 
+// Cetak ulang nota: perlu PIN Admin / PIN Pembatalan (kepala toko); nota tercetak dengan tanda CETAK ULANG.
+// receipt (opsional) = data nota dari layar transaksi berhasil.
+function reprintNota(receipt_no, receipt) {
+  modal({
+    title: `Cetak Ulang Nota ${receipt_no}`,
+    body: `<p class="muted small" style="margin-top:0">Nota ini sudah pernah dicetak. Cetak ulang perlu persetujuan <b>PIN Admin</b> atau
+        <b>PIN Pembatalan</b> (kepala toko), dan nota tercetak dengan tanda <b>CETAK ULANG</b>.</p>
+      <div class="field"><label>PIN Admin / PIN Pembatalan *</label><input id="rpPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>`,
+    actions: [
+      { label: 'Batal', kind: 'ghost' },
+      {
+        label: 'Cetak Ulang',
+        kind: 'primary',
+        onClick: async ({ close, el, btn }) => {
+          btn.disabled = true;
+          try {
+            await api('receipt:reprint', { receipt_no, approver_pin: $('#rpPin', el).value, receipt });
+            close();
+            toast(`Nota ${receipt_no} dicetak ulang.`, 'ok');
+          } catch (err) {
+            btn.disabled = false;
+            sound('err');
+            toast(err.message, 'err', 8000);
+            if (/PIN/.test(err.message)) { $('#rpPin', el).value = ''; $('#rpPin', el).focus(); }
+          }
+        },
+      },
+    ],
+    onOpen: (el) => $('#rpPin', el).addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); $('.modal-foot .btn.primary', el).click(); }
+    }),
+  });
+}
+
+// Tombol cetak di layar transaksi berhasil: cetak pertama langsung (mis. cetak otomatis mati / printer tadi gagal);
+// bila nota sudah tercetak, minta PIN untuk cetak ulang.
+async function printNota(r, close) {
+  try {
+    await api('receipt:print', r);
+    toast('Nota dicetak.', 'ok');
+  } catch (e) {
+    if (/sudah dicetak/.test(e.message)) {
+      if (close) close();
+      reprintNota(r.receipt_no, r);
+      return;
+    }
+    sound('err');
+    toast(e.message, 'err', 8000);
+  }
+}
+
 // Tanggal lokal komputer ini (YYYY-MM-DD), bisa digeser beberapa hari
 function ymd(offsetDays = 0) {
   const d = new Date();
@@ -534,7 +585,7 @@ views.checkout = (() => {
           <div class="small">${esc(r.payment_method)} · Total ${rp(r.total)}${r.payment_method === 'Tunai' ? ` · Diterima ${rp(r.cash_received)}` : ''}</div></div>
         <table class="receipt-lines">${r.lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="r muted">${num(l.qty)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>`,
       actions: [
-        { label: state.settings.auto_print !== '0' ? 'Cetak Ulang Nota' : 'Cetak Nota', kind: 'ghost', onClick: () => printReceipt(r) },
+        { label: state.settings.auto_print !== '0' ? 'Cetak Ulang Nota' : 'Cetak Nota', kind: 'ghost', onClick: ({ close }) => printNota(r, close) },
         { label: 'Transaksi Baru <kbd>Enter</kbd>', kind: 'primary', onClick: ({ close }) => close() },
       ],
     });
@@ -2385,7 +2436,7 @@ views.orders = (() => {
           <div class="small">Total ${rp(rc.total)} · Deposit ${rp(rc.deposit)} · Diterima ${rp(rc.cash_received)}</div></div>
         <table class="receipt-lines">${rc.lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="r muted">${num(l.qty)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>`,
       actions: [
-        { label: state.settings.auto_print !== '0' ? 'Cetak Ulang Nota' : 'Cetak Nota', kind: 'ghost', onClick: () => api('receipt:print', rc).catch((err) => toast(err.message, 'err', 8000)) },
+        { label: state.settings.auto_print !== '0' ? 'Cetak Ulang Nota' : 'Cetak Nota', kind: 'ghost', onClick: ({ close }) => printNota(rc, close) },
         { label: 'Selesai', kind: 'primary' },
       ],
     });
@@ -2469,9 +2520,7 @@ views.shift = (() => {
         {
           label: 'Cetak Ulang Nota',
           kind: 'ghost',
-          onClick: async () => {
-            try { await api('receipt:reprint', ref); toast('Nota dicetak ulang.', 'ok'); } catch (err) { toast(err.message, 'err', 8000); }
-          },
+          onClick: ({ close }) => { close(); reprintNota(ref.receipt_no); },
         },
         ...(canVoid ? [{ label: 'Batalkan Nota', kind: 'danger', onClick: ({ close }) => { close(); openVoidForm(lines, ref.receipt_no); } }] : []),
         { label: 'Tutup', kind: 'primary' },
