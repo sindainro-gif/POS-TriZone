@@ -151,6 +151,7 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
 
 - Database: `%APPDATA%\POS Tri-Zone\pos.db` (backup harian di subfolder `backup/`, 14 terakhir). Path persisnya tampil di **Pengaturan → Informasi**.
 - Laporan tutup shift: `%APPDATA%\POS Tri-Zone\Laporan\Shift_YYYYMMDD_HHMMSS\` (Rekap PDF, CSV penjualan, CSV snapshot stok). File ini cadangan lokal; tidak ada lagi email laporan.
+  - **Disimpan 7 hari** (hari ini + 6 hari sebelumnya). Folder `Shift_…` yang lebih lama dihapus otomatis saat aplikasi dibuka, tiap jam, dan setiap tutup shift. Data penjualannya tetap ada di mother base.
   - Lokasinya **tidak ditampilkan** di layar tutup shift. Hanya **Admin** yang bisa melihat dan membukanya di **Pengaturan → Informasi**.
   - **Terenkripsi (sejak 1.12.0):** file disimpan sebagai `*.pdf.enc` / `*.csv.enc` (AES-256-GCM). Isinya tidak bisa dibuka langsung, hanya lewat **Pengaturan → Lihat Laporan…** (Admin). File yang dibuka didekripsi ke `buka-laporan\` di folder data dan dihapus saat aplikasi ditutup / dibuka lagi.
   - Kuncinya ada di `laporan.key` di folder data, dienkripsi akun Windows (DPAPI). Bila Windows diinstal ulang atau file itu hilang, laporan lokal tidak bisa dibuka lagi (datanya tetap ada di mother base). Laporan polos dari versi 1.9.1–1.11.0 di folder ini dienkripsi otomatis saat aplikasi dibuka.

@@ -68,6 +68,14 @@ const reportKey = () => (reportKeyCache ||= reportCrypt.loadOrCreateKey(path.joi
 const OPEN_DIR = path.join(DATA_DIR, 'buka-laporan');
 const clearOpenDir = () => { try { fs.rmSync(OPEN_DIR, { recursive: true, force: true }); } catch (_) { /* file masih dibuka program lain */ } };
 
+// Folder laporan tutup shift yang lebih tua dari 7 hari dihapus (data penjualan tetap ada di mother base)
+function pruneReportsNow() {
+  try {
+    const n = reportCrypt.pruneReports(reportsRoot(), { days: reportCrypt.REPORT_DAYS, today: localNow().slice(0, 10) });
+    if (n) console.log(`[laporan] ${n} folder laporan lebih dari ${reportCrypt.REPORT_DAYS} hari dihapus`);
+  } catch (err) { console.error('[laporan] hapus laporan lama gagal:', err.message); }
+}
+
 function userError(msg) {
   const e = new Error(msg);
   e.userFacing = true;
@@ -207,6 +215,7 @@ async function closeShiftLocal({ notes } = {}) {
   } finally {
     closingShift = false;
   }
+  pruneReportsNow();
 
   // Kirim ke mother base SEKARANG dan tunggu jawabannya (bukan hanya dijadwalkan). Gagal = shift tetap tertutup,
   // datanya aman di antrean dan dicoba lagi otomatis tiap 5 menit.
@@ -875,6 +884,8 @@ async function startup() {
   }
   await openLocalDatabase();
   clearOpenDir();
+  // Laporan tutup shift disimpan 7 hari terakhir; yang lebih lama dihapus (saat start, tiap jam, dan setiap tutup shift)
+  pruneReportsNow();
   // Laporan dari versi sebelumnya (belum terenkripsi) ikut diamankan
   try {
     const n = reportCrypt.encryptExisting(reportsRoot(), reportKey());
@@ -883,6 +894,7 @@ async function startup() {
   // Riwayat shift lebih lama dari 4 hari dihapus saat start & tiap jam (juga setiap tutup shift).
   const pruneHistory = () => {
     try { localSvc.pruneShiftHistory(); } catch (err) { console.error('[riwayat shift]', err); }
+    pruneReportsNow();
   };
   pruneHistory();
   setInterval(pruneHistory, 60 * 60 * 1000);

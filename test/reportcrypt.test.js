@@ -82,5 +82,22 @@ t('daftar laporan: per shift, terbaru dulu, hanya file terenkripsi', () => {
   assert.deepStrictEqual(rc.listReports(path.join(dir, 'tidak-ada')), []);
 });
 
+t('laporan lebih dari 7 hari dihapus otomatis, 7 hari terakhir tetap ada', () => {
+  const root = path.join(dir, 'Prune');
+  const mk = (name) => { fs.mkdirSync(path.join(root, name), { recursive: true }); fs.writeFileSync(path.join(root, name, 'Rekap.pdf.enc'), 'x'); };
+  // today = 2026-11-19 → simpan 13..19 November
+  ['Shift_20261119_080000', 'Shift_20261113_000000', 'Shift_20261112_235959', 'Shift_20261001_100000', 'Shift_20200101_000000', 'Lain-lain', 'Shift_rusak'].forEach(mk);
+  assert.strictEqual(rc.pruneReports(root, { days: 7, today: '2026-11-19' }), 3);
+  assert.deepStrictEqual(fs.readdirSync(root).sort(), ['Lain-lain', 'Shift_20261113_000000', 'Shift_20261119_080000', 'Shift_rusak']);
+  assert.strictEqual(rc.pruneReports(root, { days: 7, today: '2026-11-19' }), 0);
+  // Pergantian bulan / tahun
+  mk('Shift_20251226_120000');
+  mk('Shift_20251225_120000');
+  assert.strictEqual(rc.pruneReports(root, { days: 7, today: '2026-01-01' }), 1);
+  assert.ok(fs.existsSync(path.join(root, 'Shift_20251226_120000')));
+  assert.strictEqual(rc.pruneReports(path.join(dir, 'tidak-ada'), { today: '2026-11-19' }), 0);
+  assert.throws(() => rc.pruneReports(root, { today: 'kemarin' }), /tidak valid/);
+});
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`\n${passed} tes enkripsi laporan lulus${process.exitCode ? ', ada yang GAGAL' : ''}.`);

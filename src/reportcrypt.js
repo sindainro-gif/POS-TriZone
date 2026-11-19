@@ -80,4 +80,26 @@ function listReports(root) {
   })).filter((r) => r.files.length);
 }
 
-module.exports = { encrypt, decrypt, isEncrypted, loadOrCreateKey, encryptExisting, listReports, EXT };
+// Laporan disimpan `days` hari kalender terakhir (hari ini + days−1 hari sebelumnya); folder Shift_YYYYMMDD_…
+// yang lebih lama dihapus beserta isinya. today = 'YYYY-MM-DD' (tanggal lokal). Folder yang sedang dipakai
+// (gagal dihapus) dilewati dan dicoba lagi berikutnya. Mengembalikan jumlah folder yang dihapus.
+function pruneReports(root, { days = 7, today } = {}) {
+  const d = new Date(`${today}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) throw new Error('Tanggal hari ini tidak valid.');
+  d.setUTCDate(d.getUTCDate() - (days - 1));
+  const cutoff = d.toISOString().slice(0, 10).replace(/-/g, '');
+  let n = 0;
+  for (const dir of shiftDirs(root)) {
+    const m = /^Shift_(\d{8})_/.exec(dir);
+    if (!m || m[1] >= cutoff) continue;
+    try {
+      fs.rmSync(path.join(root, dir), { recursive: true, force: true });
+      n++;
+    } catch (_) { /* file sedang dibuka: coba lagi nanti */ }
+  }
+  return n;
+}
+
+const REPORT_DAYS = 7;
+
+module.exports = { encrypt, decrypt, isEncrypted, loadOrCreateKey, encryptExisting, listReports, pruneReports, REPORT_DAYS, EXT };

@@ -13,11 +13,16 @@ process.env.POS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pos-smoke-data
 process.env.POS_REPORTS_DIR = path.join(process.env.POS_DATA_DIR, 'laporan');
 process.env.POS_PRINT_TO_PDF = out; // nota "dicetak" ke PDF berukuran kertas thermal
 process.env.POS_NO_SHELL_OPEN = '1'; // laporan yang dibuka Admin tidak benar-benar dibuka di program lain
-// Laporan dari versi lama (belum terenkripsi): harus dienkripsi saat aplikasi dibuka
-const LEGACY_REPORT = 'Shift_20200101_000000';
-fs.mkdirSync(path.join(process.env.POS_REPORTS_DIR, LEGACY_REPORT), { recursive: true });
-fs.writeFileSync(path.join(process.env.POS_REPORTS_DIR, LEGACY_REPORT, 'Rekap_Shift_20200101_000000.pdf'), '%PDF-1.4 laporan lama');
-fs.writeFileSync(path.join(process.env.POS_REPORTS_DIR, LEGACY_REPORT, 'Penjualan_Shift_20200101_000000.csv'), 'No_Struk;Waktu\nINV-LAMA;2020');
+// Laporan dari versi lama (belum terenkripsi, bertanggal kemarin): harus dienkripsi saat aplikasi dibuka.
+// Laporan tahun 2020 (lebih dari 7 hari): harus terhapus otomatis saat aplikasi dibuka.
+const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; })();
+const LEGACY_REPORT = `Shift_${yesterday}_080000`;
+const OLD_REPORT = 'Shift_20200101_000000';
+for (const dirName of [LEGACY_REPORT, OLD_REPORT]) {
+  fs.mkdirSync(path.join(process.env.POS_REPORTS_DIR, dirName), { recursive: true });
+  fs.writeFileSync(path.join(process.env.POS_REPORTS_DIR, dirName, `Rekap_${dirName}.pdf`), '%PDF-1.4 laporan lama');
+  fs.writeFileSync(path.join(process.env.POS_REPORTS_DIR, dirName, `Penjualan_${dirName}.csv`), 'No_Struk;Waktu\nINV-LAMA;2020');
+}
 
 const { getServices } = require('../src/main.js');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -448,6 +453,7 @@ app.on('browser-window-created', (_e, win) => {
         const head = fs.readFileSync(path.join(process.env.POS_REPORTS_DIR, dirs[0], f)).toString('latin1');
         if (!head.startsWith('POSTZ-LAP1') || /%PDF|No_Struk|Nama_Barang/.test(head)) throw new Error(`isi ${f} masih bisa dibaca`);
       }
+      if (fs.existsSync(path.join(process.env.POS_REPORTS_DIR, OLD_REPORT))) throw new Error('laporan lebih dari 7 hari seharusnya terhapus otomatis');
       const legacy = fs.readdirSync(path.join(process.env.POS_REPORTS_DIR, LEGACY_REPORT));
       console.log('laporan lama setelah aplikasi dibuka:', legacy.join(', '));
       if (legacy.length !== 2 || legacy.some((f) => !f.endsWith('.enc'))) throw new Error('laporan lama belum dienkripsi saat aplikasi dibuka');
