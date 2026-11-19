@@ -609,7 +609,7 @@ async function hBarang(el) {
     const box = $('#brIsiTabel', el);
     box.innerHTML = tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama', fmt: (v, r) => `${esc(v)}${r.aktif ? '' : ' <span class="pill">nonaktif</span>'}` },
       { k: 'barcode', judul: 'Barcode', fmt: (v) => `<span class="mono small">${esc(v || '-')}</span>` }, { k: 'principal_id', judul: 'Principal', fmt: (v) => esc(prNama[v] || '-') },
-      { k: 'harga_jual_konsumen', judul: 'Harga jual', num: true, fmt: rp }, { k: 'satuan_masuk', judul: 'Satuan masuk', fmt: (v, r) => `1 ${esc(v)} = ${num(r.rasio_isi)} Biji` },
+      { k: 'harga_jual_konsumen', judul: 'Harga jual', num: true, fmt: rp }, { k: 'satuan_masuk', judul: 'Satuan masuk', fmt: (v, r) => (v === 'Biji' ? 'Biji' : `1 Coly = ${num(r.rasio_isi)} Biji`) },
       { k: 'harga_beli_dasar', judul: 'Harga beli', num: true, fmt: (v, r) => (v === null || v === undefined ? '<span class="muted">-</span>' : `${rp(v)} <span class="muted small">${r.sumber === 'PRICELIST' ? 'pricelist' : 'beli'}</span>`) },
       { k: 'harga_jual_ke_toko', judul: 'Harga ke toko', num: true, fmt: rp }], rows, { klik: true, kosong: 'Belum ada barang. Isi dari daftar barang salah satu toko atau tambah manual.' });
     onBaris(box, rows, formBarang);
@@ -617,7 +617,8 @@ async function hBarang(el) {
 
   function formBarang(p) {
     const baru = !p;
-    p = p || { aktif: true, satuan_masuk: 'Dus', rasio_isi: 1, isi_dus: 1 };
+    p = p || { aktif: true, satuan_masuk: 'Coly', rasio_isi: 1, isi_dus: 1 };
+    const biji = p.satuan_masuk === 'Biji';
     modal({
       judul: baru ? 'Tambah barang' : `Ubah ${p.sku}`,
       isi: `<form class="form" id="fBr" onsubmit="return false">
@@ -627,16 +628,23 @@ async function hBarang(el) {
         <div class="grid g2"><label class="f">Merk<input id="fMerk" value="${esc(p.merk || '')}"></label><label class="f">Kategori<input id="fKat" value="${esc(p.kategori || '')}"></label></div>
         <div class="grid g2"><label class="f">Harga jual di toko (Rp)<input id="fHarga" type="number" min="0" step="100" value="${esc(p.harga_jual_konsumen ?? '')}" required></label>
           <label class="f">Principal<select id="fPr"><option value="">-</option>${principal.map((x) => `<option value="${x.id}" ${x.id === p.principal_id ? 'selected' : ''}>${esc(x.nama)}</option>`).join('')}</select></label></div>
-        <div class="grid g2"><label class="f">Satuan masuk (kiriman ke toko)<input id="fSatuan" value="${esc(p.satuan_masuk || 'Dus')}"></label>
-          <label class="f">Isi per satuan masuk (Biji)<input id="fRasio" type="number" min="1" value="${esc(p.rasio_isi || 1)}"></label></div>
-        <div class="grid g2"><label class="f">Isi dus dari principal (pembulatan PO)<input id="fIsiDus" type="number" min="1" value="${esc(p.isi_dus || 1)}"></label>
+        <div class="grid g2"><label class="f">Satuan masuk (kiriman kantor ke toko)<select id="fSatuan">
+            <option value="Coly" ${biji ? '' : 'selected'}>Coly</option><option value="Biji" ${biji ? 'selected' : ''}>Biji</option></select></label>
+          <label class="f">Isi 1 Coly (Biji)<input id="fRasio" type="number" min="1" value="${esc(biji ? 1 : p.rasio_isi || 1)}" ${biji ? 'disabled' : ''}></label></div>
+        <div class="grid g2"><label class="f">Isi 1 dus dari principal (Biji)<input id="fIsiDus" type="number" min="1" value="${esc(p.isi_dus || 1)}"></label>
           <label class="f">Status<select id="fAktif"><option value="1" ${p.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${p.aktif ? '' : 'selected'}>Nonaktif</option></select></label></div>
-        <p class="muted small" style="margin:0">Isi per satuan masuk harus sama dengan isi satu Coly / Dus di Accurate, karena dipakai untuk mencocokkan surat jalan.</p></form>`,
+        <p class="muted small" style="margin:0"><b>Isi 1 Coly</b>: kemasan kiriman kantor ke toko, harus sama dengan isi 1 Coly di Accurate (untuk mencocokkan surat jalan).
+          <b>Isi 1 dus dari principal</b>: kemasan pembelian kantor dari principal (untuk membulatkan usulan PO).</p></form>`,
+      onBuka: (m) => $('#fSatuan', m).addEventListener('change', (e) => {
+        const r = $('#fRasio', m);
+        r.disabled = e.target.value === 'Biji';
+        if (r.disabled) r.value = 1;
+      }),
       aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
         const v = (id) => $(id, m).value.trim();
         const data = { nama: v('#fNama'), barcode: v('#fBarcode') || null, merk: v('#fMerk') || null, kategori: v('#fKat') || null,
           harga_jual_konsumen: v('#fHarga') === '' ? null : Number(v('#fHarga')), principal_id: v('#fPr') ? Number(v('#fPr')) : null,
-          satuan_masuk: v('#fSatuan') || 'Dus', rasio_isi: Number(v('#fRasio')) || 1, isi_dus: Number(v('#fIsiDus')) || 1, aktif: v('#fAktif') === '1' };
+          satuan_masuk: v('#fSatuan'), rasio_isi: v('#fSatuan') === 'Biji' ? 1 : Number(v('#fRasio')) || 1, isi_dus: Number(v('#fIsiDus')) || 1, aktif: v('#fAktif') === '1' };
         if (!data.nama || (baru && !v('#fSku'))) throw new Error('SKU dan nama wajib diisi.');
         if (baru) await q(sb.from('produk').insert({ sku: v('#fSku'), ...data }));
         else await q(sb.from('produk').update(data).eq('sku', p.sku));
@@ -694,7 +702,8 @@ function importExcel(selesai) {
   const m = modal({
     judul: 'Import barang dari Excel', lebar: true,
     isi: `<p style="margin-top:0">Format sama dengan template import barang Trizone, ditambah kolom kantor <b>Principal</b>, <b>Isi_Dus_Principal</b>, <b>Harga_Beli</b> (per Biji), dan <b>Aktif</b>.
-        File "data item" (Kode Item, Nama Item, Jenis, Harga Jual) juga bisa. <b>Sel kosong tidak mengubah data lama.</b> Barang yang tidak ada di file tidak dihapus.</p>
+        File "data item" (Kode Item, Nama Item, Jenis, Harga Jual) juga bisa. Satuan_Masuk diisi <b>Coly</b> atau <b>Biji</b> (Dus / Karton dibaca Coly, Pcs dibaca Biji).
+        <b>Sel kosong tidak mengubah data lama.</b> Barang yang tidak ada di file tidak dihapus.</p>
       <div class="row"><button class="btn sm" id="imTemplate">Unduh template</button><button class="btn sm" id="imMaster">Unduh master saat ini</button>
         <span class="muted small">Cara termudah: unduh master, ubah di Excel, lalu import kembali.</span></div>
       <div class="grid g2" style="margin-top:12px"><label class="f">File Excel<input type="file" id="imFile" accept=".xlsx,.xls"></label>

@@ -5,6 +5,7 @@
  * - Template import barang Trizone: Barcode, SKU, Nama_Barang, Merk, Kategori, Harga_Jual, Satuan_Masuk,
  *   Rasio_Isi_Dus (kolom stok awal & min alert diabaikan), ditambah kolom kantor: Principal,
  *   Isi_Dus_Principal, Harga_Beli, Aktif. File hasil "Unduh master" memakai format ini.
+ *   Satuan_Masuk: Coly atau Biji (Dus/Karton dibaca Coly, Pcs dibaca Biji; diterjemahkan di database).
  * - "Data item" program lama: Kode Item, Nama Item, Jenis, Harga Jual. Barang baru memakai Kode Item
  *   sebagai barcode bila tidak ada kolom Barcode (sama dengan Trizone).
  * Nama kolom tidak peka huruf besar/kecil, spasi, atau garis bawah. Baris judul di atas tabel dilewati.
@@ -141,9 +142,9 @@
 
   const CONTOH = [
     { Barcode: '8991234567890', SKU: 'MNM-001', Nama_Barang: 'Air Mineral 600ml', Merk: 'Segar', Kategori: 'Minuman', Harga_Jual: 3500,
-      Satuan_Masuk: 'Dus', Rasio_Isi_Dus: 24, Principal: 'PT Sumber Segar', Isi_Dus_Principal: 24, Harga_Beli: 2400, Aktif: 'Ya' },
+      Satuan_Masuk: 'Coly', Rasio_Isi_Dus: 24, Principal: 'PT Sumber Segar', Isi_Dus_Principal: 24, Harga_Beli: 2400, Aktif: 'Ya' },
     { Barcode: '8997654321098', SKU: 'SNK-010', Nama_Barang: 'Keripik Kentang 68g', Merk: 'Renyah', Kategori: 'Makanan Ringan', Harga_Jual: 11500,
-      Satuan_Masuk: 'Karton', Rasio_Isi_Dus: 40, Principal: 'PT Renyah Jaya', Isi_Dus_Principal: 40, Harga_Beli: 8900, Aktif: 'Ya' },
+      Satuan_Masuk: 'Coly', Rasio_Isi_Dus: 40, Principal: 'PT Renyah Jaya', Isi_Dus_Principal: 40, Harga_Beli: 8900, Aktif: 'Ya' },
   ];
 
   function workbook(rows) {

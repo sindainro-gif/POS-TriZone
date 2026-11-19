@@ -21,7 +21,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 | `web/` | Aplikasi web kantor (HTML/JS tanpa proses build). `config.js` diisi alamat project. |
 | `web/lib/accurate.js` | Pembaca laporan Accurate "Rincian Pengiriman Pesanan" (dipakai web & baris perintah) |
 | `web/lib/import-barang.js` | Pembaca Excel import master barang (template Trizone, data item, file "Unduh master") |
-| `supabase/migrations/` | Skema database: `…01_mother_base.sql` (data & protokol Trizone), `…02_aplikasi.sql` (laporan, PO, SO, pengguna, AI), `…03_import_barang.sql` (import master barang) |
+| `supabase/migrations/` | Skema database: `…01_mother_base.sql` (data & protokol Trizone), `…02_aplikasi.sql` (laporan, PO, SO, pengguna, AI), `…03_import_barang.sql` (import master barang), `…04_satuan_masuk.sql` (satuan masuk Coly / Biji) |
 | `supabase/seed.sql` | Data awal: 9 toko, pemetaan pelanggan Accurate |
 | `supabase/functions/asisten/` | Edge Function asisten AI (`index.ts` untuk Deno, inti di `asisten.mjs`) |
 | `apps-script/Code.gs` | Alert email harian pukul 09.00 (opsional) |
@@ -64,7 +64,8 @@ data tokonya, juga saat bertanya ke asisten AI.
 
 1. Buat project di supabase.com.
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
-   `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`, lalu `seed.sql`
+   `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`,
+   `migrations/20261119000004_satuan_masuk.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`

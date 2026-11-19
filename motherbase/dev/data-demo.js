@@ -32,9 +32,9 @@ const BARANG = [
   ['PLJ-002', '8990000000024', 'Gayung Bunga', 'Plastik', 7500, 'Coly', 24, 1, 14],
   ['PLJ-003', '8990000000031', 'Keranjang Cucian', 'Plastik', 42000, 'Coly', 6, 1, 4],
   ['PLJ-004', '8990000000048', 'Toples 2 Liter', 'Plastik', 15000, 'Coly', 12, 1, 9],
-  ['PLJ-005', '8990000000055', 'Rak Sepatu 4 Susun', 'Plastik', 89000, 'Pcs', 1, 1, 2],
+  ['PLJ-005', '8990000000055', 'Rak Sepatu 4 Susun', 'Plastik', 89000, 'Biji', 1, 1, 2],
   ['RTN-001', '8990000000062', 'Kursi Rotan Olive', 'Rotan', 185000, 'Coly', 2, 2, 1],
-  ['RTN-002', '8990000000079', 'Keset Zig Zag', 'Rotan', 25000, 'Pcs', 1, 2, 10],
+  ['RTN-002', '8990000000079', 'Keset Zig Zag', 'Rotan', 25000, 'Biji', 1, 2, 10],
   ['RTN-003', '8990000000086', 'Keranjang Rotan Retro', 'Rotan', 55000, 'Coly', 4, 2, 3],
   ['RTN-004', '8990000000093', 'Pail Ukir 40', 'Rotan', 48000, 'Coly', 3, 2, 2],
   ['RTN-005', '8990000000109', 'Tempat Sampah Rotan', 'Rotan', 65000, 'Coly', 4, 2, 0],
@@ -76,7 +76,7 @@ async function buatDatabase(dbUrl) {
   const c = new Client({ connectionString: dbUrl });
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
-    'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;

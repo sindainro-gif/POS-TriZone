@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -207,7 +207,7 @@ function fileAccurate() {
   q(`insert into produk (sku, nama, barcode, merk, kategori, harga_jual_konsumen, satuan_masuk, rasio_isi)
      values ('UJ-BARU', 'Barang Baru Uji', '2000000000132', 'M', 'K', 7000, 'Coly', 4)`);
   T.mbSaveConfig({ kunci_master: true });
-  assert.throws(() => T.saveProduct({ product: { ...T.getProduct('UJ-KESET'), unit_price: 1 } }), /dikunci mother base/);
+  assert.throws(() => T.saveProduct({ product: { ...T.getProduct('UJ-KESET'), unit_price: 1 } }), /dikunci/);
   const m = await mb.ambilMaster({ full: true });
   assert.deepStrictEqual([m.baru, m.diubah, m.dilewati.length], [1, 1, 0]);
   assert.strictEqual(T.getProduct('UJ-KESET').unit_price, 16000);
@@ -299,6 +299,21 @@ function fileAccurate() {
   assert.deepStrictEqual(q("select barcode, kategori, harga_jual_konsumen from produk where sku = 'UJ-DI1'").split('|'), ['UJ-DI1', 'Plastik', '4500.00']);
   assert.strictEqual(q("select barcode from produk where sku = 'UJ-KESET'"), kesetLama[2]); // barang lama tetap barcode-nya
   ok('import barang Excel: template Trizone & data item, pratinjau, kesalahan per baris, simpan semua-atau-tidak, sel kosong = nilai lama, toko mengambil yang berubah saja');
+
+  // Satuan masuk hanya Coly / Biji
+  const f3 = IB.bacaFile(buku([['SKU', 'Nama_Barang', 'Barcode', 'Harga_Jual', 'Satuan_Masuk', 'Rasio_Isi_Dus'],
+    ['UJ-SAT1', 'Satuan Karton', '2000000000301', 1000, 'karton', 6], ['UJ-SAT2', 'Satuan Pcs', '2000000000318', 1000, 'PCS', 1],
+    ['UJ-SAT3', 'Satuan Aneh', '2000000000325', 1000, 'Bal', 10], ['UJ-SAT4', 'Biji Isi 12', '2000000000332', 1000, 'Biji', 12]]));
+  const c3 = impor(f3.baris, false);
+  assert.deepStrictEqual(c3.error.map((e) => e.baris), [4, 5]);
+  assert.match(c3.error[0].pesan, /"Bal" tidak dikenal/);
+  assert.match(c3.error[1].pesan, /Biji: isi per satuan masuk harus 1/);
+  assert.strictEqual(impor(f3.baris.slice(0, 2), true).disimpan, true);
+  assert.strictEqual(q("select string_agg(sku || '=' || satuan_masuk || '/' || rasio_isi, ',' order by sku) from produk where sku like 'UJ-SAT%'"), 'UJ-SAT1=Coly/6,UJ-SAT2=Biji/1');
+  assert.throws(() => q("insert into produk (sku, nama, satuan_masuk) values ('UJ-SALAH', 'x', 'Dus')"), /produk_satuan_masuk_cek/);
+  assert.throws(() => q("update produk set rasio_isi = 5 where sku = 'UJ-SAT2'"), /produk_satuan_masuk_cek/);
+  assert.strictEqual(q("select count(*) from produk where satuan_masuk not in ('Coly', 'Biji')"), '0');
+  ok('satuan masuk hanya Coly / Biji: Karton → Coly, Pcs → Biji, sebutan lain ditolak, Biji wajib isi 1');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });

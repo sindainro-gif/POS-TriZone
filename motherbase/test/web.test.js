@@ -203,6 +203,23 @@ function fileAccurate() {
     ok('pembelian: owner mengubah qty & menyetujui PO, ditandai dikirim (no. Accurate), barang diterima → stok gudang & status Selesai');
 
     await buka('barang');
+    await page.click('#brIsiTabel tr.klik:has-text("RTN-001")');
+    assert.deepStrictEqual(await page.$$eval('#fSatuan option', (o) => o.map((x) => x.value)), ['Coly', 'Biji']);
+    assert.strictEqual(await page.inputValue('#fSatuan'), 'Coly');
+    await page.selectOption('#fSatuan', 'Biji');
+    assert.deepStrictEqual([await page.inputValue('#fRasio'), await page.$eval('#fRasio', (e) => e.disabled)], ['1', true]);
+    await page.click('.modal-kaki .btn.primary');
+    await toastCocok(/disimpan/);
+    assert.deepStrictEqual(Object.values((await db("select satuan_masuk, rasio_isi from produk where sku = 'RTN-001'"))[0]), ['Biji', 1]);
+    await tunggu(400);
+    await page.click('#brIsiTabel tr.klik:has-text("RTN-001")');
+    await page.selectOption('#fSatuan', 'Coly');
+    assert.strictEqual(await page.$eval('#fRasio', (e) => e.disabled), false);
+    await page.fill('#fRasio', '2');
+    await page.click('.modal-kaki .btn.primary');
+    await toastCocok(/disimpan/);
+    assert.deepStrictEqual(Object.values((await db("select satuan_masuk, rasio_isi from produk where sku = 'RTN-001'"))[0]), ['Coly', 2]);
+    await tunggu(400);
     await page.click('#brIsiTabel tr.klik:has-text("RTN-002")');
     await page.fill('#fHarga', '27500');
     await page.click('.modal-kaki .btn.primary');
@@ -214,7 +231,7 @@ function fileAccurate() {
     await tunggu(600);
     assert.strictEqual(Number((await db("select nilai from pengaturan where kunci = 'markup_jual_ke_toko'"))[0].nilai), 0.07);
     await shot('06-master-barang');
-    ok('master barang: ubah harga jual, markup 7% (owner)');
+    ok('master barang: satuan masuk pilihan Coly / Biji (Biji → isi 1 dikunci), ubah harga jual, markup 7% (owner)');
 
     // Import Excel: unduh master → ubah di "Excel" → import → pratinjau → simpan
     await page.click('#brImport');
@@ -245,7 +262,7 @@ function fileAccurate() {
     assert.match(ringkas, /1 diubah/);
     assert.match(ringkas, /PT Principal Web Baru/);
     assert.match(ringkas, /harga jual: 27\.500 → 28\.000/);
-    assert.match(ringkas, /harga jual 15\.000 · 1 Dus = 6 Biji · PT Principal Web Baru · harga beli 9\.000/);
+    assert.match(ringkas, /harga jual 15\.000 · 1 Coly = 6 Biji · PT Principal Web Baru · harga beli 9\.000/);
     await shot('06b-import-barang-pratinjau');
     await page.click('.modal-kaki .btn.primary');
     await toastCocok(/Import selesai: 1 barang baru, 1 diubah/);
