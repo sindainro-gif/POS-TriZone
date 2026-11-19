@@ -145,7 +145,10 @@ function fileAccurate() {
     assert.strictEqual(struk, 3);
     ok('penjualan: per produk, naik/turun, ABC, per kasir, per hari, pembatalan (rincian & penyetuju); filter toko');
 
-    await buka('stok');
+    const menuKantor = await page.$$eval('.nav a[data-h]', (a) => a.map((x) => x.dataset.h));
+    assert.ok(menuKantor.includes('stok') && menuKantor.includes('opname'), 'menu Stok dan Stock Opname terpisah');
+    assert.strictEqual(menuKantor.indexOf('opname'), menuKantor.indexOf('stok') + 1);
+    await buka('opname');
     await page.waitForSelector('[data-so] [data-aksi="DISETUJUI"]');
     await shot('03-review-so');
     await page.click('[data-so] [data-aksi="DISETUJUI"]');
@@ -157,13 +160,18 @@ function fileAccurate() {
     await page.click('#stTab [data-t="selisih"]');
     await tunggu(500);
     await shot('03b-selisih-trizone');
+    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['so', 'selisih']);
+    ok('stock opname: SO disetujui dengan catatan (tercatat penyetujunya), selisih vs Trizone');
+
+    await buka('stok');
+    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat']);
     await page.click('#stTab [data-t="cari"]');
     await page.fill('#stCari', 'keset');
     await tunggu(700);
     assert.ok((await page.$$('#stHasil tbody tr')).length >= 3);
     await page.click('#stTab [data-t="lambat"]');
     await tunggu(500);
-    ok('stok: SO disetujui dengan catatan (tercatat penyetujunya), selisih, cari stok, stok lambat');
+    ok('stok: cari stok, stok lambat (menu terpisah dari Stock Opname)');
 
     await buka('kiriman');
     await page.setInputFiles('#kjFile', fileAccurate());

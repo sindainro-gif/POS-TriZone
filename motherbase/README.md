@@ -35,7 +35,8 @@ mengelola master barang & harga, dan menyetujui pembelian.
 |---|---|---|
 | Ringkasan | semua | Omzet, transaksi, grafik harian, per toko, daftar yang perlu ditindaklanjuti |
 | Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari, pembatalan nota; unduh CSV |
-| Stok & Opname | semua | Review & persetujuan SO (kantor), selisih stok Trizone vs hitungan mother base, cari stok, stok lambat |
+| Stok | semua | Cari stok per toko & zona, stok lambat |
+| Stock Opname | kantor | Review & persetujuan SO, selisih stok Trizone vs hitungan mother base |
 | Surat Jalan | kantor | Upload Excel Accurate di browser, unduh file import penerimaan Trizone per toko, simpan, status pencocokan |
 | Pembelian | kantor | Usulan beli semua barang dalam satu daftar (lead time, periode order, stok pengaman diatur owner; dibulatkan ke isi 1 Coly) → usulan PO dengan alasan per baris → owner ubah qty & setujui → tandai dikirim → terima barang (stok gudang & harga beli diperbarui) |
 | Master Barang | kantor | Barcode, harga jual, satuan masuk (Coly / Biji) & isi 1 Coly; harga beli / pricelist; markup (owner); import Excel dengan pratinjau |

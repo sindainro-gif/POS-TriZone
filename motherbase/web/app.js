@@ -214,7 +214,8 @@ const fmtBatal = (v, r) => (Number(r.jumlah_pembatalan) ? `<span class="pill war
 const HALAMAN = [
   { id: 'ringkasan', judul: 'Ringkasan', ikon: '◧', untuk: 'semua' },
   { id: 'penjualan', judul: 'Penjualan', ikon: '▤', untuk: 'semua' },
-  { id: 'stok', judul: 'Stok & Opname', ikon: '▦', untuk: 'semua' },
+  { id: 'stok', judul: 'Stok', ikon: '▦', untuk: 'semua' },
+  { id: 'opname', judul: 'Stock Opname', ikon: '▣', untuk: 'kantor' },
   { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
   { id: 'pembelian', judul: 'Pembelian', ikon: '⊕', untuk: 'kantor' },
   { id: 'barang', judul: 'Master Barang', ikon: '☰', untuk: 'kantor' },
@@ -281,7 +282,7 @@ async function hRingkasan(el) {
       ]);
       if (belum.length) li.push(['bad', `${belum.length} toko belum menutup shift ${fmtTgl(kemarin)}`, belum.map((b) => b.kode).join(', '), 'toko']);
       if (sj.length) li.push(['warn', `${sj.length} surat jalan perlu dicek`, '', 'kiriman']);
-      if (so.length) li.push(['warn', `${so.length} stok opname menunggu review`, '', 'stok']);
+      if (so.length) li.push(['warn', `${so.length} stok opname menunggu review`, '', 'opname']);
       if (po.length) li.push([isOwner() ? 'warn' : 'info', `${po.length} usulan PO ${isOwner() ? 'menunggu persetujuan Anda' : 'menunggu persetujuan owner'}`, '', 'pembelian']);
     }
     const lambat = S.toko.filter((t) => !t.kiriman_terakhir_at || Date.now() - new Date(t.kiriman_terakhir_at) > 26 * 3600e3);
@@ -431,11 +432,18 @@ async function detailBatal(b) {
   });
 }
 
-// ---------------------------------------------------------------- Stok & opname
-async function hStok(el) {
-  const daftar = isKantor() ? [['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone'], ['cari', 'Cari stok'], ['lambat', 'Stok lambat']] : [['cari', 'Cari stok'], ['lambat', 'Stok lambat']];
+// ---------------------------------------------------------------- Stok & stock opname
+// Dua menu memakai satu halaman bertab: Stok (cari stok, stok lambat) dan Stock Opname (review SO, selisih).
+const hStok = (el) => halamanStok(el, 'stok');
+const hOpname = (el) => halamanStok(el, 'opname');
+
+async function halamanStok(el, jenis) {
+  const opname = jenis === 'opname';
+  const daftar = opname ? [['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone']] : [['cari', 'Cari stok'], ['lambat', 'Stok lambat']];
   let tab = daftar[0][0];
-  el.innerHTML = `${head('Stok & Opname', 'Stok terkini tiap toko (dari Trizone), review stok opname, dan selisih stok.')}
+  el.innerHTML = `${opname
+    ? head('Stock Opname', 'Review & persetujuan stok opname dari toko, dan selisih stok Trizone terhadap hitungan mother base.')
+    : head('Stok', 'Stok terkini tiap toko (dari Trizone) dan barang yang lama tidak terjual.')}
     ${tabs('stTab', daftar, tab)}<div id="stIsi"></div>`;
   pasangTabs(el, 'stTab', (t) => { tab = t; tampil(); });
   const isi = $('#stIsi', el);
@@ -1137,7 +1145,7 @@ async function hAsisten(el) {
 }
 
 // ================================================================ Kerangka aplikasi
-const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, stok: hStok, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, stok: hStok, opname: hOpname, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
 
 function tampilLogin(pesan = '') {
   $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
