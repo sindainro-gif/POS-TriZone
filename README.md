@@ -34,6 +34,7 @@ Komputer toko memakai **installer .exe** (tidak perlu Node.js, Git, atau akses G
 1. Kerjakan & uji di branch `motherbase` (`npm test`, `npm run smoke`, `smoke:lan`, `smoke:demo`), naikkan `version` di `package.json`.
 2. Gabungkan ke `main` (`main` = versi yang terpasang di toko) dan beri tag `v<versi>`, lalu push.
 3. Klik `Buat Installer.bat`, kirim `dist\POS Tri-Zone Setup <versi>.exe` ke toko.
+- Bila `npm run dist` gagal dengan *"Cannot create symbolic link : A required privilege is not held"* (alat `winCodeSign`): ekstrak arsip `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\<angka>.7z` ke folder `winCodeSign-2.6.0` di tempat yang sama (`node_modules\7zip-bin\win\x64\7za.exe x <arsip> -o<folder>`; 2 error symlink macOS boleh diabaikan), lalu jalankan lagi. Cara lain: aktifkan Developer Mode Windows.
 
 ## Versi DEMO (latihan)
 
