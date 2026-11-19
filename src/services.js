@@ -548,12 +548,51 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return `BTL-${d}-${String(seq).padStart(4, '0')}`;
   }
 
-  // PIN dicocokkan ke semua akun Admin aktif; PIN Kasir / Gudang tidak berlaku
+  // Penyetuju batal nota: PIN Pembatalan (kepala toko) atau PIN salah satu Admin aktif. PIN Kasir / Gudang tidak berlaku.
   function approverAdmin(pin) {
     const p = String(pin || '');
+    const vp = p && currentVoidPin();
+    if (vp && sameText(p, vp)) return `${getSetting('void_pin_holder') || VOID_PIN_HOLDER} (PIN Pembatalan)`;
     const u = p && authCache().find((x) => x.active && x.role === 'admin' && checkPin(p, x.pin_salt, x.pin_hash));
-    if (!u) fail('PIN Admin salah.');
+    if (!u) fail('PIN Admin / PIN Pembatalan salah.');
     return u.name;
+  }
+
+  // ---------------------------------------------------------------- PIN Pembatalan (kepala toko)
+  // Diatur Admin di Pengaturan agar kepala toko bisa menyetujui batal nota tanpa mengetahui PIN Admin.
+  // Disimpan terenkripsi akun Windows (Admin bisa menampilkannya lagi). Tidak termasuk SETTING_KEYS,
+  // jadi tidak ikut getSettings, cache PC kasir, atau kiriman ke kantor.
+  const VOID_PIN_HOLDER = 'Kepala Toko';
+  const currentVoidPin = () => decrypt(getSetting('void_pin'));
+  const sameText = (a, b) => {
+    const x = Buffer.from(String(a));
+    const y = Buffer.from(String(b));
+    return x.length === y.length && crypto.timingSafeEqual(x, y);
+  };
+
+  function voidPinInfo({ reveal = false } = {}) {
+    const pin = currentVoidPin();
+    const out = { set: !!pin, holder: getSetting('void_pin_holder') || VOID_PIN_HOLDER, updated_at: pin ? getSetting('void_pin_updated_at') : '' };
+    if (reveal && pin) out.pin = pin;
+    return out;
+  }
+
+  function setVoidPin({ pin, holder } = {}) {
+    const p = String(pin ?? '').trim();
+    if (!/^\d{6}$/.test(p)) fail('PIN Pembatalan harus 6 digit angka.');
+    if (authCache().some((u) => checkPin(p, u.pin_salt, u.pin_hash))) fail('PIN Pembatalan tidak boleh sama dengan PIN login akun mana pun.');
+    const h = toStr(holder, 'Nama pemegang', { max: 40 }) || VOID_PIN_HOLDER;
+    db.tx(() => {
+      setSetting('void_pin', encrypt(p));
+      setSetting('void_pin_holder', h);
+      setSetting('void_pin_updated_at', localNow());
+    });
+    return voidPinInfo();
+  }
+
+  function clearVoidPin() {
+    db.tx(() => db.run("DELETE FROM settings WHERE key IN ('void_pin', 'void_pin_holder', 'void_pin_updated_at')"));
+    return voidPinInfo();
   }
 
   function voidSlip(void_no) {
@@ -1284,6 +1323,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     if (!ROLES.includes(role)) fail('Peran harus Admin, Gudang, atau Kasir.');
     const p = String(pin ?? '').trim();
     if ((!id || p) && !/^\d{6}$/.test(p)) fail('PIN harus 6 digit angka.');
+    const vp = p && currentVoidPin();
+    if (vp && sameText(p, vp)) fail('PIN ini sudah dipakai sebagai PIN Pembatalan. Pilih PIN lain.');
     const on = active === true || active === 1 || active === '1' ? 1 : 0;
     const clash = db.get('SELECT id FROM users WHERE name = ? COLLATE NOCASE AND id <> ?', [n, Number(id) || 0]);
     if (clash) fail(`Nama "${n}" sudah dipakai akun lain.`);
@@ -1669,7 +1710,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     meta, getSettings, saveSettings,
     getProduct, listProducts, categories, findByCode, searchProducts, saveProduct, deleteProduct, importRows,
     stockSnapshot, lowStock,
-    getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, voidReceipt, shiftSalesRows,
+    getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, voidReceipt, voidPinInfo, setVoidPin, clearVoidPin, shiftSalesRows,
     archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,

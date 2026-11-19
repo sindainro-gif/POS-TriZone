@@ -448,6 +448,25 @@
           <b>Kasir</b>: Kasir / Pembayaran, Laporan Shift, dan Daftar Barang (hanya lihat). Akun disimpan di database PC Server dan berlaku di semua komputer.</p>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Dibuat</th><th class="w-act2"></th></tr></thead><tbody id="usBody"></tbody></table></div>
       </div>
+      <div class="card" id="vpCard">
+        <div class="card-head">
+          <h2>PIN Pembatalan Nota</h2>
+          <span id="vpBadge" class="badge wh">-</span>
+        </div>
+        <p class="muted small" style="margin-top:-6px">PIN ini bisa diberikan ke <b>kepala toko</b> untuk menyetujui <b>Batal Nota</b> tanpa mengetahui PIN Admin. PIN Admin tetap berlaku.
+          PIN Pembatalan tidak boleh sama dengan PIN login akun mana pun.</p>
+        <div class="kv"><span>Status</span><b id="vpStatus">-</b></div>
+        <div class="kv"><span>PIN yang berlaku</span><span class="btn-row"><code id="vpShown" class="big-code">••••••</code><button class="btn sm ghost" id="vpReveal">Tampilkan PIN</button></span></div>
+        <div class="row-3" style="margin-top:10px">
+          <div class="field"><label>Nama pemegang</label><input id="vpHolder" maxlength="40" placeholder="Kepala Toko"></div>
+          <div class="field"><label>PIN baru (6 digit)</label><input id="vpPin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
+          <div class="field"><label>Ulangi PIN baru</label><input id="vpPin2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="vpSave">Simpan PIN</button>
+          <button class="btn danger" id="vpClear">Hapus PIN</button>
+        </div>
+      </div>
       <div class="card" id="mbCard">
         <div class="card-head">
           <h2>Mother Base (Pusat Data Kantor)</h2>

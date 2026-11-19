@@ -622,6 +622,16 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('[data-view=settings]').click()`);
       await wait(800);
       await shot('10-pengaturan-pengguna');
+      // PIN Pembatalan untuk kepala toko: diisi Admin di Pengaturan, bisa ditampilkan lagi
+      await run(`(() => { document.querySelector('#vpCard').scrollIntoView(); document.querySelector('#vpHolder').value = 'Kepala Toko'; document.querySelector('#vpPin').value = '765432'; document.querySelector('#vpPin2').value = '765432'; document.querySelector('#vpSave').click(); })()`);
+      await wait(800);
+      await run(`document.querySelector('#vpReveal').click()`);
+      await wait(600);
+      const vp = await run(`({ shown: document.querySelector('#vpShown').textContent, status: document.querySelector('#vpStatus').textContent, badge: document.querySelector('#vpBadge').textContent })`);
+      console.log('PIN Pembatalan:', JSON.stringify(vp));
+      if (vp.shown !== '765432' || !/Kepala Toko/.test(vp.status) || vp.badge !== 'Aktif') throw new Error('PIN Pembatalan tidak tersimpan / tidak bisa ditampilkan');
+      await shot('10c-pin-pembatalan');
+      await run(`document.querySelector('#vpReveal').click()`);
       // Kartu Mother Base: belum diatur → isi lewat layar → tersimpan (kunci tidak tampil); kirim gagal tanpa server
       const mb0 = await run(`({ badge: document.querySelector('#mbBadge').textContent, pending: document.querySelector('#mbPending').innerText })`);
       console.log('kartu mother base:', JSON.stringify(mb0));
@@ -659,6 +669,8 @@ app.on('browser-window-created', (_e, win) => {
         const repL = await run(`window.posBridge.call('reports:list')`);
         const repO = await run(`window.posBridge.call('reports:open', { folder: 'Shift_x', file: 'a.enc' })`);
         if (repL.ok || repO.ok || !/Akses ditolak/.test(repL.error) || !/Akses ditolak/.test(repO.error)) throw new Error(`laporan bisa dibuka oleh ${name}`);
+        const vpSeen = await run(`window.posBridge.call('settings:voidPin', { reveal: true })`);
+        if (vpSeen.ok || !/Akses ditolak/.test(vpSeen.error)) throw new Error(`PIN Pembatalan bisa dilihat oleh ${name}`);
         // Perbarui Daftar Barang boleh untuk semua peran (mother base sengaja tidak terjangkau → pesan netral, bukan Akses ditolak)
         const pull = await run(`window.posBridge.call('products:pullMaster')`);
         if (pull.ok || /Akses ditolak|mother base/i.test(pull.error) || !/belum bisa diperbarui/.test(pull.error)) throw new Error(`Ambil Master Barang untuk ${name} salah: ${JSON.stringify(pull)}`);
@@ -684,15 +696,16 @@ app.on('browser-window-created', (_e, win) => {
           await run(`(() => { document.querySelector('#vdReason').value = 'Salah input barang'; document.querySelector('#vdPin').value = '222222'; document.querySelector('#modalRoot .modal-foot .btn.danger').click(); })()`);
           await wait(1600);
           const wrongPin = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
-          if (!/PIN Admin salah/.test(wrongPin) || svc.shiftSummary().voids.count !== 0) throw new Error(`PIN kasir seharusnya tidak bisa menyetujui pembatalan: ${wrongPin}`);
+          if (!/PIN Admin \/ PIN Pembatalan salah/.test(wrongPin) || svc.shiftSummary().voids.count !== 0) throw new Error(`PIN kasir seharusnya tidak bisa menyetujui pembatalan: ${wrongPin}`);
           await shot('11a-batal-nota-pin-admin');
-          await run(`(() => { document.querySelector('#vdPin').value = '111111'; document.querySelector('#modalRoot .modal-foot .btn.danger').click(); })()`);
+          // Disetujui kepala toko dengan PIN Pembatalan (tanpa mengetahui PIN Admin)
+          await run(`(() => { document.querySelector('#vdPin').value = '765432'; document.querySelector('#modalRoot .modal-foot .btn.danger').click(); })()`);
           await wait(1500);
           const vsum = svc.shiftSummary();
           const listText = await run(`document.querySelector('#shReceipts').innerText`);
           console.log('batal nota:', JSON.stringify(vsum.voids.list.map((v) => [v.void_no, v.receipt_no, v.requested_by, v.approved_by, v.total])));
           if (vsum.voids.count !== 1 || vsum.voids.list[0].receipt_no !== sale.receipt_no || vsum.voids.list[0].requested_by !== 'Rina'
-            || vsum.voids.list[0].approved_by !== 'Pemilik' || svc.getProduct('MNM-001').floor_stock !== floorBefore + 2
+            || vsum.voids.list[0].approved_by !== 'Kepala Toko (PIN Pembatalan)' || svc.getProduct('MNM-001').floor_stock !== floorBefore + 2
             || svc.receiptDetail({ receipt_no: sale.receipt_no }).length !== 1 || !/Dibatalkan/.test(listText) || !/Pembatalan/.test(listText)) {
             throw new Error('batal nota tidak tercatat dengan benar');
           }

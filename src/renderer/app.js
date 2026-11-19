@@ -2038,14 +2038,14 @@ views.shift = (() => {
       title: `Batalkan Nota ${receipt_no}`,
       wide: true,
       body: `<div class="alert warn" style="margin-bottom:10px">Nota asli tidak dihapus. Pembatalan dicatat sebagai nota baru: omset &amp; uang tunai berkurang
-          <b>${rp(total)}</b> dan barang kembali ke stok yang dipilih. Perlu persetujuan <b>PIN Admin</b>.</div>
+          <b>${rp(total)}</b> dan barang kembali ke stok yang dipilih. Perlu persetujuan <b>PIN Admin</b> atau <b>PIN Pembatalan</b> (kepala toko).</div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Barang</th><th class="r">Biji</th><th class="r">Subtotal</th><th>Kembali ke</th></tr></thead><tbody>
         ${lines.map((l) => `<tr><td>${esc(l.product_name)}</td><td class="r">${num(l.qty_sold)}</td><td class="r">${rp(l.line_total)}</td>
           <td><select data-void-sku="${esc(l.sku)}"><option value="floor">Display Toko (masih bagus)</option><option value="damaged">Gudang BS (rusak)</option></select></td></tr>`).join('')}
         </tbody></table></div>
         <div class="row-2" style="margin-top:12px">
           <div class="field"><label>Alasan pembatalan *</label><input id="vdReason" maxlength="200" placeholder="Contoh: salah input / pelanggan batal beli"></div>
-          <div class="field"><label>PIN Admin *</label><input id="vdPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>
+          <div class="field"><label>PIN Admin / PIN Pembatalan *</label><input id="vdPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>
         </div>`,
       actions: [
         { label: 'Batal', kind: 'ghost' },
@@ -2336,6 +2336,55 @@ const mbCard = (() => {
 })();
 
 // ================================================================ Pengguna & hak akses (Admin)
+// ================================================================ PIN Pembatalan (Admin)
+// PIN untuk kepala toko menyetujui batal nota tanpa mengetahui PIN Admin. Admin bisa melihat & menggantinya.
+const voidPinCard = (() => {
+  let info = null;
+  let shown = false;
+
+  function render() {
+    const set = !!(info && info.set);
+    $('#vpBadge').className = `badge ${set ? 'floor ok' : 'wh'}`;
+    $('#vpBadge').textContent = set ? 'Aktif' : 'Belum diatur';
+    $('#vpStatus').textContent = set ? `Sudah diatur · pemegang: ${info.holder} · diubah ${fmtTime(info.updated_at)}` : 'Belum diatur (hanya PIN Admin yang bisa menyetujui batal nota)';
+    $('#vpShown').textContent = set ? (shown && info.pin ? info.pin : '••••••') : '-';
+    $('#vpReveal').textContent = shown ? 'Sembunyikan' : 'Tampilkan PIN';
+    $('#vpReveal').disabled = !set;
+    $('#vpClear').disabled = !set;
+    if (set && !$('#vpHolder').value) $('#vpHolder').value = info.holder;
+  }
+
+  async function load() {
+    if (role() !== 'admin') return;
+    shown = false;
+    try { info = await api('settings:voidPin', {}); } catch (e) { info = null; $('#vpStatus').textContent = e.message; return; }
+    render();
+  }
+
+  $('#vpReveal').addEventListener('click', async () => {
+    if (shown) { shown = false; render(); return; }
+    try { info = await api('settings:voidPin', { reveal: true }); shown = true; render(); } catch (e) { toast(e.message, 'err', 6000); }
+  });
+  $('#vpSave').addEventListener('click', async () => {
+    const pin = $('#vpPin').value.trim();
+    if (pin !== $('#vpPin2').value.trim()) { toast('Ulangi PIN tidak sama.', 'err'); $('#vpPin2').focus(); return; }
+    try {
+      info = await api('settings:setVoidPin', { pin, holder: $('#vpHolder').value });
+      $('#vpPin').value = '';
+      $('#vpPin2').value = '';
+      shown = false;
+      render();
+      toast(`PIN Pembatalan disimpan untuk ${info.holder}.`, 'ok', 6000);
+    } catch (e) { toast(e.message, 'err', 7000); }
+  });
+  $('#vpClear').addEventListener('click', async () => {
+    if (!(await confirmDialog('Hapus PIN Pembatalan', 'PIN Pembatalan tidak berlaku lagi; batal nota hanya bisa disetujui dengan PIN Admin. Lanjutkan?', { okLabel: 'Hapus PIN', danger: true }))) return;
+    try { info = await api('settings:clearVoidPin'); $('#vpHolder').value = ''; shown = false; render(); toast('PIN Pembatalan dihapus.', 'ok'); } catch (e) { toast(e.message, 'err', 6000); }
+  });
+
+  return { load };
+})();
+
 const usersCard = (() => {
   let list = [];
 
@@ -2570,6 +2619,7 @@ views.settings = (() => {
   async function show() {
     modeCard.load();
     usersCard.load();
+    voidPinCard.load();
     mbCard.load();
     const s = await api('settings:get');
     state.settings = s;

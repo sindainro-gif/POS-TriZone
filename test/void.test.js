@@ -29,9 +29,9 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
   const req = (extra = {}) => ({ receipt_no: sale.receipt_no, reason: 'Pelanggan batal beli', items, requested_by: 'Rina', approver_pin: '111111', ...extra });
 
   await t('ditolak: PIN bukan PIN Admin, alasan kosong, tujuan stok belum dipilih', () => {
-    throwsMsg(() => svc.voidReceipt(req({ approver_pin: '222222' })), /PIN Admin salah/); // PIN kasir
-    throwsMsg(() => svc.voidReceipt(req({ approver_pin: '333333' })), /PIN Admin salah/); // PIN gudang
-    throwsMsg(() => svc.voidReceipt(req({ approver_pin: '' })), /PIN Admin salah/);
+    throwsMsg(() => svc.voidReceipt(req({ approver_pin: '222222' })), /PIN Admin \/ PIN Pembatalan salah/); // PIN kasir
+    throwsMsg(() => svc.voidReceipt(req({ approver_pin: '333333' })), /PIN Admin \/ PIN Pembatalan salah/); // PIN gudang
+    throwsMsg(() => svc.voidReceipt(req({ approver_pin: '' })), /PIN Admin \/ PIN Pembatalan salah/);
     throwsMsg(() => svc.voidReceipt(req({ reason: ' ' })), /Alasan pembatalan wajib/);
     throwsMsg(() => svc.voidReceipt(req({ reason: 'ab' })), /minimal 3/);
     throwsMsg(() => svc.voidReceipt(req({ items: [{ sku: 'A-1', destination: 'floor' }] })), /Pilih stok tujuan untuk "Barang B"/);
@@ -95,6 +95,32 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(db.get("SELECT COUNT(*) AS n FROM shift_history_sales WHERE receipt_no LIKE 'BTL-%'").n, 2);
     svc.openShift({ cashier_name: 'Rina' });
     throwsMsg(() => svc.voidReceipt(req({ receipt_no: other.receipt_no })), /shift berjalan/);
+  });
+
+  await t('PIN Pembatalan: diatur Admin, tidak sama dengan PIN login, tersimpan terenkripsi, bisa dilihat, menyetujui batal nota', () => {
+    // Tiruan enkripsi akun Windows: nilai tersimpan dibungkus, bukan PIN polos
+    const sv = createServices(db, { encrypt: (s) => 'enc:' + Buffer.from(s).toString('base64'), decrypt: (s) => (s.startsWith('enc:') ? Buffer.from(s.slice(4), 'base64').toString() : '') });
+    assert.deepStrictEqual(sv.voidPinInfo(), { set: false, holder: 'Kepala Toko', updated_at: '' });
+    throwsMsg(() => sv.setVoidPin({ pin: '12345' }), /6 digit/);
+    throwsMsg(() => sv.setVoidPin({ pin: 'abcdef' }), /6 digit/);
+    throwsMsg(() => sv.setVoidPin({ pin: '222222' }), /sama dengan PIN login/); // PIN kasir
+    throwsMsg(() => sv.setVoidPin({ pin: '111111' }), /sama dengan PIN login/); // PIN admin
+    const info = sv.setVoidPin({ pin: '765432', holder: 'Kepala Toko - Sari' });
+    assert.deepStrictEqual([info.set, info.holder, info.pin], [true, 'Kepala Toko - Sari', undefined]);
+    assert.ok(info.updated_at);
+    assert.strictEqual(sv.voidPinInfo({ reveal: true }).pin, '765432');
+    assert.strictEqual(db.get("SELECT COUNT(*) AS n FROM settings WHERE value LIKE '%765432%'").n, 0);
+    assert.ok(!JSON.stringify(sv.getSettings()).includes('765432'));
+    // PIN login baru tidak boleh sama dengan PIN Pembatalan
+    throwsMsg(() => sv.saveUser({ name: 'Dodi', role: 'kasir', pin: '765432', active: true }), /PIN Pembatalan/);
+    const sell = () => sv.checkout({ items: [{ sku: 'A-1', qty: 1 }], payment_method: 'Tunai', cash_received: 1000 }).receipt_no;
+    const voidWith = (no, pin) => sv.voidReceipt({ receipt_no: no, reason: 'Salah scan', items: [{ sku: 'A-1', destination: 'floor' }], requested_by: 'Rina', approver_pin: pin });
+    assert.strictEqual(voidWith(sell(), '765432').approved_by, 'Kepala Toko - Sari (PIN Pembatalan)');
+    assert.strictEqual(voidWith(sell(), '111111').approved_by, 'Bos'); // PIN Admin tetap berlaku
+    throwsMsg(() => voidWith(sell(), '222222'), /PIN Admin \/ PIN Pembatalan salah/);
+    // Dihapus → PIN lama tidak berlaku lagi
+    assert.strictEqual(sv.clearVoidPin().set, false);
+    throwsMsg(() => voidWith(sell(), '765432'), /PIN Admin \/ PIN Pembatalan salah/);
   });
 
   console.log(`\n${passed} tes batal nota lulus${process.exitCode ? ', ada yang GAGAL' : ''}.`);

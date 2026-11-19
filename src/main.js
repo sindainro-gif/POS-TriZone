@@ -669,6 +669,10 @@ const handlers = {
   meta: () => viaGudang(() => svc.meta(), () => offline.meta()),
 
   'settings:get': () => getSettings(),
+  // PIN Pembatalan (hanya Admin): PIN untuk kepala toko menyetujui batal nota tanpa mengetahui PIN Admin
+  'settings:voidPin': (a = {}) => svc.voidPinInfo({ reveal: !!a.reveal }),
+  'settings:setVoidPin': (a) => svc.setVoidPin(a),
+  'settings:clearVoidPin': () => svc.clearVoidPin(),
   'settings:save': async (a) => {
     const own = {};
     for (const k of PRINTER_KEYS) if (a[k] !== undefined) own[k] = k === 'auto_print' ? (a[k] === true || a[k] === '1' ? '1' : '0') : String(a[k]);
@@ -733,7 +737,7 @@ const handlers = {
     try {
       return await runMain('main.voidReceipt', { ...a, requested_by: session.name });
     } catch (err) {
-      if (/PIN Admin salah/.test(err.message)) await new Promise((r) => setTimeout(r, 800)); // memperlambat tebak-tebakan PIN
+      if (/PIN Admin \/ PIN Pembatalan salah/.test(err.message)) await new Promise((r) => setTimeout(r, 800)); // memperlambat tebak-tebakan PIN
       throw err;
     }
   },
