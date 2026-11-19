@@ -107,8 +107,12 @@ function buildReceiptLines(receipt, settings = {}, { reprint = false, now = new 
   return out;
 }
 
-function receiptPage(lines, paperWidth) {
+// Teks nota dimulai di tepi kiri halaman: driver printer thermal umumnya sudah memulai cetak dari tepi
+// AREA CETAK (bukan tepi kertas). Dulu teks diletakkan di tengah kertas sehingga bergeser ~5 mm ke kanan
+// dan sisi kanannya terpotong. offsetMm (Pengaturan → Geser ke kanan) untuk printer yang sisi kirinya terpotong.
+function receiptPage(lines, paperWidth, { offsetMm = 0 } = {}) {
   const width = COLS[paperWidth] ? Number(paperWidth) : 58;
+  const offset = Math.min(10, Math.max(0, Number(offsetMm) || 0));
   const cols = COLS[width];
   // Lebar karakter monospace ≈ 0,6 em → ukuran font agar `cols` karakter pas di area cetak
   const fontMm = (PRINTABLE_MM[width] / cols / 0.6).toFixed(2);
@@ -117,7 +121,7 @@ function receiptPage(lines, paperWidth) {
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     @page { margin: 0; }
     html, body { margin: 0; padding: 0; background: #fff; }
-    pre { margin: 2mm auto 0; width: ${PRINTABLE_MM[width]}mm; font-family: "Courier New", Consolas, monospace;
+    pre { margin: 2mm 0 0 ${offset}mm; width: ${PRINTABLE_MM[width]}mm; font-family: "Courier New", Consolas, monospace;
           font-size: ${fontMm}mm; line-height: ${lineMm.toFixed(2)}mm; color: #000; font-weight: 600; white-space: pre; }
   </style></head><body><pre>${esc(lines.join('\n'))}\n\n\n</pre></body></html>`;
   // Tinggi kertas mengikuti panjang nota (+ ruang sobek)

@@ -2606,7 +2606,7 @@ async function refreshConnection() {
 // ================================================================ 6. PENGATURAN
 views.settings = (() => {
   const F = { store_name: '#stStoreName', store_address: '#stStoreAddress',
-    receipt_header: '#stHeader', receipt_footer: '#stFooter', printer_name: '#stPrinter', paper_width: '#stPaper' };
+    receipt_header: '#stHeader', receipt_footer: '#stFooter', printer_name: '#stPrinter', paper_width: '#stPaper', receipt_offset: '#stOffset' };
 
   async function loadPrinters(selected) {
     const list = await api('printer:list').catch(() => []);

@@ -153,7 +153,7 @@ async function printPage(page, { deviceName, pdfName, what }) {
 
 async function printReceipt(receipt, { reprint = false } = {}) {
   const s = await getSettings();
-  const page = receiptPage(buildReceiptLines(receipt, s, { reprint }), s.paper_width);
+  const page = receiptPage(buildReceiptLines(receipt, s, { reprint }), s.paper_width, { offsetMm: s.receipt_offset });
   return printPage(page, { deviceName: s.printer_name, pdfName: receipt.receipt_no, what: 'Nota' });
 }
 
@@ -749,6 +749,11 @@ const handlers = {
     const own = {};
     for (const k of PRINTER_KEYS) if (a[k] !== undefined) own[k] = k === 'auto_print' ? (a[k] === true || a[k] === '1' ? '1' : '0') : String(a[k]);
     if (own.paper_width && !['58', '80'].includes(own.paper_width)) throw userError('Lebar kertas harus 58 mm atau 80 mm.');
+    if (own.receipt_offset !== undefined) {
+      const o = Number(String(own.receipt_offset).replace(',', '.'));
+      if (!Number.isFinite(o) || o < 0 || o > 10) throw userError('Geser cetakan nota harus 0–10 mm.');
+      own.receipt_offset = String(o);
+    }
     if (Object.keys(own).length) device = saveDevice(DATA_DIR, own);
     const shared = { ...a };
     for (const k of PRINTER_KEYS) delete shared[k];

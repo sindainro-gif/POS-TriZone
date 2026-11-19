@@ -77,4 +77,13 @@ t('ukuran halaman cetak sesuai lebar kertas', () => {
   assert.match(p.html, /<pre>a\nb/);
 });
 
+t('teks nota mulai di tepi kiri area cetak (tidak digeser ke tengah kertas); bisa digeser manual', () => {
+  const p58 = receiptPage(['a'], '58');
+  assert.match(p58.html, /pre \{ margin: 2mm 0 0 0mm; width: 48mm;/);
+  assert.doesNotMatch(p58.html, /margin: 2mm auto/);
+  assert.match(receiptPage(['a'], '58', { offsetMm: '3.5' }).html, /margin: 2mm 0 0 3\.5mm;/);
+  assert.match(receiptPage(['a'], '58', { offsetMm: 99 }).html, /margin: 2mm 0 0 10mm;/);
+  assert.match(receiptPage(['a'], '80', { offsetMm: -4 }).html, /margin: 2mm 0 0 0mm; width: 72mm;/);
+});
+
 console.log(`\n${passed} tes nota lulus${process.exitCode ? ', ada yang GAGAL' : ''}.`);

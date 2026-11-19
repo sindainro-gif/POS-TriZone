@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PRINTER_KEYS = ['printer_name', 'paper_width', 'auto_print', 'label_printer_name'];
+const PRINTER_KEYS = ['printer_name', 'paper_width', 'auto_print', 'label_printer_name', 'receipt_offset'];
 const MODES = ['standalone', 'server', 'client'];
 
 const DEFAULTS = {
@@ -16,6 +16,7 @@ const DEFAULTS = {
   paper_width: '58',
   auto_print: '1',
   label_printer_name: '',
+  receipt_offset: '0', // mm geser cetakan nota ke kanan (bila sisi kiri terpotong)
 };
 
 function loadDevice(dir) {
