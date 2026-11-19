@@ -1375,92 +1375,9 @@ views.opname = (() => {
     Promise.all(items.map((i) => api('products:get', { sku: i.product.sku }).then((p) => { if (p) i.product = p; }))).then(render);
     render();
     loadHistory();
-    officeOpname.load();
     if (canManualOpname()) setTimeout(() => picker.focus(), 30);
   }
   return { show };
-})();
-
-// ================================================================ 3c. OPNAME DARI KANTOR
-// Opname yang dibuat kantor hanya bisa dilihat dan diterapkan apa adanya: tidak ada isian untuk mengubah angkanya.
-// Daftarnya diambil PC server dari kantor (juga saat dibuka dari PC kasir); tanpa internet yang sudah diterima tetap tampil.
-const officeOpname = (() => {
-  const signed = (n) => (n > 0 ? `<span class="diff-pos">+${num(n)}</span>` : n < 0 ? `<span class="diff-neg">−${num(-n)}</span>` : '<span class="muted">0</span>');
-  let list = [];
-  let loading = null;
-
-  function load() {
-    if (loading) return loading;
-    loading = (async () => {
-      let r;
-      try { r = await api('opname:office'); } catch (_) { r = { items: list, error: '' }; }
-      list = r.items || [];
-      $('#opOfficeCard').classList.toggle('hidden', !list.length);
-      $('#opOfficeInfo').textContent = r.error || `${num(list.length)} opname menunggu diterapkan`;
-      $('#opOffice').innerHTML = list.map((o) => `<tr>
-          <td class="mono"><b>#${o.id}</b></td><td>${zoneTag(o.zone)}</td>
-          <td>${esc(fmtTime(o.created_at))}${o.created_by ? `<div class="muted small">${esc(o.created_by)}</div>` : ''}</td>
-          <td class="r">${num(o.line_count)}</td><td class="r">${signed(o.plus_qty)}</td><td class="r">${signed(-o.minus_qty)}</td>
-          <td>${esc(o.notes || '-')}${o.missing.length ? `<div class="small diff-neg">${num(o.missing.length)} barang belum ada di Daftar Barang</div>` : ''}</td>
-          <td><button class="btn sm primary" data-office="${o.id}">Terapkan</button></td></tr>`).join('');
-    })().finally(() => { loading = null; });
-    return loading;
-  }
-
-  $('#opOffice').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-office]');
-    const o = b && list.find((x) => x.id === Number(b.dataset.office));
-    if (o) preview(o);
-  });
-
-  // Pratinjau hanya baca: stok sekarang, (stok patokan), fisik dari kantor, selisih, stok akhir
-  function preview(o) {
-    const zoneName = esc(state.meta.zones[o.zone] || o.zone);
-    const based = o.lines.some((l) => l.baseline !== null);
-    const blocked = o.missing.length > 0;
-    modal({
-      title: `Opname dari Kantor #${o.id} — ${state.meta.zones[o.zone] || o.zone}`,
-      wide: true,
-      body: `<div class="kv"><span>Dibuat kantor</span><b>${esc(fmtTime(o.created_at))}${o.created_by ? ` · ${esc(o.created_by)}` : ''}</b></div>
-        <div class="kv"><span>Zona</span><b>${zoneTag(o.zone)}</b></div>
-        ${based ? `<div class="kv"><span>Stok per</span><b>${esc(fmtTime(o.count_at))}</b></div>` : ''}
-        <div class="kv"><span>Catatan</span><b>${esc(o.notes || '-')}</b></div>
-        ${blocked
-    ? `<div class="alert danger">${num(o.missing.length)} barang belum ada di Daftar Barang, jadi opname ini belum bisa diterapkan. Tekan <b>Perbarui Daftar Barang</b> di menu Daftar Barang, lalu buka lagi. Bila tetap tidak ada, hubungi kantor.</div>`
-    : `<div class="alert ok">${num(o.line_count)} barang · selisih ${signed(o.plus_qty)} / ${signed(-o.minus_qty)} Biji</div>`}
-        <div class="tbl-wrap" style="max-height:46vh;margin-top:10px"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th>
-          <th class="r">Stok Sekarang</th>${based ? '<th class="r">Stok Patokan</th>' : ''}<th class="r">Fisik (Kantor)</th><th class="r">Selisih</th><th class="r">Stok Akhir</th></tr></thead><tbody>
-        ${o.lines.map((l, i) => `<tr><td class="r muted">${i + 1}</td><td class="mono">${esc(l.sku)}</td>
-          <td>${l.missing ? '<span class="diff-neg">Belum ada di Daftar Barang</span>' : esc(l.name)}</td>
-          <td class="r muted">${l.missing ? '-' : num(l.stock_now)}</td>${based ? `<td class="r muted">${l.baseline === null ? '-' : num(l.baseline)}</td>` : ''}
-          <td class="r"><b>${num(l.counted)}</b></td><td class="r"><b>${l.missing ? '-' : signed(l.diff)}</b></td><td class="r">${l.missing ? '-' : num(l.after)}</td></tr>`).join('')}
-        </tbody></table></div>
-        <p class="muted small">${based
-    ? 'Selisih = Fisik − stok patokan (stok per tanggal di atas). Selisih itu saja yang ditambahkan ke stok sekarang, jadi penjualan, mutasi, dan penerimaan setelah tanggal tersebut tetap terhitung.'
-    : `Stok ${zoneName} barang di atas di-set ke angka Fisik dari kantor.`} Barang lain tidak diubah. Angka dari kantor tidak bisa diubah di toko.</p>`,
-      // Fokus di Tutup: Enter dari scanner tidak boleh langsung menerapkan opname
-      onOpen: (el) => $('.modal-foot .btn.ghost', el).focus(),
-      actions: [
-        { label: 'Tutup', kind: 'ghost' },
-        ...(blocked ? [] : [{
-          label: 'Terapkan',
-          kind: 'primary',
-          onClick: async ({ close, btn }) => {
-            btn.disabled = true;
-            try {
-              const d = await api('opname:applyOffice', { id: o.id });
-              close();
-              toast(`Opname dari kantor #${o.id} diterapkan: ${d.doc_no}, ${num(d.line_count)} barang, selisih +${num(d.plus_qty)} / −${num(d.minus_qty)} Biji.`
-                + (d.reported ? '' : ' Kantor dikabari otomatis saat internet tersambung.'), 'ok', 7000);
-              views.opname.show();
-              refreshOutBadge();
-            } catch (e) { btn.disabled = false; toast(e.message, 'err', 7000); load(); }
-          },
-        }]),
-      ],
-    });
-  }
-  return { load };
 })();
 
 // ================================================================ 4. DAFTAR BARANG

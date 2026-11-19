@@ -42,7 +42,6 @@ PC Gudang / Mandiri mengirim data toko langsung ke **mother base** (database Sup
 - **Perbarui Daftar Barang (semua pengguna):** tombol **Perbarui Daftar Barang** di halaman **Daftar Barang** mengambil master barang dari mother base dan bisa ditekan Admin, Gudang, maupun Kasir, termasuk dari PC Kasir (diteruskan ke PC Gudang). Tidak tampil di versi DEMO.
 - **Disembunyikan dari pegawai:** layar kerja (Laporan Shift, tutup shift, Daftar Barang, layar login) tidak menyebut mother base maupun data cadangan, termasuk untuk akun Admin. Pesannya netral, misalnya "Daftar barang diperbarui" dan "Daftar barang belum bisa diperbarui". Status kiriman, antrean, dan error hanya terlihat di **Pengaturan → Mother Base** (Admin).
 - **Kunci daftar barang:** bila dicentang, barang baru, nama, barcode, merk, kategori, harga, dan satuan masuk hanya berubah lewat master barang dari mother base (diambil otomatis tiap jam). Batas minimum display toko tetap bisa diubah di toko. Stok tidak pernah diubah oleh master barang.
-- **Opname dari kantor:** owner / kantor membuat stok opname di aplikasi web mother base (upload template opname atau isi baris). PC Gudang / Mandiri mengambilnya tiap 5 menit (dan saat menu Stok Opname dibuka) ke tabel `office_opnames`. Di **Stok Opname** muncul kartu **Opname dari Kantor** (Gudang & Admin, juga dari PC Kasir lewat PC Server): pratinjau selisih hanya baca (stok sekarang, stok patokan, fisik kantor, selisih, stok akhir) dan tombol **Terapkan** — angkanya tidak bisa diubah di toko. Terapkan membuat dokumen `OP-` biasa (catatan "Opname kantor #N"), lalu nomor OP- dilaporkan ke kantor; tanpa internet laporan menunggu dan dikirim otomatis. Opname yang dibatalkan kantor hilang dari daftar. Barang yang belum ada di Daftar Barang menahan Terapkan sampai **Perbarui Daftar Barang**. Layar pegawai hanya menyebut "kantor".
 - **Tidak ikut:** password, PIN, kode pasangan.
 - Versi DEMO tidak mengirim data.
 - Uji otomatis: `node test/motherbase.test.js` (dengan mother base tiruan) dan `node motherbase/test/uji.js` (dengan PostgreSQL).
@@ -81,7 +80,7 @@ npm run smoke     # uji UI Electron + screenshot (database sementara)
 | `src/remote.js` | RPC HTTP LAN antara PC Gudang (server) dan PC Kasir (klien) |
 | `src/offline.js` | Mode darurat PC Kasir: cache barang + antrian transaksi OFF- dan sinkron ulang |
 | `src/reports.js` | CSV penjualan, CSV snapshot stok, HTML rekap (→ PDF) |
-| `src/motherbase.js` | Kirim data ke mother base (RPC `terima_data`), ambil master barang (`ambil_master`), ambil opname dari kantor & laporkan nomor OP- (`ambil_opname_kantor`, `opname_kantor_diterapkan`) |
+| `src/motherbase.js` | Kirim data ke mother base (RPC `terima_data`) dan ambil master barang (`ambil_master`) |
 | `src/renderer/` | Antarmuka POS (`index.html`, `app.js`), utilitas bersama (`common.js`), gaya (`style.css`, gelap/terang) |
 | `motherbase/` | Mother base: aplikasi web kantor, skema Supabase, Edge Function asisten AI, pembaca laporan Accurate, server dev, uji |
 
@@ -169,7 +168,7 @@ Setiap orang login dengan **nama + PIN 6 digit**. Menu yang tidak diizinkan dise
 | Peran | Menu |
 |---|---|
 | **Admin** | Semua menu, termasuk Pengaturan, Pengguna, Mode Komputer, Cadangkan / Pulihkan |
-| **Gudang** | Mutasi, Penerimaan Barang, Stok Opname **hanya lewat Excel** (Unduh Template → isi Fisik → Import) dan **Terapkan** opname dari kantor (apa adanya), Daftar Barang (tambah / ubah / hapus / import), Cetak Barcode |
+| **Gudang** | Mutasi, Penerimaan Barang, Stok Opname **hanya lewat Excel** (Unduh Template → isi Fisik → Import), Daftar Barang (tambah / ubah / hapus / import), Cetak Barcode |
 | **Kasir** | Kasir / Pembayaran, Laporan Shift & Tutup Kasir, Daftar Barang (hanya lihat) |
 
 - **Akun pertama:** saat database belum punya akun, layar login menjadi **Buat Akun Admin**. Tidak ada PIN bawaan.

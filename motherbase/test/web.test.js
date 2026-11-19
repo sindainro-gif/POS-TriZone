@@ -15,10 +15,6 @@ const XLSX = require('xlsx');
 const { chromium } = require('playwright');
 const { createServer, signJwt } = require('../dev/server');
 const { buatDataDemo } = require('../dev/data-demo');
-const ROOT = path.join(__dirname, '..', '..');
-const { Database } = require(path.join(ROOT, 'src/db'));
-const { createServices, OPNAME_TEMPLATE_HEADERS } = require(path.join(ROOT, 'src/services'));
-const { createMotherbase } = require(path.join(ROOT, 'src/motherbase'));
 
 const OUT = path.resolve(process.argv[2] || path.join(os.tmpdir(), 'mb-web-uji'));
 fs.mkdirSync(OUT, { recursive: true });
@@ -168,93 +164,6 @@ function fileAccurate() {
     await page.click('#stTab [data-t="lambat"]');
     await tunggu(500);
     ok('stok: SO disetujui dengan catatan (tercatat penyetujunya), selisih, cari stok, stok lambat');
-
-    // Opname dari kantor: daftar (contoh: Tropodo sudah menerapkan, Sidoarjo belum), buat dari template toko Malang, toko menerapkan
-    await page.click('#stTab [data-t="kantor"]');
-    await page.waitForSelector('#okDaftar tbody tr');
-    const daftarOk = await page.$$eval('#okDaftar tbody tr', (x) => x.map((tr) => tr.innerText.replace(/\s+/g, ' ')));
-    assert.ok(daftarOk.some((r) => /TRP/.test(r) && /Diterapkan/.test(r) && /OP-\d{8}-\d{3}/.test(r) && /Budi/.test(r)), daftarOk.join('\n'));
-    assert.ok(daftarOk.some((r) => /SDA/.test(r) && /Menunggu toko/.test(r)), daftarOk.join('\n'));
-    await shot('03c-opname-dari-kantor');
-    await page.click('#okBuat');
-    await page.waitForSelector('#okTemplate');
-    await page.selectOption('#okBuatToko', 'MLG');
-    const [dlOk] = await Promise.all([page.waitForEvent('download'), page.click('#okTemplate')]);
-    const fOkTpl = path.join(OUT, dlOk.suggestedFilename());
-    await dlOk.saveAs(fOkTpl);
-    const tplOk = XLSX.utils.sheet_to_json(XLSX.readFile(fOkTpl).Sheets.Opname, { header: 1, defval: '' });
-    assert.deepStrictEqual(tplOk[0], OPNAME_TEMPLATE_HEADERS);
-    const baris1 = tplOk.find((r) => r[0] === 'PLJ-001');
-    const baris2 = tplOk.find((r) => r[0] === 'RTN-002');
-    assert.match(String(baris1[10]), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
-    baris1[3] = Number(baris1[2]) + 2; // Fisik Display Toko
-    baris2[5] = 4; // Fisik Gudang Utama
-    const fOkIsi = path.join(OUT, 'Opname_MLG_diisi.xlsx');
-    const wbOk = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wbOk, XLSX.utils.aoa_to_sheet(tplOk), 'Opname');
-    XLSX.writeFile(wbOk, fOkIsi);
-    await page.setInputFiles('#okFile', fOkIsi);
-    await page.waitForSelector('#okHasil .alert.ok');
-    const cekOk = await page.textContent('#okHasil');
-    assert.match(cekOk, /dengan Tanggal_Stok/);
-    assert.match(cekOk, /Siap disimpan: 2 opname/);
-    assert.match(cekOk, /Display Toko/);
-    assert.match(cekOk, /Gudang Utama/);
-    await shot('03d-buat-opname-kantor');
-    await page.click('.modal-kaki .btn.primary');
-    await toastCocok(/2 opname dibuat untuk MLG/);
-    const okBaru = await db("select id, zona, status from opname_kantor where kode_toko = 'MLG' and status = 'baru' order by id");
-    assert.deepStrictEqual(okBaru.map((o) => o.zona), ['floor', 'warehouse']);
-    // Toko (Trizone sungguhan, lewat RPC server dev dengan anon key) mengambil & menerapkan apa adanya
-    const [{ k: kunciMlg }] = await db("select public.buat_kunci_toko('MLG') as k");
-    const T2 = createServices(await Database.open(null));
-    T2.importRows([{ Barcode: '8990000000017', SKU: 'PLJ-001', Nama_Barang: 'Ember Plastik 20L', Harga_Jual: 35000, Stok_Awal_Toko: 50 },
-      { Barcode: '8990000000079', SKU: 'RTN-002', Nama_Barang: 'Keset Zig Zag', Harga_Jual: 25000, Stok_Awal_Gudang: 30 }]);
-    T2.mbSaveConfig({ url: BASE, anon_key: anonKey, kode_toko: 'MLG', kunci: kunciMlg });
-    const mb2 = createMotherbase({ svc: T2, appVersion: 'uji-web', fetchFn: fetch });
-    assert.strictEqual((await mb2.opnameKantor()).baru, 2);
-    for (const o of T2.listOfficeOpnames()) T2.applyOfficeOpname({ id: o.id, applied_by: 'Budi Gudang' });
-    assert.deepStrictEqual([T2.getProduct('PLJ-001').floor_stock, T2.getProduct('RTN-002').warehouse_stock],
-      [50 + 2, 30 + (4 - Number(baris2[4]))]); // hanya selisih fisik − stok di template yang ditambahkan
-    assert.strictEqual((await mb2.opnameKantor()).dilaporkan, 2);
-    await mb2.kirim(); // dokumen OP- toko ikut kiriman biasa → kantor melihat stok sistem toko & selisihnya
-    await page.selectOption('#okStatus', 'diterapkan');
-    await tunggu(600);
-    await page.click(`#okDaftar tr.klik:has-text("#${okBaru[0].id}")`);
-    await page.waitForSelector('.modal');
-    const rinciOk = await page.textContent('.modal');
-    assert.match(rinciOk, /Diterapkan di toko sebagai\s*OP-\d{8}-\d{3}/);
-    assert.match(rinciOk, /Budi Gudang/);
-    assert.match(rinciOk, /PLJ-001/);
-    assert.match(rinciOk, /Sistem toko/);
-    assert.deepStrictEqual(await page.$$eval('.modal tbody tr td:last-child', (x) => x.map((e) => e.textContent.trim())), ['+2']);
-    await shot('03e-opname-kantor-diterapkan');
-    await page.click('.modal .tutup');
-    // Isi baris: kode salah ditolak (simpan mati); lalu dibuat & dibatalkan kantor
-    await page.selectOption('#okStatus', '');
-    await page.click('#okBuat');
-    await page.selectOption('#okBuatToko', 'SDA');
-    await page.click('#okMode [data-t="manual"]');
-    await page.fill('#okBaris tr:nth-child(1) [data-k]', 'TIDAK-ADA-99');
-    await page.fill('#okBaris tr:nth-child(1) [data-f]', '3');
-    await page.click('#okPeriksa');
-    await page.waitForSelector('#okHasil .alert.bad');
-    assert.match(await page.textContent('#okHasil'), /Kode TIDAK-ADA-99 tidak ada di daftar barang toko SDA/);
-    assert.strictEqual(await page.$eval('.modal-kaki .btn.primary', (b) => b.disabled), true);
-    await page.fill('#okBaris tr:nth-child(1) [data-k]', 'RTN-002');
-    await page.fill('#okCatatan', 'Hitung ulang keset');
-    await page.click('#okPeriksa');
-    await page.waitForSelector('#okHasil .alert.ok');
-    await page.click('.modal-kaki .btn.primary');
-    await toastCocok(/1 opname dibuat untuk SDA/);
-    const [okSda] = await db("select id from opname_kantor where kode_toko = 'SDA' and catatan = 'Hitung ulang keset'");
-    await tunggu(500);
-    await page.click(`#okDaftar tr.klik:has-text("#${okSda.id}")`);
-    await page.click('.modal-kaki button:has-text("Batalkan opname")');
-    await page.click('.modal-latar:last-child .modal-kaki .btn.danger');
-    await toastCocok(/dibatalkan/);
-    assert.strictEqual((await db('select status from opname_kantor where id = $1', [okSda.id]))[0].status, 'dibatalkan');
-    ok('opname dari kantor: daftar & status, unduh template toko, upload → pratinjau → simpan per zona; toko menerapkan → Diterapkan + nomor OP-; isi baris, kode salah ditolak, dibatalkan');
 
     await buka('kiriman');
     await page.setInputFiles('#kjFile', fileAccurate());
@@ -454,13 +363,6 @@ function fileAccurate() {
     assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'stok', 'asisten']);
     await page.waitForSelector('#rkToko tbody tr');
     assert.deepStrictEqual(await page.$$eval('#rkToko tbody tr td:first-child b', (x) => x.map((e) => e.textContent)), ['TRP']);
-    // Opname dari kantor: pemilik toko hanya melihat opname tokonya, tidak bisa membuat
-    await buka('stok');
-    await page.click('#stTab [data-t="kantor"]');
-    await page.waitForSelector('#okDaftar tbody tr');
-    const okPemilik = await page.$$eval('#okDaftar tbody tr', (x) => x.map((tr) => tr.children[1].textContent));
-    assert.ok(okPemilik.length >= 1 && okPemilik.every((k) => k === 'TRP'), okPemilik.join(','));
-    assert.strictEqual(await page.$('#okBuat'), null);
     await page.goto(`${BASE}/#pembelian`);
     await page.waitForSelector('#isi .page-head');
     assert.match(await page.textContent('#isi h1'), /Ringkasan/);

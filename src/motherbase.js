@@ -4,8 +4,7 @@
 // (Mandiri / Server). Data disiapkan dan ditandai oleh services.js (mbBatch / mbAck), jadi:
 //   * tanpa internet, toko tetap jalan; data menunggu di pos.db sampai terkirim;
 //   * data baru ditandai terkirim setelah mother base membalas, jadi kiriman ulang selalu aman.
-// Lawan bicara: RPC terima_data, ambil_master, ambil_opname_kantor, dan opname_kantor_diterapkan
-// di motherbase/supabase/migrations.
+// Lawan bicara: RPC terima_data dan ambil_master di motherbase/supabase/migrations.
 
 const { localNow } = require('./services');
 
@@ -124,32 +123,6 @@ function createMotherbase({ svc, appVersion = '', demo = false, fetchFn = global
     }
   }
 
-  // Opname dari kantor: laporkan dulu yang sudah diterapkan (nomor OP- toko), lalu ambil yang menunggu.
-  // Stok tidak diubah di sini; menerapkan hanya lewat svc.applyOfficeOpname (tombol Terapkan di toko).
-  let runningOpname = null;
-  function opnameKantor() {
-    if (runningOpname) return runningOpname;
-    runningOpname = (async () => {
-      const cfg = config();
-      try {
-        const lapor = svc.mbOfficeOpnameReports();
-        if (lapor.length) {
-          const r = await rpc(cfg, 'opname_kantor_diterapkan', { kode_toko: cfg.kode_toko, kunci: cfg.kunci, diterapkan: lapor });
-          if (!r || !r.ok) throw mbError('Mother base tidak mengonfirmasi laporan opname kantor.');
-          svc.mbOfficeOpnameAck({ ids: [...(r.diterima || []), ...(r.tidak_ada || [])] });
-        }
-        const r = await rpc(cfg, 'ambil_opname_kantor', { kode_toko: cfg.kode_toko, kunci: cfg.kunci });
-        const out = svc.mbOfficeOpnamesSync({ opname: r.opname || [] });
-        svc.mbSetState({ opname_at: stamp(), opname_error: '' });
-        return { ...out, menunggu: (r.opname || []).length, dilaporkan: lapor.length };
-      } catch (err) {
-        svc.mbSetState({ opname_error: err.message });
-        throw err;
-      }
-    })().finally(() => { runningOpname = null; });
-    return runningOpname;
-  }
-
   // Cek alamat, anon key, kode & kunci toko tanpa mengubah data apa pun
   async function tes() {
     const cfg = config();
@@ -165,11 +138,10 @@ function createMotherbase({ svc, appVersion = '', demo = false, fetchFn = global
     if (pullMaster && svc.masterLocked()) {
       try { out.master = await ambilMaster(); } catch (err) { out.masterError = err.message; }
     }
-    try { out.opnameKantor = await opnameKantor(); } catch (err) { out.opnameKantorError = err.message; }
     return out;
   }
 
-  return { kirim, ambilMaster, opnameKantor, tes, tick, isRunning: () => !!running };
+  return { kirim, ambilMaster, tes, tick, isRunning: () => !!running };
 }
 
 module.exports = { createMotherbase, PROTOKOL };

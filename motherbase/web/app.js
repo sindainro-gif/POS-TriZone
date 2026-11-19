@@ -433,11 +433,9 @@ async function detailBatal(b) {
 
 // ---------------------------------------------------------------- Stok & opname
 async function hStok(el) {
-  const daftar = isKantor()
-    ? [['so', 'Review stok opname'], ['kantor', 'Opname dari kantor'], ['selisih', 'Selisih vs Trizone'], ['cari', 'Cari stok'], ['lambat', 'Stok lambat']]
-    : [['cari', 'Cari stok'], ['lambat', 'Stok lambat'], ['kantor', 'Opname dari kantor']];
+  const daftar = isKantor() ? [['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone'], ['cari', 'Cari stok'], ['lambat', 'Stok lambat']] : [['cari', 'Cari stok'], ['lambat', 'Stok lambat']];
   let tab = daftar[0][0];
-  el.innerHTML = `${head('Stok & Opname', 'Stok terkini tiap toko (dari Trizone), review stok opname, opname dari kantor, dan selisih stok.')}
+  el.innerHTML = `${head('Stok & Opname', 'Stok terkini tiap toko (dari Trizone), review stok opname, dan selisih stok.')}
     ${tabs('stTab', daftar, tab)}<div id="stIsi"></div>`;
   pasangTabs(el, 'stTab', (t) => { tab = t; tampil(); });
   const isi = $('#stIsi', el);
@@ -447,7 +445,6 @@ async function hStok(el) {
     isi.onclick = null;
     try {
       if (tab === 'so') return await reviewSo();
-      if (tab === 'kantor') return await opnameKantor();
       if (tab === 'selisih') return await selisih();
       if (tab === 'cari') return await cari();
       return await lambat();
@@ -490,24 +487,6 @@ async function hStok(el) {
         } }],
       });
     };
-  }
-
-  async function opnameKantor() {
-    isi.innerHTML = `<div class="card"><div class="card-head"><div class="row">${S.toko.length > 1 ? pilihToko('okToko') : ''}
-        <select id="okStatus" aria-label="Status"><option value="">Semua status</option>${Object.entries(STATUS_OK).map(([k, [, l]]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></div>
-        ${isKantor() ? '<button class="btn primary sm" id="okBuat">+ Buat opname untuk toko</button>' : ''}</div>
-      <p class="muted small" style="margin-top:-4px">Trizone toko mengambil opname dari kantor otomatis (paling lama 5 menit saat online). Gudang / Admin toko hanya bisa
-        <b>menerapkan apa adanya</b>; angka fisiknya tidak bisa diubah di toko. Setelah diterapkan, nomor dokumen OP- toko tampil di sini.</p>
-      <div id="okDaftar"></div></div>`;
-    const muat = async () => {
-      const rows = await rpc('daftar_opname_kantor', { p_kode_toko: ($('#okToko', isi) || {}).value || null, p_status: $('#okStatus', isi).value || null, p_batas: 300 });
-      const box = $('#okDaftar', isi);
-      box.innerHTML = tabel(KOLOM_OK, rows, { klik: true, kosong: 'Belum ada opname dari kantor.' });
-      onBaris(box, rows, (r) => detailOpnameKantor(r, muat).catch((e) => toast(pesanError(e), 'bad')));
-    };
-    for (const id of ['#okToko', '#okStatus']) if ($(id, isi)) $(id, isi).addEventListener('change', () => muat().catch((e) => toast(pesanError(e), 'bad')));
-    if ($('#okBuat', isi)) $('#okBuat', isi).addEventListener('click', () => buatOpnameKantor(muat, ($('#okToko', isi) || {}).value || ''));
-    await muat();
   }
 
   async function selisih() {
@@ -555,192 +534,6 @@ async function hStok(el) {
     await muat();
   }
   await tampil();
-}
-
-// ---------------------------------------------------------------- Opname dari kantor
-// Kantor membuat opname untuk satu toko (template opname Trizone atau isi baris). Toko hanya menerapkan apa adanya.
-const ZONA_LABEL = { floor: 'Display Toko', warehouse: 'Gudang Utama', damaged: 'Gudang BS', shopee: 'Gudang Shopee' };
-const STATUS_OK = { baru: ['warn', 'Menunggu toko'], diterapkan: ['ok', 'Diterapkan'], dibatalkan: ['', 'Dibatalkan'] };
-const selisihPill = (v) => (v === null || v === undefined ? '<span class="muted">-</span>'
-  : `<span class="pill ${Number(v) < 0 ? 'bad' : Number(v) > 0 ? 'warn' : ''}">${Number(v) > 0 ? '+' : ''}${num(v)}</span>`);
-const KOLOM_OK = [
-  { k: 'id', judul: 'No.', fmt: (v) => `<span class="mono">#${esc(v)}</span>` },
-  { k: 'kode_toko', judul: 'Toko' },
-  { k: 'zona', judul: 'Zona', fmt: (v) => esc(ZONA_LABEL[v] || v) },
-  { k: 'jumlah_baris', judul: 'Barang', num: true, fmt: (v) => num(v) },
-  { k: 'dibuat_at', judul: 'Dibuat', fmt: (v, r) => `${esc(fmtWaktu(v))}<div class="muted small">${esc(r.dibuat_oleh || '')}</div>` },
-  { k: 'status', judul: 'Status', fmt: (v, r) => `${pill(STATUS_OK, v)}${v === 'baru'
-    ? `<div class="muted small">${r.diambil_at ? `diterima toko ${esc(fmtWaktu(r.diambil_at))}` : 'belum diambil toko'}</div>` : ''}` },
-  { k: 'no_op', judul: 'No. OP toko', fmt: (v, r) => (v ? `<span class="mono">${esc(v)}</span><div class="muted small">${esc(fmtWaktu(r.diterapkan_at))}${r.diterapkan_oleh ? ` · ${esc(r.diterapkan_oleh)}` : ''}</div>`
-    : '<span class="muted">-</span>') },
-  { k: 'plus_qty', judul: 'Selisih di toko', num: true, fmt: (v, r) => (r.no_op && v !== null && v !== undefined ? `+${num(v)} / −${num(r.minus_qty)}` : '<span class="muted">-</span>') },
-  { k: 'catatan', judul: 'Catatan', fmt: (v) => esc(v || '-') },
-];
-
-async function detailOpnameKantor(o, selesai) {
-  const baris = await rpc('rincian_opname_kantor', { p_id: o.id });
-  const adaPatokan = baris.some((b) => b.stok_patokan !== null);
-  const adaToko = baris.some((b) => b.stok_sistem_toko !== null);
-  const status = {
-    baru: `<div class="alert">${o.diambil_at ? `Sudah diterima toko ${esc(fmtWaktu(o.diambil_at))}, menunggu diterapkan Gudang / Admin toko.`
-      : 'Belum diambil Trizone toko. Diambil otomatis saat toko online.'}</div>`,
-    diterapkan: `<div class="alert ok">Diterapkan di toko sebagai <b class="mono">${esc(o.no_op)}</b> pada ${esc(fmtWaktu(o.diterapkan_at))}${o.diterapkan_oleh ? ` oleh ${esc(o.diterapkan_oleh)}` : ''}.
-      ${adaToko ? 'Kolom Sistem toko = stok di toko saat diterapkan (atau stok patokan).' : 'Rincian dokumen toko tampil setelah kiriman data toko berikutnya.'}</div>`,
-    dibatalkan: `<div class="alert">Dibatalkan ${esc(fmtWaktu(o.dibatalkan_at))} oleh ${esc(o.dibatalkan_oleh || '-')}.</div>`,
-  }[o.status] || '';
-  modal({
-    judul: `Opname dari kantor #${o.id} · ${o.kode_toko} · ${ZONA_LABEL[o.zona] || o.zona}`,
-    lebar: true,
-    isi: `<p class="muted" style="margin-top:0">${pill(STATUS_OK, o.status)} · dibuat ${esc(fmtWaktu(o.dibuat_at))} oleh ${esc(o.dibuat_oleh || '-')} · ${num(baris.length)} barang${o.catatan ? ` · ${esc(o.catatan)}` : ''}</p>
-      ${status}
-      <div style="margin-top:12px">${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
-    { k: 'fisik', judul: 'Fisik', num: true, fmt: (v) => num(v) },
-    ...(adaPatokan ? [{ k: 'stok_patokan', judul: 'Stok patokan', num: true, fmt: (v) => num(v) }, { k: 'tanggal_stok', judul: 'Stok per', fmt: (v) => esc(fmtWaktu(v)) }] : []),
-    ...(adaToko ? [{ k: 'stok_sistem_toko', judul: 'Sistem toko', num: true, fmt: (v) => num(v) }, { k: 'selisih_toko', judul: 'Selisih', num: true, fmt: selisihPill }] : [])], baris)}</div>`,
-    aksi: [
-      ...(o.status === 'baru' && isKantor() ? [{ label: 'Batalkan opname', kelas: 'danger', onClick: async ({ tutup }) => {
-        if (!(await konfirmasi(`Batalkan opname #${o.id}?`, `Opname ini hilang dari Trizone toko ${esc(o.kode_toko)} saat toko mengambil data berikutnya. Bila toko sudah menerapkannya tanpa internet, statusnya tetap menjadi Diterapkan.`, 'Batalkan opname', true))) return;
-        await rpc('batalkan_opname_kantor', { p_id: o.id });
-        tutup(); toast(`Opname #${o.id} dibatalkan.`); selesai();
-      } }] : []),
-      { label: 'Tutup', kelas: 'primary' },
-    ],
-  });
-}
-
-// Buat opname: upload template opname Trizone (bisa diunduh dari stok terakhir toko) atau isi baris → periksa → simpan
-function buatOpnameKantor(selesai, kodeAwal = '') {
-  let mode = 'file';
-  let file = null;
-  let data = null; // { baris, cek } hasil periksa terakhir yang lolos
-  let produkToko = [];
-  const m = modal({
-    judul: 'Buat opname untuk toko', lebar: true,
-    isi: `<p style="margin-top:0">Toko hanya bisa <b>menerapkan apa adanya</b>: angka fisik tidak bisa diubah di toko. Satu opname dibuat per zona;
-        Trizone toko mengambilnya otomatis.</p>
-      <div class="grid g2"><label class="f">Toko${pilihToko('okBuatToko', kodeAwal || (S.toko[0] || {}).kode, '')}</label>
-        <label class="f">Catatan (opsional)<input id="okCatatan" maxlength="150" placeholder="mis. SO bulanan Desember"></label></div>
-      ${tabs('okMode', [['file', 'Upload template Excel'], ['manual', 'Isi baris']], mode)}
-      <div id="okModeIsi"></div><div id="okHasil"></div>`,
-    aksi: [{ label: 'Batal' }, { label: 'Simpan & kirim ke toko', kelas: 'primary', onClick: async ({ tutup }) => {
-      if (!data) throw new Error('Periksa data dulu sampai tidak ada kesalahan.');
-      const r = await rpc('buat_opname_kantor', { p_kode_toko: kode(), p_baris: data.baris, p_catatan: catatan(), p_simpan: true });
-      if (!r.disimpan) throw new Error(`Tidak disimpan: ${num(r.jumlah_error)} kesalahan. Periksa ulang data.`);
-      tutup();
-      toast(`${num(r.id.length)} opname dibuat untuk ${r.kode_toko} (${r.id.map((x) => `#${x}`).join(', ')}). Toko mengambilnya otomatis.`);
-      selesai();
-    } }],
-  });
-  const el = m.el;
-  const tombol = $('.modal-kaki .primary', el);
-  tombol.disabled = true;
-  const kode = () => $('#okBuatToko', el).value;
-  const catatan = () => $('#okCatatan', el).value.trim() || null;
-
-  async function muatProdukToko() {
-    produkToko = await ambilSemua(() => sb.from('produk_toko').select('sku,nama,barcode').eq('kode_toko', kode()).order('sku'));
-    const dl = $('#okSku', el);
-    if (dl) dl.innerHTML = produkToko.map((p) => `<option value="${esc(p.sku)}">${esc(p.nama || '')}</option>`).join('');
-  }
-
-  function tampilMode() {
-    data = null;
-    tombol.disabled = true;
-    $('#okHasil', el).innerHTML = '';
-    const box = $('#okModeIsi', el);
-    if (mode === 'file') {
-      file = null;
-      box.innerHTML = `<div class="row" style="margin:10px 0"><button class="btn sm" id="okTemplate">Unduh template toko ini</button>
-          <span class="muted small">Semua barang toko + stok terakhir yang dikirim toko (dengan Tanggal_Stok). Isi kolom <b>Fisik</b> zona yang dihitung; Fisik kosong = tidak diubah.</span></div>
-        <label class="f">File template opname (Excel)<input type="file" id="okFile" accept=".xlsx,.xls,.csv"></label>
-        <p class="muted small" style="margin:6px 0 0">Ada kolom Tanggal_Stok: di toko hanya selisih Fisik − stok di file yang ditambahkan ke stok saat diterapkan
-          (penjualan setelah tanggal itu tetap terhitung). Tanpa Tanggal_Stok: stok zona di toko di-set ke angka Fisik.</p>`;
-      $('#okTemplate', box).addEventListener('click', (e) => sibuk(e.target, unduhTemplate));
-      $('#okFile', box).addEventListener('change', (e) => { file = e.target.files[0] || null; periksaFile(); });
-    } else {
-      box.innerHTML = `<div class="grid g2" style="margin-top:10px"><label class="f">Zona<select id="okZona">${Object.entries(ZONA_LABEL).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></label>
-          <p class="muted small" style="align-self:end;margin:0">Tanpa stok patokan: stok zona di toko di-set ke angka Fisik saat diterapkan.</p></div>
-        <div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Kode (SKU / barcode)</th><th class="num">Fisik (Biji)</th><th></th></tr></thead>
-          <tbody id="okBaris"></tbody></table></div><datalist id="okSku"></datalist>
-        <div class="row" style="margin-top:8px"><button class="btn sm" id="okTambah">+ Baris</button><button class="btn sm" id="okPeriksa">Periksa</button></div>`;
-      const tambah = () => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td><input data-k list="okSku" placeholder="SKU atau barcode" style="min-width:220px"></td>
-          <td class="num"><input data-f type="number" min="0" step="1" style="width:110px;text-align:right"></td><td><button class="btn ghost sm" data-hapus aria-label="Hapus baris">✕</button></td>`;
-        $('#okBaris', box).append(tr);
-        $('[data-k]', tr).focus();
-      };
-      for (let i = 0; i < 3; i++) tambah();
-      $('#okTambah', box).addEventListener('click', tambah);
-      $('#okBaris', box).addEventListener('click', (e) => { if (e.target.closest('[data-hapus]')) e.target.closest('tr').remove(); });
-      $('#okBaris', box).addEventListener('input', () => { data = null; tombol.disabled = true; });
-      $('#okZona', box).addEventListener('change', () => { data = null; tombol.disabled = true; });
-      $('#okPeriksa', box).addEventListener('click', periksaManual);
-      muatProdukToko().catch((e) => toast(pesanError(e), 'bad'));
-    }
-  }
-
-  async function unduhTemplate() {
-    const [stok, produk] = await Promise.all([
-      ambilSemua(() => sb.from('stok_toko').select('sku,display,gudang,bs,shopee,per_waktu').eq('kode_toko', kode()).order('sku')),
-      ambilSemua(() => sb.from('produk_toko').select('sku,nama').eq('kode_toko', kode()).order('sku')),
-    ]);
-    if (!stok.length) throw new Error(`Toko ${kode()} belum mengirim stok. Template tidak bisa dibuat.`);
-    const nama = Object.fromEntries(produk.map((p) => [p.sku, p.nama]));
-    const rows = stok.map((s) => ({ ...s, nama: nama[s.sku] || '' })).sort((a, b) => String(a.nama).localeCompare(String(b.nama), 'id'));
-    XLSX.writeFile(MbOpnameKantor.workbook(MbOpnameKantor.barisTemplate(rows)), `Opname_${kode()}_${hariIni()}.xlsx`);
-  }
-
-  async function periksaFile() {
-    data = null;
-    tombol.disabled = true;
-    if (!file) { $('#okHasil', el).innerHTML = ''; return; }
-    let f;
-    try {
-      f = MbOpnameKantor.bacaFile(await file.arrayBuffer());
-    } catch (err) { $('#okHasil', el).innerHTML = `<div class="alert bad" style="margin-top:12px">${esc(pesanError(err))}</div>`; return; }
-    await periksa(f.baris, `<b>${esc(file.name)}</b> · lembar ${esc(f.lembar)} · ${num(f.jumlahBarang)} barang dihitung · ${f.bertanggal ? 'dengan Tanggal_Stok' : 'tanpa Tanggal_Stok'}<br>`);
-  }
-
-  function periksaManual() {
-    const zona = $('#okZona', el).value;
-    const baris = $$('#okBaris tr', el).map((tr, i) => ({ baris: i + 1, zona, kode: $('[data-k]', tr).value.trim(), fisik: $('[data-f]', tr).value.trim() }))
-      .filter((b) => b.kode || b.fisik);
-    return periksa(baris, '');
-  }
-
-  async function periksa(baris, info) {
-    const box = $('#okHasil', el);
-    data = null;
-    tombol.disabled = true;
-    if (!baris.length) { box.innerHTML = '<div class="alert warn" style="margin-top:12px">Belum ada baris dengan Fisik terisi.</div>'; return; }
-    box.innerHTML = '<div class="kosong">Memeriksa…</div>';
-    try {
-      const cek = await rpc('buat_opname_kantor', { p_kode_toko: kode(), p_baris: baris, p_catatan: catatan(), p_simpan: false });
-      if (cek.ok) data = { baris, cek };
-      tombol.disabled = !cek.ok;
-      const dasar = (z) => (z.berpatokan ? `stok di file per ${esc(fmtWaktu(z.tanggal_stok))}` : `stok terakhir toko${cek.stok_per ? ` (${esc(fmtWaktu(cek.stok_per))})` : ''}`);
-      box.innerHTML = `<div class="grid" style="margin-top:12px">
-        <div class="alert ${cek.ok ? 'ok' : 'bad'}">${info}${num(cek.jumlah)} baris untuk ${esc(cek.kode_toko)} · ${namaToko(cek.kode_toko)}:
-          ${cek.opname.map((z) => `<b>${esc(ZONA_LABEL[z.zona] || z.zona)}</b> ${num(z.jumlah_baris)} barang`).join(' · ')}
-          <br>${cek.ok ? `Siap disimpan: ${num(cek.opname.length)} opname (satu per zona).` : `<b>${num(cek.jumlah_error)} kesalahan.</b> Perbaiki lalu periksa lagi.`}</div>
-        ${cek.peringatan.length ? `<div class="alert warn">${cek.peringatan.slice(0, 5).map((w) => `Baris ${num(w.baris)}: ${esc(w.pesan)}`).join('<br>')}${cek.peringatan.length > 5 ? `<br>… dan ${num(cek.peringatan.length - 5)} barang lain` : ''}</div>` : ''}
-        ${cek.error.length ? tabel([{ k: 'baris', judul: 'Baris', num: true }, { k: 'pesan', judul: 'Kesalahan' }], cek.error) : ''}
-        ${cek.ok ? tabel([{ k: 'zona', judul: 'Zona', fmt: (v) => esc(ZONA_LABEL[v] || v) }, { k: 'jumlah_baris', judul: 'Barang', num: true, fmt: (v) => num(v) },
-    { k: 'plus_qty', judul: 'Perkiraan selisih +', num: true, fmt: (v) => `+${num(v)}` }, { k: 'minus_qty', judul: 'Perkiraan selisih −', num: true, fmt: (v) => `−${num(v)}` },
-    { k: 'berpatokan', judul: 'Dibandingkan dengan', fmt: (v, z) => `${dasar(z)}${z.tanpa_stok ? ` <span class="muted small">(${num(z.tanpa_stok)} barang tanpa data stok)</span>` : ''}` }], cek.opname) : ''}
-        ${cek.ok ? `<div style="max-height:320px;overflow:auto">${tabel([{ k: 'baris', judul: 'Baris', num: true }, { k: 'zona', judul: 'Zona', fmt: (v) => esc(ZONA_LABEL[v] || v) },
-    { k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' }, { k: 'fisik', judul: 'Fisik', num: true, fmt: (v) => num(v) },
-    { k: 'stok_patokan', judul: 'Stok patokan / toko', num: true, fmt: (v, r) => num(v ?? r.stok_toko) }, { k: 'selisih', judul: 'Selisih', num: true, fmt: selisihPill }], cek.rincian)}</div>` : ''}</div>`;
-    } catch (err) { box.innerHTML = `<div class="alert bad" style="margin-top:12px">${esc(pesanError(err))}</div>`; }
-  }
-
-  pasangTabs(el, 'okMode', (t) => { mode = t; tampilMode(); });
-  $('#okBuatToko', el).addEventListener('change', () => {
-    if (mode === 'file') periksaFile();
-    else { data = null; tombol.disabled = true; $('#okHasil', el).innerHTML = ''; muatProdukToko().catch((e) => toast(pesanError(e), 'bad')); }
-  });
-  tampilMode();
 }
 
 // ---------------------------------------------------------------- Surat jalan (Accurate)

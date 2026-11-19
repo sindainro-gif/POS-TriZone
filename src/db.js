@@ -171,23 +171,6 @@ CREATE TABLE IF NOT EXISTS mb_outbox_shift (
 );
 CREATE INDEX IF NOT EXISTS idx_mb_outbox_pending ON mb_outbox_shift(sent_at, closed_at);
 
--- Stok opname dari kantor (dibuat di mother base). Angkanya tidak bisa diubah di toko: hanya diterapkan
--- apa adanya menjadi dokumen OP-, lalu nomor OP- dilaporkan ke kantor.
-CREATE TABLE IF NOT EXISTS office_opnames (
-    id INTEGER PRIMARY KEY,        -- nomor opname di kantor
-    zone TEXT NOT NULL,
-    notes TEXT,
-    created_by TEXT,
-    created_at TEXT,               -- waktu dibuat di kantor (jam toko)
-    lines TEXT NOT NULL,           -- JSON [{ sku, counted, baseline, count_at }]
-    received_at DATETIME NOT NULL,
-    doc_id INTEGER,                -- stock_opname_docs.id setelah diterapkan
-    doc_no TEXT,
-    applied_at DATETIME,
-    applied_by TEXT,
-    reported_at DATETIME           -- kosong = kantor belum menerima kabar diterapkan
-);
-
 CREATE TABLE IF NOT EXISTS shift_history_sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     shift_uid TEXT NOT NULL,

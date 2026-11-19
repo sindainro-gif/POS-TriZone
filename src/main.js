@@ -248,47 +248,17 @@ async function pullMasterLocal() {
   }
 }
 
-// Opname dari kantor (Gudang & Admin; dari PC kasir lewat PC server). Pesan ke pegawai menyebut "kantor".
-// Tidak pernah melempar karena internet: tanpa internet daftar yang sudah diterima tetap tampil dan bisa diterapkan.
-const officeReady = () => !!mb && !DEMO && localSvc.mbConfig().ready;
-async function syncOfficeOpnames() {
-  if (!officeReady()) return { checked: false, error: '' };
-  try {
-    await mb.opnameKantor();
-    return { checked: true, error: '' };
-  } catch (err) {
-    console.error('[mother base] opname kantor:', err.message);
-    return { checked: false, error: 'Belum bisa memeriksa opname dari kantor. Periksa internet.' };
-  }
-}
-async function officeOpnamesLocal() {
-  const sync = await syncOfficeOpnames();
-  return { items: localSvc.listOfficeOpnames(), ...sync };
-}
-async function applyOfficeOpnameLocal({ id, applied_by } = {}) {
-  await syncOfficeOpnames(); // opname yang baru dibatalkan kantor hilang dari daftar dan tidak bisa diterapkan
-  const doc = localSvc.applyOfficeOpname({ id, applied_by });
-  // Nomor OP- dilaporkan ke kantor sekarang; gagal = dicoba lagi otomatis tiap 5 menit
-  await syncOfficeOpnames();
-  if (officeReady()) mb.kirim().catch((err) => console.error('[mother base] kirim setelah opname kantor:', err.message));
-  return { ...doc, reported: !localSvc.mbOfficeOpnameReports().some((r) => r.id === doc.office_id) };
-}
-
 // Perintah yang boleh dipanggil PC kasir lewat jaringan
 const SERVER_MAIN = {
   'main.checkout': checkoutLocal,
   'main.voidReceipt': (a) => localSvc.voidReceipt(a),
   'main.closeShift': closeShiftLocal,
   'main.pullMaster': pullMasterLocal,
-  'main.officeOpnames': officeOpnamesLocal,
-  'main.applyOfficeOpname': applyOfficeOpnameLocal,
 };
 const REMOTE_BLOCKED = new Set([
   'archiveShift', 'pruneShiftHistory', 'checkout', 'shiftData',
   // Mother base: kunci toko & antrean kiriman hanya di PC pemilik database (mbStatus boleh, tanpa rahasia)
   'mbConfig', 'mbSaveConfig', 'mbState', 'mbSetState', 'mbQueueHistory', 'mbBatch', 'mbAck', 'mbApplyMaster', 'mbMasterSince',
-  // Opname dari kantor hanya lewat main.officeOpnames / main.applyOfficeOpname (langsung dilaporkan ke kantor)
-  'mbOfficeOpnamesSync', 'mbOfficeOpnameReports', 'mbOfficeOpnameAck', 'applyOfficeOpname',
 ]);
 
 function serverCall(method, args) {
@@ -647,8 +617,6 @@ const ACCESS = {
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
   // Stok opname manual (form scan) hanya Admin; Gudang hanya lewat template Excel (unduh → isi Fisik → import)
   'opname:list': GUDANG, 'opname:get': GUDANG, 'opname:template': GUDANG, 'opname:importFile': GUDANG, 'opname:import': GUDANG,
-  // Opname dari kantor: hanya dilihat & diterapkan apa adanya (tidak ada perintah untuk mengubah angkanya)
-  'opname:office': GUDANG, 'opname:applyOffice': GUDANG,
   'rcDrafts:list': GUDANG, 'rcDrafts:count': GUDANG, 'rcDrafts:create': GUDANG, 'rcDrafts:process': GUDANG, 'rcDrafts:delete': GUDANG,
   'labels:designs': GUDANG, 'labels:saveDesign': GUDANG, 'labels:deleteDesign': GUDANG, 'labels:setDefault': GUDANG,
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
@@ -819,9 +787,6 @@ const handlers = {
   // Hasil opname boleh Excel / CSV, atau PDF hasil "Save as PDF" Excel dari template opname
   'opname:importFile': () => pickSheetRows('Pilih file hasil stok opname (Excel / CSV / PDF)', { pdf: { headers: OPNAME_TEMPLATE_HEADERS, keyHeader: 'Kode' } }),
   'opname:import': (a) => svc.importOpname(a),
-  // Opname dari kantor: di PC kasir lewat PC server (yang terhubung ke kantor), seperti Perbarui Daftar Barang
-  'opname:office': () => runMain('main.officeOpnames'),
-  'opname:applyOffice': (a) => runMain('main.applyOfficeOpname', { id: a.id, applied_by: session.name }),
 };
 
 ipcMain.handle('api', async (_e, channel, args) => {

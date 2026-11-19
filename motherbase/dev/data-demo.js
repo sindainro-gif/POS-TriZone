@@ -77,7 +77,7 @@ async function buatDatabase(dbUrl) {
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
     'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql',
-    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261119000007_opname_kantor.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;
@@ -112,16 +112,14 @@ async function buatDataDemo(dbUrl) {
       [sku, sku === 'PLJ-002' ? 48 : 24]);
   }
 
-  // Toko Trizone sungguhan, terhubung lewat kunci toko (hanya RPC yang boleh dipanggil anon)
-  const RPC_TOKO = ['terima_data', 'ambil_master', 'ambil_opname_kantor', 'opname_kantor_diterapkan'];
+  // Toko Trizone sungguhan, terhubung lewat kunci toko
   const anonFetch = async (url, init) => {
     const fn = url.split('/rpc/')[1];
     const p = JSON.parse(init.body).p;
     const client = await pool.connect();
     try {
       await client.query('begin; set local role anon');
-      if (!RPC_TOKO.includes(fn)) throw new Error(`RPC toko tidak dikenal: ${fn}`);
-      const r = await client.query(`select public.${fn}($1::jsonb) as v`, [JSON.stringify(p)]);
+      const r = await client.query(`select public.${fn === 'terima_data' ? 'terima_data' : 'ambil_master'}($1::jsonb) as v`, [JSON.stringify(p)]);
       await client.query('commit');
       return new Response(JSON.stringify(r.rows[0].v), { status: 200 });
     } catch (e) {
@@ -223,17 +221,6 @@ async function buatDataDemo(dbUrl) {
     { sku: 'PLJ-002', counted: p['PLJ-002'].floor_stock - 2 }] });
   trp.createTransferDoc({ from_zone: 'warehouse', to_zone: 'shopee', reason: 'Stok online', items: [{ sku: 'RTN-002', qty: 5 }] });
   trp.createTransferDoc({ from_zone: 'shopee', to_zone: 'shopee_sold', reason: 'Pesanan Shopee', items: [{ sku: 'RTN-002', qty: 2 }] });
-
-  // Opname dari kantor: Tropodo sudah menerapkannya (nomor OP- dilaporkan ke kantor), Sidoarjo belum
-  const buatOk = (kode, baris, catatan) => q('select public.buat_opname_kantor($1, $2::jsonb, $3, true) as r', [kode, JSON.stringify(baris), catatan])
-    .then(([x]) => { if (!x.r.disimpan) throw new Error(`Opname kantor ${kode}: ${JSON.stringify(x.r.error)}`); return x.r.id; });
-  await buatOk('TRP', [{ baris: 2, zona: 'floor', kode: 'PLJ-003', fisik: p['PLJ-003'].floor_stock + 1 }, { baris: 3, zona: 'floor', kode: 'RTN-001', fisik: p['RTN-001'].floor_stock }],
-    'SO kantor rak plastik');
-  await buatOk('SDA', [{ baris: 2, zona: 'warehouse', kode: 'PLJ-001', fisik: 5 }, { baris: 3, zona: 'warehouse', kode: 'RTN-002', fisik: 12 }], 'SO kantor gudang');
-  await tokoSvc.TRP.mb.opnameKantor();
-  trp.applyOfficeOpname({ id: trp.listOfficeOpnames()[0].id, applied_by: 'Budi' });
-  await tokoSvc.TRP.mb.opnameKantor();
-
   for (const t of TOKO) {
     const svc = tokoSvc[t.kode].svc;
     svc.openShift({ cashier_name: 'Rina' });
