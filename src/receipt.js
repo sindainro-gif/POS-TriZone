@@ -67,7 +67,7 @@ function headerRows(settings) {
 
 const printedAt = (now) => `JAM CETAK : ${pad2(now.getDate())}/${pad2(now.getMonth() + 1)}/${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
 
-function buildReceiptRows(receipt, settings = {}, { reprint = false, now = new Date() } = {}) {
+function buildReceiptRows(receipt, settings = {}, { reprint = false } = {}) {
   const rows = [];
   rows.push(...headerRows(settings));
   if (reprint) rows.push({ t: 'c', s: '** CETAK ULANG **' });
@@ -113,8 +113,8 @@ function buildReceiptRows(receipt, settings = {}, { reprint = false, now = new D
   }
   rows.push({ t: 'hr' });
 
+  // Tanpa "JAM CETAK" di bawah: tanggal & jam transaksi sudah tercetak di atas (Tgl)
   rows.push(...textRows(settings.receipt_footer));
-  rows.push({ t: 'l', s: printedAt(now), cut: true });
   return rows;
 }
 

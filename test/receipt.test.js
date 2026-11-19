@@ -34,7 +34,8 @@ t('header & footer custom tampil di tengah', () => {
   assert.strictEqual(lines[0].trim(), 'KANO 5000 SEPANJANG');
   assert.ok(lines[0].startsWith('      '), 'header harus rata tengah');
   assert.ok(lines.some((l) => l.trim() === 'DAN TUKARKAN SOUVENIR'));
-  assert.strictEqual(lines[lines.length - 1], 'JAM CETAK : 15/10/2026 14:53:30');
+  assert.strictEqual(lines[lines.length - 1].trim(), 'DAN TUKARKAN SOUVENIR'); // footer = baris terakhir
+  assert.ok(!lines.some((l) => /JAM CETAK/.test(l)), 'jam cetak tidak dicetak di nota (jam sudah ada di atas)');
 });
 
 t('isi nota: tanggal/jam, kasir, baris barang, BRS/QTY, tunai, kembali', () => {
