@@ -2168,8 +2168,17 @@ views.shift = (() => {
         await refreshShift();
         modal({
           title: 'Shift Berhasil Ditutup',
-          body: `<p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi.</p>`,
+          body: `<p>Omset ${rp(r.revenue)} dari ${num(r.receipts)} transaksi.</p>
+            ${r.recap_print_error ? `<div class="alert warn">Rekap shift gagal dicetak: ${esc(r.recap_print_error)}</div>` : ''}`,
           actions: [
+            {
+              label: state.settings.auto_print !== '0' && !r.recap_print_error ? 'Cetak Ulang Rekap' : 'Cetak Rekap',
+              kind: 'ghost',
+              onClick: async ({ btn }) => {
+                btn.disabled = true;
+                try { await api('shift:printRecap', { recap: r.recap }); toast('Rekap shift dicetak.', 'ok'); } catch (err) { toast(err.message, 'err', 8000); } finally { btn.disabled = false; }
+              },
+            },
             { label: 'Selesai', kind: 'primary', onClick: ({ close }) => { close(); show(); } },
           ],
         });

@@ -7,7 +7,7 @@ const XLSX = require('xlsx');
 const { Database } = require('./db');
 const { createServices, TEMPLATE_HEADERS, TEMPLATE_SAMPLE, RECEPTION_TEMPLATE_HEADERS, RECEPTION_TEMPLATE_SAMPLE, OPNAME_TEMPLATE_HEADERS, localNow } = require('./services');
 const reports = require('./reports');
-const { buildReceiptLines, buildReceiptRows, receiptFragment, receiptPage, FONT_SCALES } = require('./receipt');
+const { buildReceiptLines, buildReceiptRows, buildShiftRows, receiptFragment, receiptPage, FONT_SCALES } = require('./receipt');
 const { labelPages, labelPreview } = require('./labels');
 const { startServer, createRemoteClient, newPairKey, DEFAULT_PORT } = require('./remote');
 const { loadDevice, saveDevice, PRINTER_KEYS, MODES } = require('./device');
@@ -159,6 +159,14 @@ async function printPage(page, { deviceName, pdfName, what }) {
   }
 }
 
+// Rekap tutup shift di printer nota komputer ini (tempat shift ditutup)
+async function printShiftRecap(recap, { reprint = false } = {}) {
+  if (!recap || typeof recap !== 'object') throw userError('Data rekap shift tidak ada.');
+  const s = await getSettings();
+  const page = receiptPage(buildShiftRows(recap, s, { reprint }), s.paper_width, { offsetMm: s.receipt_offset, fontScale: s.receipt_font_scale });
+  return printPage(page, { deviceName: s.printer_name, pdfName: `Rekap_Shift_${String(recap.closed_at || localNow()).replace(/\D/g, '')}`, what: 'Rekap shift' });
+}
+
 async function printReceipt(receipt, { reprint = false } = {}) {
   const s = await getSettings();
   const page = receiptPage(buildReceiptRows(receipt, s, { reprint }), s.paper_width, { offsetMm: s.receipt_offset, fontScale: s.receipt_font_scale });
@@ -235,7 +243,13 @@ async function closeShiftLocal({ notes } = {}) {
   // Lokasi file laporan sengaja TIDAK dikirim ke layar (tersimpan di shift_history.report_dir)
   // Hasil kiriman tidak ditampilkan ke pegawai (Admin memantaunya di Pengaturan → Mother Base)
   if (!motherbase.sent && motherbase.configured) console.error('[mother base] shift belum terkirim:', motherbase.error);
-  return { revenue: summary.totals.revenue, receipts: summary.totals.receipts };
+  // Rekap ringkas untuk dicetak di printer nota komputer yang menutup shift (lihat 'shift:close')
+  const recap = {
+    cashier: summary.shift.cashier_name, shift_start: summary.shift.shift_start, closed_at: closedAt,
+    receipts: summary.totals.receipts, qty: summary.totals.qty, revenue: summary.totals.revenue, cash_sales: summary.cashSales,
+    voids: { count: summary.voids ? summary.voids.count : 0, total: summary.voids ? summary.voids.total : 0 }, notes: ctx ? ctx.notes : '',
+  };
+  return { revenue: summary.totals.revenue, receipts: summary.totals.receipts, recap };
 }
 
 // Kirim antrean ke mother base sekarang juga dan pastikan shift `uid` (atau semua shift) sudah diterima.
@@ -686,7 +700,7 @@ const ACCESS = {
   'labels:designs': GUDANG, 'labels:saveDesign': GUDANG, 'labels:deleteDesign': GUDANG, 'labels:setDefault': GUDANG,
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
-  'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR,
+  'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR, 'shift:printRecap': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'receipt:void': KASIR,
 };
 
@@ -810,7 +824,15 @@ const handlers = {
   },
   'shift:summary': () => svc.shiftSummary(),
   'shift:receipt': (a) => svc.receiptDetail(a),
-  'shift:close': (a) => (isClient() ? closeShiftClient(a) : runMain('main.closeShift', a)),
+  'shift:close': async (a) => {
+    const r = await (isClient() ? closeShiftClient(a) : runMain('main.closeShift', a));
+    // Rekap tercetak otomatis (ikut "Cetak nota otomatis"); gagal cetak tidak membatalkan tutup shift
+    if (r && r.recap && (await getSettings()).auto_print !== '0') {
+      try { await printShiftRecap(r.recap); } catch (err) { r.recap_print_error = err.message; }
+    }
+    return r;
+  },
+  'shift:printRecap': ({ recap } = {}) => printShiftRecap(recap, { reprint: true }),
   'products:pullMaster': () => runMain('main.pullMaster'),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
   'offline:markChecked': (a) => svc.markOfflineChecked(a),

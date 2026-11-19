@@ -1,7 +1,7 @@
 'use strict';
 // Uji formatter nota thermal: node test/receipt.test.js
 const assert = require('assert');
-const { buildReceiptLines, buildReceiptRows, receiptFragment, receiptPage } = require('../src/receipt');
+const { buildReceiptLines, buildReceiptRows, buildShiftRows, rowsToText, receiptFragment, receiptPage } = require('../src/receipt');
 
 let passed = 0;
 function t(name, fn) {
@@ -68,6 +68,31 @@ t('cetak ulang & non-tunai tanpa kembalian', () => {
   const qris = buildReceiptLines({ ...receipt, payment_method: 'QRIS' }, settings, { now }).join('\n');
   assert.match(qris, /QRIS\s+=\s+48\.000/);
   assert.doesNotMatch(qris, /Kembali/);
+});
+
+t('rekap tutup shift ringkas untuk printer nota', () => {
+  const recap = { cashier: 'Rina', shift_start: '2026-11-19 08:00:00', closed_at: '2026-11-19 16:05:30', receipts: 12, qty: 40, revenue: 910000, cash_sales: 910000, voids: { count: 1, total: 7000 }, notes: 'Ada uang palsu 50rb' };
+  for (const [w, cols] of [['58', 32], ['80', 48]]) {
+    const txt = rowsToText(buildShiftRows(recap, { ...settings, paper_width: w }, { now }), cols);
+    for (const l of txt) assert.ok(l.length <= cols, `"${l}" (${l.length})`);
+    const all = txt.join('\n');
+    assert.match(all, /KANO 5000 SEPANJANG/);
+    assert.match(all, /\*\* REKAP TUTUP SHIFT \*\*/);
+    assert.match(all, /Kasir\s+Rina/);
+    assert.match(all, /Mulai\s+19-11-26 08:00/);
+    assert.match(all, /Tutup\s+19-11-26 16:05/);
+    assert.match(all, /Transaksi\s+=\s+12 struk/);
+    assert.match(all, /Barang\s+=\s+40 biji/);
+    assert.match(all, /Pembatalan\s+=\s+1 nota/);
+    assert.match(all, /Dikembalikan=\s+7\.000/);
+    assert.match(all, /Total omset\s+=\s+910\.000/);
+    assert.match(all, /Tunai\s+=\s+910\.000/);
+    assert.match(all, /Catatan: Ada uang palsu 50rb/);
+    assert.doesNotMatch(all, /mother base|CETAK ULANG/i);
+  }
+  const plain = rowsToText(buildShiftRows({ ...recap, voids: { count: 0, total: 0 }, notes: '' }, settings, { reprint: true, now }), 32).join('\n');
+  assert.doesNotMatch(plain, /Pembatalan|Catatan/);
+  assert.match(plain, /CETAK ULANG/);
 });
 
 t('ukuran halaman cetak sesuai lebar kertas; tinggi diukur dari isi', () => {

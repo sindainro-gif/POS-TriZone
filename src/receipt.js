@@ -55,14 +55,21 @@ function parseTime(s) {
  * receipt: { receipt_no, created_at, cashier, payment_method, lines:[{name, qty, unit_price, line_total}], total, cash_received, change }
  * settings: { receipt_header, receipt_footer, store_name, store_address, paper_width }
  */
-function buildReceiptRows(receipt, settings = {}, { reprint = false, now = new Date() } = {}) {
-  const rows = [];
+// Kepala nota: header nota di Pengaturan, atau nama & alamat toko. Baris pertama (nama toko) sedikit lebih besar.
+function headerRows(settings) {
   const header = settings.receipt_header && settings.receipt_header.trim()
     ? settings.receipt_header
     : [settings.store_name, settings.store_address].filter(Boolean).join('\n');
   const head = textRows(header);
-  if (head.length) head[0].big = true; // baris pertama (nama toko) sedikit lebih besar
-  rows.push(...head);
+  if (head.length) head[0].big = true;
+  return head;
+}
+
+const printedAt = (now) => `JAM CETAK : ${pad2(now.getDate())}/${pad2(now.getMonth() + 1)}/${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+
+function buildReceiptRows(receipt, settings = {}, { reprint = false, now = new Date() } = {}) {
+  const rows = [];
+  rows.push(...headerRows(settings));
   if (reprint) rows.push({ t: 'c', s: '** CETAK ULANG **' });
   if (settings.demo) rows.push({ t: 'c', s: '** DEMO - BUKAN NOTA ASLI **' });
   // Transaksi saat PC gudang tidak terhubung (nomor OFF-...), dikirim ke gudang setelah koneksi kembali
@@ -107,8 +114,40 @@ function buildReceiptRows(receipt, settings = {}, { reprint = false, now = new D
   rows.push({ t: 'hr' });
 
   rows.push(...textRows(settings.receipt_footer));
-  const p = `${pad2(now.getDate())}/${pad2(now.getMonth() + 1)}/${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-  rows.push({ t: 'l', s: `JAM CETAK : ${p}`, cut: true });
+  rows.push({ t: 'l', s: printedAt(now), cut: true });
+  return rows;
+}
+
+/**
+ * Rekap tutup shift ringkas untuk printer nota.
+ * recap: { cashier, shift_start, closed_at, receipts, qty, revenue, cash_sales, voids: { count, total }, notes }
+ */
+function buildShiftRows(recap = {}, settings = {}, { reprint = false, now = new Date() } = {}) {
+  const fmt = (s) => { const m = parseTime(s); return m ? `${m.d}-${m.mo}-${m.y.slice(2)} ${m.h}:${m.mi}` : '-'; };
+  const voids = recap.voids || {};
+  const rows = [...headerRows(settings), { t: 'c', s: '** REKAP TUTUP SHIFT **' }];
+  if (reprint) rows.push({ t: 'c', s: '** CETAK ULANG **' });
+  if (settings.demo) rows.push({ t: 'c', s: '** DEMO - BUKAN NOTA ASLI **' });
+  rows.push({ t: 'hr' });
+  rows.push({ t: 'lr', l: 'Kasir', r: String(recap.cashier || '-') });
+  rows.push({ t: 'lr', l: 'Mulai', r: fmt(recap.shift_start) });
+  rows.push({ t: 'lr', l: 'Tutup', r: fmt(recap.closed_at) });
+  rows.push({ t: 'hr' });
+  rows.push({ t: 'kv', k: 'Transaksi', v: `${num(recap.receipts)} struk` });
+  rows.push({ t: 'kv', k: 'Barang', v: `${num(recap.qty)} biji` });
+  if (Number(voids.count) > 0) {
+    rows.push({ t: 'kv', k: 'Pembatalan', v: `${num(voids.count)} nota` });
+    rows.push({ t: 'kv', k: 'Dikembalikan', v: num(voids.total) });
+  }
+  rows.push({ t: 'hr' });
+  rows.push({ t: 'kv', k: 'Total omset', v: num(recap.revenue) });
+  rows.push({ t: 'kv', k: 'Tunai', v: num(recap.cash_sales) });
+  rows.push({ t: 'hr' });
+  if (String(recap.notes || '').trim()) {
+    rows.push({ t: 'l', s: `Catatan: ${String(recap.notes).trim()}` });
+    rows.push({ t: 'hr' });
+  }
+  rows.push({ t: 'l', s: printedAt(now), cut: true });
   return rows;
 }
 
@@ -177,4 +216,4 @@ function receiptPage(rows, paperWidth, opts = {}) {
   return { html, widthMicrons: f.width * 1000, heightMicrons: Math.max(heightMm, 40) * 1000, measure: '.nota' };
 }
 
-module.exports = { buildReceiptLines, buildReceiptRows, rowsToText, receiptFragment, receiptPage, COLS, FONT_SCALES };
+module.exports = { buildReceiptLines, buildReceiptRows, buildShiftRows, rowsToText, receiptFragment, receiptPage, COLS, FONT_SCALES };

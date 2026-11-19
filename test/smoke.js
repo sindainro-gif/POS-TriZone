@@ -441,6 +441,10 @@ app.on('browser-window-created', (_e, win) => {
       const salesBefore = svc.shiftSalesRows().length;
       const res = await run(`window.posBridge.call('shift:close', {})`);
       console.log('tutup shift (mother base belum diatur):', JSON.stringify(res));
+      // Rekap tutup shift tercetak otomatis di printer nota (uji: PDF di folder output)
+      const recapPdf = fs.readdirSync(out).filter((f) => /^Rekap_Shift_\d+\.pdf$/.test(f));
+      console.log('rekap shift tercetak:', recapPdf.join(', '), '·', JSON.stringify(res.data.recap));
+      if (!recapPdf.length || !res.data.recap || res.data.recap.cashier !== 'Pemilik' || res.data.recap_print_error) throw new Error('rekap tutup shift tidak tercetak');
       const dirs = fs.readdirSync(process.env.POS_REPORTS_DIR).filter((d) => d !== LEGACY_REPORT);
       const files = fs.readdirSync(path.join(process.env.POS_REPORTS_DIR, dirs[0]));
       console.log('file laporan:', files.join(', '));
@@ -584,7 +588,7 @@ app.on('browser-window-created', (_e, win) => {
       // Data tetap langsung terkirim & dikonfirmasi, tetapi layar tidak menyebutnya
       const doneShown = await run(`document.querySelector('#modalRoot').innerText`);
       console.log('tutup shift (layar):', doneShown.replace(/\s+/g, ' '), '· diterima mother base:', received.length, 'shift');
-      if (!/Shift Berhasil Ditutup/.test(doneShown) || /mother base|cadangan|4 hari/i.test(doneShown)) throw new Error('layar hasil tutup shift tidak netral');
+      if (!/Shift Berhasil Ditutup/.test(doneShown) || !/Cetak Ulang Rekap/.test(doneShown) || /mother base|cadangan|4 hari/i.test(doneShown)) throw new Error('layar hasil tutup shift tidak netral');
       if (svc.mbStatus().pending_shifts !== 0 || !received.includes(closingUid) || svc.listShiftHistory().some((h) => !h.mb_terkirim)) {
         throw new Error('tutup shift tidak langsung mengirim ke mother base');
       }

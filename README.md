@@ -183,6 +183,7 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
 - **Riwayat Shift (cadangan):** tutup shift tidak lagi menghapus penjualan. Penjualan shift yang sudah ditutup dipindah ke tabel riwayat di database.
   - Riwayat disimpan **4 hari** (hari ini + 3 hari sebelumnya). Yang lebih lama dihapus otomatis saat tutup shift, saat aplikasi dibuka, dan tiap jam.
   - **Riwayat tidak tampil di aplikasi** dan keberadaannya tidak disebut di layar pegawai.
+  - **Rekap tutup shift tercetak** otomatis di printer nota komputer yang menutup shift (ikut pengaturan "Cetak nota otomatis"): kasir, jam mulai/tutup, jumlah transaksi, barang terjual, total omset, tunai, pembatalan, catatan kasir. Layar Shift Berhasil Ditutup punya tombol **Cetak Ulang Rekap**.
   - **Tutup shift langsung mengirim ke mother base** dan menunggu konfirmasinya, tetapi layar hanya menampilkan "Shift Berhasil Ditutup" dan omsetnya. Bila internet putus atau mother base belum diatur, shift tetap ditutup; datanya menunggu di antrean dan dikirim otomatis tiap 5 menit. Admin memantau jumlah shift menunggu dan tombol **Kirim Sekarang** di **Pengaturan → Mother Base**.
 - Antrean mother base: tabel `mb_outbox_shift` di `pos.db` (tidak ikut dihapus bersama Riwayat Shift sampai diterima mother base).
 
