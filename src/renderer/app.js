@@ -939,7 +939,7 @@ views.receiving = (() => {
           onClick: async ({ close, el }) => {
             try {
               await api('rcDrafts:create', {
-                reference_no: $('#rcRef').value, supplier_name: $('#rcSupplier').value, code,
+                reference_no: $('#rcRef').value, code,
                 name: $('#dfName', el).value, qty: $('#dfQty', el).value, pack_type: $('#dfUnit', el).value, destination: $('#dfDest', el).value,
               });
               close();
@@ -959,7 +959,7 @@ views.receiving = (() => {
     const rows = await api('rcDrafts:list').catch(() => []);
     $('#rcDraftCard').classList.toggle('hidden', !rows.length);
     $('#rcDrafts').innerHTML = rows.map((d) => `<tr data-id="${d.id}">
-        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.reference_no)}</b></td><td>${esc(d.supplier_name || '-')}</td>
+        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.reference_no)}</b></td>
         <td class="mono">${esc(d.code)}</td><td>${esc(d.name || '-')}</td><td class="r">${num(d.qty)}</td><td>${d.pack_type}</td>
         <td><span class="badge ${DEST_CLASS[d.destination]}">${DEST[d.destination]}</span></td>
         <td>${d.product ? `<span class="badge floor ok">Sudah terdaftar</span> <span class="small">${esc(d.product.name)}</span>` : '<span class="badge bs">Belum terdaftar</span>'}</td>
@@ -1012,7 +1012,18 @@ views.receiving = (() => {
     $('#rcPicker').focus();
   }
   $('#rcAdd').addEventListener('click', add);
-  $('#rcQty').addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  // Enter = pindah ke kolom berikutnya (seperti Tab). Kolom Barang memakai Enter untuk scan / memilih barang
+  // (lalu pindah ke Jumlah); Enter di kolom terakhir (Tujuan) = Tambah.
+  const enterTo = (sel, next) => $(sel).addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    next();
+  });
+  enterTo('#rcRef', () => $('#rcNotes').focus());
+  enterTo('#rcNotes', () => $('#rcPicker').focus());
+  enterTo('#rcQty', () => $('#rcUnit').focus());
+  enterTo('#rcUnit', () => $('#rcDest').focus());
+  enterTo('#rcDest', add);
 
   const pieces = (i) => (i.pack_type === 'Dus' ? i.qty * i.product.pack_ratio : i.qty);
 
@@ -1040,7 +1051,7 @@ views.receiving = (() => {
 
   function reset() {
     items.length = 0;
-    ['#rcRef', '#rcSupplier', '#rcNotes', '#rcPicker'].forEach((s) => { $(s).value = ''; });
+    ['#rcRef', '#rcNotes', '#rcPicker'].forEach((s) => { $(s).value = ''; });
     picked = null;
     $('#rcPicked').textContent = '';
     render();
@@ -1058,7 +1069,7 @@ views.receiving = (() => {
     if (!ok) return;
     try {
       const r = await api('receptions:create', {
-        reference_no: $('#rcRef').value, supplier_name: $('#rcSupplier').value, notes: $('#rcNotes').value,
+        reference_no: $('#rcRef').value, notes: $('#rcNotes').value,
         items: items.map((i) => ({ sku: i.product.sku, qty: i.qty, pack_type: i.pack_type, destination: i.destination })),
       });
       toast(`Penerimaan ${r.reference_no} tersimpan (${num(r.total_items_count)} Biji).`, 'ok');
@@ -1091,8 +1102,8 @@ views.receiving = (() => {
       wide: true,
       body: `<div class="alert ${plan.errors.length ? 'warn' : 'ok'}">${n ? `${num(n)} penerimaan siap disimpan (${num(total)} Biji)` : 'Tidak ada penerimaan yang bisa disimpan'}${plan.errors.length ? `, <b>${plan.errors.length} baris/dokumen dilewati</b>` : ''}.</div>
         ${plan.drafts ? `<p class="small" style="margin-top:8px"><span class="badge bs">Draft</span> ${num(plan.drafts)} barang belum terdaftar akan dicatat di <b>Draft Barang Belum Terdaftar</b> (stoknya belum masuk).</p>` : ''}
-        ${n ? `<div class="tbl-wrap" style="max-height:260px;margin-top:10px"><table class="tbl"><thead><tr><th>No. Surat Jalan</th><th>Supplier</th><th class="r">Baris</th><th class="r">Total Biji</th></tr></thead><tbody>
-          ${plan.docs.map((d) => `<tr><td class="mono"><b>${esc(d.reference_no)}</b></td><td>${esc(d.supplier_name || '-')}</td><td class="r">${num(d.lines)}</td><td class="r">${num(d.total)}</td></tr>`).join('')}
+        ${n ? `<div class="tbl-wrap" style="max-height:260px;margin-top:10px"><table class="tbl"><thead><tr><th>No. Surat Jalan</th><th class="r">Baris</th><th class="r">Total Biji</th></tr></thead><tbody>
+          ${plan.docs.map((d) => `<tr><td class="mono"><b>${esc(d.reference_no)}</b></td><td class="r">${num(d.lines)}</td><td class="r">${num(d.total)}</td></tr>`).join('')}
         </tbody></table></div><p class="muted small">Stok langsung bertambah setelah disimpan.</p>` : ''}
         ${errorList(plan.errors)}`,
       actions: [
@@ -1130,10 +1141,10 @@ views.receiving = (() => {
   async function loadHistory() {
     const rows = await api('receptions:list', { q: $('#rcSearch').value });
     $('#rcHistory').innerHTML = rows.length ? rows.map((r) => `<tr>
-        <td class="muted">${fmtTime(r.received_at)}</td><td class="mono"><b>${esc(r.reference_no)}</b></td><td>${esc(r.supplier_name || '-')}</td>
+        <td class="muted">${fmtTime(r.received_at)}</td><td class="mono"><b>${esc(r.reference_no)}</b></td>
         <td class="r">${num(r.line_count)}</td><td class="r">${num(r.total_items_count)}</td><td class="muted">${esc(r.notes || '')}</td>
         <td><button class="btn sm ghost" data-id="${r.id}">Detail</button></td></tr>`).join('')
-      : '<tr><td colspan="7" class="empty-row">Belum ada riwayat penerimaan.</td></tr>';
+      : '<tr><td colspan="6" class="empty-row">Belum ada riwayat penerimaan.</td></tr>';
   }
   $('#rcHistory').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-id]');
@@ -1143,7 +1154,7 @@ views.receiving = (() => {
       title: `Penerimaan ${r.reference_no}`,
       wide: true,
       body: `<div class="kv"><span>Tanggal</span><b>${fmtTime(r.received_at)}</b></div>
-        <div class="kv"><span>Supplier</span><b>${esc(r.supplier_name || '-')}</b></div>
+        ${r.supplier_name ? `<div class="kv"><span>Supplier</span><b>${esc(r.supplier_name)}</b></div>` : ''}
         ${r.notes ? `<div class="kv"><span>Catatan</span><b>${esc(r.notes)}</b></div>` : ''}
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Barang</th><th>Satuan Input</th><th class="r">Diterima (Biji)</th><th>Tujuan</th></tr></thead><tbody>
         ${r.items.map((i) => `<tr><td><div class="pname">${esc(i.name || i.sku)}</div><div class="psub mono">${esc(i.sku)}</div></td>
@@ -1990,7 +2001,7 @@ views.barcode = (() => {
     designer.setOpen(false); // designer tersembunyi setiap layar dibuka
     const recs = await api('receptions:list', { limit: 50 });
     $('#lbReception').innerHTML = recs.length
-      ? recs.map((r) => `<option value="${r.id}">${esc(r.reference_no)} · ${esc(r.supplier_name || '-')} · ${fmtTime(r.received_at)}</option>`).join('')
+      ? recs.map((r) => `<option value="${r.id}">${esc(r.reference_no)} · ${fmtTime(r.received_at)}</option>`).join('')
       : '<option value="">Belum ada dokumen penerimaan</option>';
     await loadPrinters();
     if (!current) await loadDesigns();

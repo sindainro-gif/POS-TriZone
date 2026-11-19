@@ -167,9 +167,8 @@
       </header>
       <div class="card">
         <h2>Dokumen Penerimaan Baru</h2>
-        <div class="row-3">
+        <div class="row-2">
           <div class="field"><label>No. Surat Jalan / Nota Supplier *</label><input id="rcRef" maxlength="60" placeholder="SJ-0001"></div>
-          <div class="field"><label>Nama Supplier</label><input id="rcSupplier" maxlength="100" placeholder="PT Sumber Makmur"></div>
           <div class="field"><label>Catatan</label><input id="rcNotes" maxlength="500" placeholder="Opsional"></div>
         </div>
         <div class="add-row">
@@ -195,17 +194,17 @@
         <h2>Draft Barang Belum Terdaftar</h2>
         <p class="muted small">Barang dari surat jalan yang kodenya belum ada di Daftar Barang — stoknya <b>belum</b> masuk. Daftarkan barangnya di Daftar Barang, lalu klik <b>Proses</b>.</p>
         <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Tanggal</th><th>No. Surat Jalan</th><th>Supplier</th><th>Kode</th><th>Nama Barang</th><th class="r">Jumlah</th><th>Satuan</th><th>Tujuan</th><th>Status</th><th class="w-act2"></th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>No. Surat Jalan</th><th>Kode</th><th>Nama Barang</th><th class="r">Jumlah</th><th>Satuan</th><th>Tujuan</th><th>Status</th><th class="w-act2"></th></tr></thead>
           <tbody id="rcDrafts"></tbody>
         </table></div>
       </div>
       <div class="card">
         <div class="card-head">
           <h2>Riwayat Penerimaan</h2>
-          <input id="rcSearch" class="search" placeholder="Cari no. surat jalan / supplier…">
+          <input id="rcSearch" class="search" placeholder="Cari no. surat jalan…">
         </div>
         <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Tanggal</th><th>No. Surat Jalan</th><th>Supplier</th><th class="r">Baris</th><th class="r">Total Biji</th><th>Catatan</th><th class="w-act"></th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>No. Surat Jalan</th><th class="r">Baris</th><th class="r">Total Biji</th><th>Catatan</th><th class="w-act"></th></tr></thead>
           <tbody id="rcHistory"></tbody>
         </table></div>
       </div>

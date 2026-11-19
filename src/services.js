@@ -54,12 +54,13 @@ const TEMPLATE_SAMPLE = [
 ];
 
 // Template import penerimaan: satu file boleh berisi beberapa surat jalan (dikelompokkan per No_Surat_Jalan)
-const RECEPTION_TEMPLATE_HEADERS = ['No_Surat_Jalan', 'Supplier', 'Catatan', 'Kode', 'Nama_Barang', 'Jumlah', 'Satuan', 'Tujuan'];
+// Kolom "Supplier" tidak ada lagi di template; file lama yang masih memilikinya tetap diterima.
+const RECEPTION_TEMPLATE_HEADERS = ['No_Surat_Jalan', 'Catatan', 'Kode', 'Nama_Barang', 'Jumlah', 'Satuan', 'Tujuan'];
 
 const RECEPTION_TEMPLATE_SAMPLE = [
-  ['SJ-0001', 'PT Sumber Makmur', '', 'MNM-001', 'Air Mineral 600ml', 5, 'Dus', 'Gudang Utama'],
-  ['SJ-0001', '', '', '8997654321098', 'Keripik Kentang 68g', 12, 'Biji', 'Display Toko'],
-  ['SJ-0002', 'CV Jaya Abadi', 'Kiriman sore', 'SNK-010', 'Keripik Kentang 68g', 2, 'Dus', ''],
+  ['SJ-0001', '', 'MNM-001', 'Air Mineral 600ml', 5, 'Dus', 'Gudang Utama'],
+  ['SJ-0001', '', '8997654321098', 'Keripik Kentang 68g', 12, 'Biji', 'Display Toko'],
+  ['SJ-0002', 'Kiriman sore', 'SNK-010', 'Keripik Kentang 68g', 2, 'Dus', ''],
 ];
 
 const OPNAME_TEMPLATE_HEADERS = ['Kode', 'Nama_Barang', 'Display Toko', 'Fisik Display Toko', 'Gudang Utama', 'Fisik Gudang Utama', 'Gudang BS', 'Fisik Gudang BS', 'Gudang Shopee', 'Fisik Gudang Shopee', 'Tanggal_Stok'];

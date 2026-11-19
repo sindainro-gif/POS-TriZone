@@ -693,7 +693,7 @@ const handlers = {
   }),
   'receptions:template': () => saveTemplate({
     title: 'Simpan template import penerimaan', fileName: 'Template_Import_Penerimaan.xlsx', sheet: 'Penerimaan',
-    headers: RECEPTION_TEMPLATE_HEADERS, sample: RECEPTION_TEMPLATE_SAMPLE, textCols: ['A', 'D'],
+    headers: RECEPTION_TEMPLATE_HEADERS, sample: RECEPTION_TEMPLATE_SAMPLE, textCols: ['A', 'C'],
   }),
   'receptions:importFile': () => pickSheetRows('Pilih file import penerimaan'),
   'receptions:import': (a) => svc.importReceptions(a),

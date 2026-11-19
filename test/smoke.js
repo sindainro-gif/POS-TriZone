@@ -246,6 +246,35 @@ app.on('browser-window-created', (_e, win) => {
       if (badge2 !== '2') throw new Error(`badge draft seharusnya 2 (${badge2})`);
       await run(`document.querySelector('#rcRef').value = ''`);
 
+      // Form Penerimaan: tanpa Nama Supplier; Enter = pindah ke kolom berikutnya, Enter di Tujuan = Tambah
+      if (await run(`!!document.querySelector('#rcSupplier')`)) throw new Error('kolom Nama Supplier seharusnya sudah dihapus');
+      const enterOn = (sel) => run(`(() => { const el = document.querySelector('${sel}'); el.focus(); el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return document.activeElement.id; })()`);
+      const flow = [];
+      await run(`document.querySelector('#rcRef').value = 'SJ-ENTER'`);
+      flow.push(await enterOn('#rcRef'));
+      flow.push(await enterOn('#rcNotes'));
+      await run(`document.querySelector('#rcPicker').value = ${JSON.stringify(svc.getProduct('SBN-005').barcode)}`);
+      await enterOn('#rcPicker');
+      await wait(700);
+      flow.push(await run('document.activeElement.id'));
+      await run(`document.querySelector('#rcQty').value = '3'`);
+      flow.push(await enterOn('#rcQty'));
+      await run(`document.querySelector('#rcUnit').value = 'Biji'`);
+      flow.push(await enterOn('#rcUnit'));
+      await run(`document.querySelector('#rcDest').value = 'floor'`);
+      flow.push(await enterOn('#rcDest'));
+      const enterItems = await run(`document.querySelector('#rcItems').innerText`);
+      console.log('Enter di form penerimaan:', flow.join(' → '), '·', enterItems.replace(/\s+/g, ' '));
+      if (flow.join(',') !== 'rcNotes,rcPicker,rcQty,rcUnit,rcDest,rcPicker' || !/Sabun Mandi 85g/.test(enterItems) || !/Display Toko/.test(enterItems) || !/\b3\b/.test(enterItems)) {
+        throw new Error('Enter di form Penerimaan tidak berpindah kolom / tidak menambah barang');
+      }
+      await shot('05b-penerimaan-enter');
+      await run(`(() => { document.querySelector('#rcDest').value = 'warehouse'; document.querySelector('#rcUnit').value = 'Dus'; document.querySelector('#rcReset').click(); })()`);
+      await wait(400);
+      await run(`document.querySelector('#modalRoot .modal-foot .btn.danger').click()`); // konfirmasi Ya, Batalkan
+      if (await run(`document.querySelector('#modalRoot').children.length + document.querySelectorAll('#rcItems [data-i]').length`)) throw new Error('form penerimaan tidak kosong setelah Batal');
+      await wait(300);
+
       // Barang didaftarkan → Proses → stok masuk, draft hilang
       svc.importRows([{ Barcode: '7770000000080', SKU: 'BELUM-ADA', Nama_Barang: 'Barang Susulan', Harga_Jual: 2500, Rasio_Isi_Dus: 6 }]);
       await run(`document.querySelector('[data-view=checkout]').click()`);

@@ -227,7 +227,7 @@ Satu database di **PC Server**; komputer lain (mode **Terhubung ke Server**) mem
     - Import ulang hanya memperbarui nama, kategori, dan harga. Stok dan barcode yang sudah diganti tidak berubah.
 - Stok awal di file import boleh minus.
 - **Penerimaan Barang → Import Excel / CSV** (template dari tombol Unduh Template di layar Penerimaan):
-  - Kolom: `No_Surat_Jalan`*, `Supplier`, `Catatan`, `Kode`*, `Nama_Barang` (info saja), `Jumlah`*, `Satuan`, `Tujuan`.
+  - Kolom: `No_Surat_Jalan`*, `Catatan`, `Kode`*, `Nama_Barang` (info saja), `Jumlah`*, `Satuan`, `Tujuan`. File lama yang masih memiliki kolom `Supplier` tetap bisa diimpor.
   - Satu file boleh berisi beberapa surat jalan; baris dikelompokkan per No_Surat_Jalan dan tiap kelompok menjadi satu penerimaan.
   - Kode = SKU atau barcode. Satuan kosong = Dus (boleh juga nama satuan masuk barang, mis. Karton), `Biji`/`pcs` = Biji. Tujuan kosong = Gudang Utama; lainnya `Display Toko` atau `Gudang BS`.
   - Sebelum disimpan tampil ringkasan. Baris tidak valid dilewati dan dilaporkan; surat jalan yang sudah pernah dicatat dilewati seluruhnya.
