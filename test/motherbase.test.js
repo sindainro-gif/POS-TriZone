@@ -98,6 +98,7 @@ function fakeMotherbase() {
     assert.strictEqual(p.shift.closed_at, '2026-11-16 21:05:00');
     assert.strictEqual(p.shift.receipts, 3);
     assert.strictEqual(p.sales.length, 3);
+    assert.deepStrictEqual(p.pembatalan, []); // tanpa batal nota: daftar kosong, bentuk kiriman lain tidak berubah
     assert.strictEqual(row.sent_at, null);
     assert.strictEqual(svc.listShiftHistory()[0].mb_terkirim, 0);
   });
@@ -162,10 +163,31 @@ function fakeMotherbase() {
     assert.ok(fm.calls[0].p.snapshot);
   });
 
+  let batal;
+  await t('batal nota: nota asal, alasan, peminta, dan Admin penyetuju ikut shift berjalan & data shift (tanpa PIN)', async () => {
+    svc.saveUser({ name: 'Bos', role: 'admin', pin: '111111', active: true });
+    const nota = svc.checkout({ items: [{ sku: 'A-1', qty: 2 }], payment_method: 'Tunai', cash_received: 5000 });
+    const v = svc.voidReceipt({ receipt_no: nota.receipt_no, reason: 'Pelanggan batal beli', items: [{ sku: 'A-1', destination: 'floor' }],
+      requested_by: 'Budi', approver_pin: '111111' });
+    batal = [{ void_no: v.receipt_no, receipt_no: nota.receipt_no, reason: 'Pelanggan batal beli', requested_by: 'Budi', approved_by: 'Bos',
+      total: 2000, created_at: v.created_at }];
+    assert.match(v.receipt_no, /^BTL-\d{8}-\d{4}$/);
+    fm.calls.length = 0;
+    await mb.kirim();
+    const cs = fm.calls[0].p.snapshot.current_shift;
+    assert.deepStrictEqual(cs.pembatalan, batal);
+    assert.deepStrictEqual(cs.sales.filter((l) => l.receipt_no === v.receipt_no).map((l) => [l.qty, l.line_total]), [[-2, -2000]]);
+    const data = svc.shiftData({});
+    assert.deepStrictEqual(data.pembatalan, batal);
+    assert.deepStrictEqual([data.shift.receipts, data.shift.revenue], [2, 2500]); // BTL- bukan struk; omzet bersih
+    assert.ok(!/111111|pin_hash|pin_salt/.test(JSON.stringify(fm.calls[0].p)));
+  });
+
   await t('shift yang tidak dikonfirmasi mother base tetap di antrean', async () => {
     svc.archiveShift({ closed_at: '2026-11-17 21:00:00' });
     fm.rejectShifts = true;
     await mb.kirim();
+    assert.deepStrictEqual(fm.calls[fm.calls.length - 1].p.shifts[0].pembatalan, batal);
     assert.strictEqual(svc.mbStatus().pending_shifts, 1);
     fm.rejectShifts = false;
     await mb.kirim();
@@ -199,12 +221,18 @@ function fakeMotherbase() {
       db.run(`INSERT INTO shift_history(shift_uid, cashier_name, shift_start, closed_at, receipts, qty, revenue, cash_sales, by_method, email_sent_at)
               VALUES('lama-1', 'Lama', '2026-11-15 08:00:00', '2026-11-15 21:00:00', 1, 2, 2000, 2000, '[]', '2026-11-15 21:00:00')`);
       db.run(`INSERT INTO shift_history_sales(shift_uid, receipt_no, sku, product_name, qty_sold, unit_price, line_total, payment_method, created_at)
-              VALUES('lama-1', 'INV-L-1', 'A-1', 'Barang A', 2, 1000, 2000, 'Tunai', '2026-11-15 10:00:00')`);
+              VALUES('lama-1', 'INV-L-1', 'A-1', 'Barang A', 2, 1000, 2000, 'Tunai', '2026-11-15 10:00:00'),
+                    ('lama-1', 'INV-L-2', 'B-2', 'Barang B', 1, 2500, 2500, 'Tunai', '2026-11-15 11:00:00'),
+                    ('lama-1', 'BTL-L-1', 'B-2', 'Barang B', -1, 2500, -2500, 'Tunai', '2026-11-15 11:05:00')`);
+      db.run(`INSERT INTO receipt_voids(void_no, receipt_no, reason, requested_by, approved_by, total, created_at)
+              VALUES('BTL-L-1', 'INV-L-2', 'Salah input', 'Lama', 'Bos', 2500, '2026-11-15 11:05:00')`);
     });
     assert.strictEqual(svc.mbQueueHistory(), 1);
     assert.strictEqual(svc.mbQueueHistory(), 0);
     const p = JSON.parse(db.get("SELECT payload FROM mb_outbox_shift WHERE shift_uid = 'lama-1'").payload);
     assert.deepStrictEqual([p.shift.revenue, p.sales[0].qty, p.sales[0].line_no], [2000, 2, 1]);
+    assert.deepStrictEqual(p.pembatalan, [{ void_no: 'BTL-L-1', receipt_no: 'INV-L-2', reason: 'Salah input', requested_by: 'Lama', approved_by: 'Bos',
+      total: 2500, created_at: '2026-11-15 11:05:00' }]);
   });
 
   await t('master barang: barang baru & perubahan diambil, stok tidak berubah, barcode bentrok dilewati', async () => {

@@ -34,7 +34,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 | Menu | Untuk | Isi |
 |---|---|---|
 | Ringkasan | semua | Omzet, transaksi, grafik harian, per toko, daftar yang perlu ditindaklanjuti |
-| Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari; unduh CSV |
+| Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari, pembatalan nota; unduh CSV |
 | Stok & Opname | semua | Review & persetujuan SO (kantor), selisih stok Trizone vs hitungan mother base, cari stok, stok lambat |
 | Surat Jalan | kantor | Upload Excel Accurate di browser, unduh file import penerimaan Trizone per toko, simpan, status pencocokan |
 | Pembelian | kantor | Usulan beli semua barang dalam satu daftar (lead time, periode order, stok pengaman diatur owner; dibulatkan ke isi 1 Coly) → usulan PO dengan alasan per baris → owner ubah qty & setujui → tandai dikirim → terima barang (stok gudang & harga beli diperbarui) |
@@ -45,6 +45,12 @@ mengelola master barang & harga, dan menyetujui pembelian.
 
 Hak akses dijaga di database (Row Level Security), bukan hanya di menu: pemilik toko hanya melihat
 data tokonya, juga saat bertanya ke asisten AI.
+
+**Batal nota.** Nota asli di toko tidak pernah dihapus. Pembatalan (disetujui di toko dengan PIN)
+menjadi nota baru `BTL-YYYYMMDD-NNNN` berisi barang minus, dan rinciannya — nota asal, alasan, yang
+meminta, yang menyetujui — dikirim bersama data shift ke tabel `pembatalan_nota`. Omzet di mother
+base sudah bersih; nota `BTL-` tidak dihitung sebagai transaksi dan tampil sebagai **Pembatalan**
+(Penjualan → tab Pembatalan, kolom Pembatalan di Ringkasan / Per kasir / Per hari).
 
 ## Asisten AI
 
@@ -63,7 +69,8 @@ data tokonya, juga saat bertanya ke asisten AI.
 1. Buat project di supabase.com.
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
    `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`,
-   `migrations/20261119000004_satuan_masuk.sql`, `migrations/20261119000005_tanpa_principal.sql`, lalu `seed.sql`
+   `migrations/20261119000004_satuan_masuk.sql`, `migrations/20261119000005_tanpa_principal.sql`,
+   `migrations/20261119000006_pembatalan_nota.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`

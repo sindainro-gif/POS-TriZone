@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -180,6 +180,45 @@ function fileAccurate() {
   assert.strictEqual(ring(), harap);
   ok('kiriman ulang aman: tidak ada penjualan, penerimaan, atau mutasi yang dobel');
 
+  // Batal nota (PIN Admin): nota asli tetap, nota BTL- berisi barang minus; rinciannya ikut shift ke pembatalan_nota
+  T.saveUser({ name: 'Bu Admin', role: 'admin', pin: '246810', active: true });
+  T.openShift({ cashier_name: 'Dewi' });
+  const notaBatal = T.checkout({ items: [{ sku: 'UJ-KESET', qty: 2 }, { sku: 'UJ-EMBER', qty: 1 }], payment_method: 'Tunai', cash_received: 1e5 });
+  T.checkout({ items: [{ sku: 'UJ-KESET', qty: 1 }], payment_method: 'Tunai', cash_received: 1e5 });
+  const vb = T.voidReceipt({ receipt_no: notaBatal.receipt_no, reason: 'Pelanggan batal beli', requested_by: 'Dewi', approver_pin: '246810',
+    items: [{ sku: 'UJ-KESET', destination: 'floor' }, { sku: 'UJ-EMBER', destination: 'damaged' }] });
+  const uidBatal = T.getShift().shift_uid;
+  await mb.kirim();
+  const batalRow = () => q("select no_batal || '|' || no_struk_asal || '|' || alasan || '|' || diminta_oleh || '|' || disetujui_oleh || '|' || total from pembatalan_nota where kode_toko = 'TRP'");
+  const harapBatal = `${vb.receipt_no}|${notaBatal.receipt_no}|Pelanggan batal beli|Dewi|Bu Admin|55000.00`;
+  assert.strictEqual(batalRow(), harapBatal); // dari shift berjalan (snapshot)
+  // Nota BTL- bukan transaksi (nota asal tetap dihitung, sama seperti Trizone); omzet bersih; nilai pembatalan terpisah
+  const omzetBatal = 4 * 15000 + 85000 + 30000 + 25000 + 15000;
+  assert.strictEqual(q("select jumlah_transaksi || '|' || omzet || '|' || pembatalan || '|' || jumlah_pembatalan from v_ringkasan_harian where kode_toko='TRP'"),
+    `5|${omzetBatal}.00|55000.00|1`);
+  assert.strictEqual(q("select jumlah_transaksi || '|' || pembatalan || '|' || jumlah_pembatalan from public.laporan_harian(mb.tgl_wib(now()), mb.tgl_wib(now()), 'TRP')"), '5|55000.00|1');
+  assert.strictEqual(q("select jumlah_transaksi || '|' || pembatalan from public.laporan_ringkasan(mb.tgl_wib(now()), mb.tgl_wib(now())) where kode_toko = 'TRP'"), '5|55000.00');
+  assert.strictEqual(q("select jumlah_struk || '|' || nilai || '|' || pembatalan || '|' || jumlah_pembatalan from v_penjualan_kasir where kode_toko='TRP' and kasir='Dewi'"), '2|15000.00|55000.00|1');
+
+  tidur(1100);
+  T.archiveShift({ notes: 'tutup uji batal' });
+  r = await mb.kirim();
+  assert.strictEqual(r.shift, 1);
+  assert.strictEqual(batalRow(), harapBatal); // diganti data tutup shift, tidak dobel
+  const lap = JSON.parse(q("select json_agg(x) from public.laporan_pembatalan(mb.tgl_wib(now()) - 1, mb.tgl_wib(now()), 'TRP') x"));
+  assert.deepStrictEqual([lap.length, lap[0].no_batal, lap[0].no_struk_asal, lap[0].kasir, lap[0].qty, lap[0].total, lap[0].alasan, lap[0].diminta_oleh, lap[0].disetujui_oleh],
+    [1, vb.receipt_no, notaBatal.receipt_no, 'Dewi', 3, 55000, 'Pelanggan batal beli', 'Dewi', 'Bu Admin']);
+  assert.ok(lap[0].waktu_struk_asal && lap[0].waktu_struk_asal <= lap[0].waktu);
+  // Kiriman ulang dari Trizone versi lama (tanpa daftar pembatalan) tidak menghapus rincian; daftar kosong mengganti (dicoba lalu rollback)
+  const kirimLama = (extra) => q(`begin;
+    select public.terima_data(${lit({ protokol: 1, kode_toko: 'TRP', kunci, shifts: [{ shift: { shift_uid: uidBatal, cashier_name: 'Dewi', closed_at: '2099-12-31 23:59:59' }, sales: [], ...extra }] })})->>'ok';
+    select count(*) from pembatalan_nota where shift_uid = '${uidBatal}'; rollback`).split('\n');
+  assert.deepStrictEqual(kirimLama({}), ['true', '1']);
+  assert.deepStrictEqual(kirimLama({ pembatalan: [] }), ['true', '0']);
+  assert.strictEqual(batalRow(), harapBatal);
+  assert.strictEqual(q("select max((jumlah->>'pembatalan')::int) from kiriman_log where kode_toko = 'TRP'"), '1');
+  ok('batal nota: rincian (nota asal, alasan, peminta, Admin penyetuju) masuk mother base; BTL- bukan transaksi, tampil sebagai pembatalan');
+
   // Surat jalan Accurate
   const imp = JSON.parse(q(`select public.import_surat_jalan(${lit(acc.payloadMotherBase(hasil, 'uji.xlsx'))})`));
   assert.strictEqual(imp.do_baru, 4);
@@ -225,6 +264,10 @@ function fileAccurate() {
   assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000a', 'select count(*) from penjualan'), '0');
   assert.notStrictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from penjualan'), '0');
   assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from toko_kunci'), '0');
+  assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000a', 'select count(*) from pembatalan_nota'), '0');
+  assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from public.laporan_pembatalan(mb.tgl_wib(now()) - 30, mb.tgl_wib(now()))'), '1');
+  assert.strictEqual(q('set role anon; select count(*) from pembatalan_nota'), '0');
+  assert.throws(() => q('set role anon; select count(*) from public.laporan_pembatalan(current_date, current_date)'), /permission denied/);
   assert.strictEqual(q('set role anon; select count(*) from penjualan'), '0');
   assert.strictEqual(q('set role anon; select count(*) from toko_kunci'), '0');
   assert.throws(() => q("set role anon; select public.buat_kunci_toko('TRP')"), /permission denied/);

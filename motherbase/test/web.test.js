@@ -106,6 +106,7 @@ function fileAccurate() {
     assert.match(perhatian, /surat jalan perlu dicek/);
     assert.match(perhatian, /stok opname menunggu review/);
     assert.match(perhatian, /usulan PO menunggu persetujuan Anda/);
+    assert.match(perhatian, /3 nota dibatalkan dalam 7 hari terakhir/);
     assert.strictEqual((await page.$$('#rkToko tbody tr')).length, 9);
     await shot('01-ringkasan');
     await page.selectOption('#perPilih', '30');
@@ -114,16 +115,35 @@ function fileAccurate() {
     ok('ringkasan: omzet, grafik harian, perlu perhatian (SJ, SO, PO), 9 toko');
 
     await buka('penjualan');
-    for (const t of ['produk', 'tren', 'abc', 'kasir', 'harian']) {
+    for (const t of ['produk', 'tren', 'abc', 'kasir', 'harian', 'batal']) {
       await page.click(`#pjTab [data-t="${t}"]`);
       await page.waitForFunction(() => !document.querySelector('#pjIsi .kosong') || /Tidak ada/.test(document.querySelector('#pjIsi').textContent));
       await tunggu(250);
       assert.ok((await page.$$('#pjIsi tbody tr')).length > 0, `tab ${t} kosong`);
       if (t === 'tren') await shot('02-penjualan-tren');
+      if (t === 'harian') assert.match(await page.textContent('#pjIsi'), /Pembatalan[\s\S]*1 nota/);
     }
+    // Pembatalan: Malang (5 hari lalu), Tropodo (2 hari lalu, shift tertutup) dan hari ini (shift berjalan)
+    const batal = await page.$$eval('#pjIsi tbody tr', (x) => x.map((tr) => tr.textContent));
+    assert.strictEqual(batal.length, 3);
+    assert.ok(batal.every((b) => /BTL-\d{8}-\d{4}/.test(b) && /Rina/.test(b) && /Bu Sari/.test(b)), batal.join('\n'));
+    assert.ok(batal.some((b) => /Salah ambil barang/.test(b)) && batal.some((b) => /Pelanggan batal beli/.test(b)));
+    await shot('02b-penjualan-pembatalan');
+    await page.click('#pjIsi tbody tr.klik');
+    await page.waitForSelector('.modal');
+    const rinci = await page.textContent('.modal');
+    assert.match(rinci, /Disetujui oleh \(PIN\)\s*Bu Sari/);
+    assert.match(rinci, /Diminta oleh\s*Rina/);
+    assert.match(rinci, /Toples 2 Liter/);
+    await shot('02c-rincian-pembatalan');
+    await page.click('.modal-kaki .btn.primary');
+    assert.strictEqual(await page.$('.modal'), null);
     await page.selectOption('#pjToko', 'TRP');
     await tunggu(500);
-    ok('penjualan: per produk, naik/turun, ABC, per kasir, per hari; filter toko');
+    assert.strictEqual((await page.$$('#pjIsi tbody tr')).length, 2);
+    const [{ n: struk }] = await db("select count(distinct no_struk)::int n from penjualan where no_struk like 'BTL-%'");
+    assert.strictEqual(struk, 3);
+    ok('penjualan: per produk, naik/turun, ABC, per kasir, per hari, pembatalan (rincian & penyetuju); filter toko');
 
     await buka('stok');
     await page.waitForSelector('[data-so] [data-aksi="DISETUJUI"]');

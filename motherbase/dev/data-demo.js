@@ -76,7 +76,8 @@ async function buatDatabase(dbUrl) {
   const c = new Client({ connectionString: dbUrl });
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
-    'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql',
+    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;
@@ -172,8 +173,18 @@ async function buatDataDemo(dbUrl) {
             qty, unit_price: x[4], line_total: qty * x[4], payment_method: m });
         }
       }
+      // Batal nota (disetujui PIN Admin toko): nota BTL- berisi baris minus + rinciannya, seperti kiriman Trizone
+      const pembatalan = [];
+      if ((t.kode === 'TRP' && n === 2) || (t.kode === 'MLG' && n === 5)) {
+        const asal = sales.filter((l) => l.receipt_no === sales[0].receipt_no);
+        const no = `BTL-${tanggal.replace(/-/g, '')}-0001`;
+        const waktu = `${tanggal} 20:40:00`;
+        asal.forEach((l, i) => sales.push({ ...l, receipt_no: no, line_no: i + 1, created_at: waktu, qty: -l.qty, line_total: -l.line_total }));
+        pembatalan.push({ void_no: no, receipt_no: asal[0].receipt_no, reason: 'Pelanggan batal beli, barang dikembalikan', requested_by: 'Rina',
+          approved_by: 'Bu Sari', total: asal.reduce((a, l) => a + l.line_total, 0), created_at: waktu });
+      }
       shifts.push({ shift: { shift_uid: `contoh-${t.kode}-${tanggal}`, cashier_name: rnd() < 0.5 ? 'Rina' : 'Dewi', shift_start: `${tanggal} 08:00:00`,
-        closed_at: `${tanggal} 21:05:00`, notes: '' }, sales });
+        closed_at: `${tanggal} 21:05:00`, notes: '' }, sales, pembatalan });
     }
     const [{ k }] = await q('select 1 as k'); // jaga koneksi
     void k;
@@ -214,7 +225,12 @@ async function buatDataDemo(dbUrl) {
     const svc = tokoSvc[t.kode].svc;
     svc.openShift({ cashier_name: 'Rina' });
     svc.checkout({ items: [{ sku: 'PLJ-002', qty: 2 }, { sku: 'RTN-002', qty: 1 }], payment_method: 'Tunai', cash_received: 100000 });
-    svc.checkout({ items: [{ sku: 'PLJ-004', qty: 1 }], payment_method: 'QRIS' });
+    const nota = svc.checkout({ items: [{ sku: 'PLJ-004', qty: 1 }], payment_method: 'QRIS' });
+    if (t.kode === 'TRP') {
+      svc.saveUser({ name: 'Bu Sari', role: 'admin', pin: '135790', active: true });
+      svc.voidReceipt({ receipt_no: nota.receipt_no, reason: 'Salah ambil barang', items: [{ sku: 'PLJ-004', destination: 'floor' }],
+        requested_by: 'Rina', approver_pin: '135790' });
+    }
     await tokoSvc[t.kode].mb.kirim();
   }
 

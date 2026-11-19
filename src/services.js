@@ -1445,8 +1445,11 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
           receipts: h.receipts, qty: h.qty, revenue: h.revenue, cash_sales: h.cash_sales,
           by_method: JSON.parse(h.by_method || '[]'), offline_receipts: new Set(sales.filter((l) => /^OFF-/.test(l.receipt_no)).map((l) => l.receipt_no)).size,
         };
+        const pembatalan = voidLines(db.all(
+          'SELECT * FROM receipt_voids WHERE void_no IN (SELECT receipt_no FROM shift_history_sales WHERE shift_uid = ?) ORDER BY created_at', [h.shift_uid],
+        ));
         db.run('INSERT OR IGNORE INTO mb_outbox_shift(shift_uid, closed_at, payload, created_at) VALUES(?, ?, ?, ?)',
-          [h.shift_uid, h.closed_at, JSON.stringify({ shift, sales }), localNow()]);
+          [h.shift_uid, h.closed_at, JSON.stringify({ shift, sales, pembatalan }), localNow()]);
       }
     });
     return rows.length;
@@ -1476,6 +1479,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       // Shift yang masih berjalan: omset hari ini sudah terlihat di mother base sebelum tutup shift
       current_shift: shift ? {
         shift_uid: ensureShiftUid(), cashier_name: shift.cashier_name, shift_start: shift.shift_start, sales: salesLines(),
+        pembatalan: voidLines(db.all('SELECT * FROM receipt_voids WHERE void_no IN (SELECT receipt_no FROM shift_sales) ORDER BY created_at')),
       } : null,
     };
   }
@@ -1612,6 +1616,12 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     });
   }
 
+  // Rincian batal nota untuk mother base: nota asal, alasan, yang meminta, yang menyetujui dengan PIN (tanpa PIN-nya)
+  const voidLines = (rows) => rows.map((v) => ({
+    void_no: v.void_no, receipt_no: v.receipt_no, reason: v.reason, requested_by: v.requested_by,
+    approved_by: v.approved_by, total: v.total, created_at: v.created_at,
+  }));
+
   const groupBy = (rows, key) => {
     const m = new Map();
     for (const r of rows) {
@@ -1647,6 +1657,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         offline_receipts: sum.offline.receipts,
       },
       sales: salesLines(),
+      pembatalan: voidLines(sum.voids.list),
     };
   }
 
