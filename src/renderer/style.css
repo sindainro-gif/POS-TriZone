@@ -90,6 +90,7 @@ main { flex: 1; min-width: 0; position: relative; overflow: hidden; }
 .page-head p { margin: 4px 0 0; color: var(--muted); }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; }
 .card h2 { margin: 0 0 14px; font-size: 15px; }
+.card.office-op { border-left: 3px solid var(--t-blue); } /* Opname dari Kantor (Stok Opname) */
 .card h2.mt { margin-top: 22px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .card-head h2 { margin: 0; }

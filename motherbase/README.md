@@ -35,7 +35,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 |---|---|---|
 | Ringkasan | semua | Omzet, transaksi, grafik harian, per toko, daftar yang perlu ditindaklanjuti |
 | Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari, pembatalan nota; unduh CSV |
-| Stok & Opname | semua | Review & persetujuan SO (kantor), selisih stok Trizone vs hitungan mother base, cari stok, stok lambat |
+| Stok & Opname | semua | Review & persetujuan SO (kantor), opname dari kantor (buat: kantor; lihat status: semua), selisih stok Trizone vs hitungan mother base, cari stok, stok lambat |
 | Surat Jalan | kantor | Upload Excel Accurate di browser, unduh file import penerimaan Trizone per toko, simpan, status pencocokan |
 | Pembelian | kantor | Usulan beli semua barang dalam satu daftar (lead time, periode order, stok pengaman diatur owner; dibulatkan ke isi 1 Coly) → usulan PO dengan alasan per baris → owner ubah qty & setujui → tandai dikirim → terima barang (stok gudang & harga beli diperbarui) |
 | Master Barang | kantor | Barcode, harga jual, satuan masuk (Coly / Biji) & isi 1 Coly; harga beli / pricelist; markup (owner); import Excel dengan pratinjau |
@@ -51,6 +51,19 @@ menjadi nota baru `BTL-YYYYMMDD-NNNN` berisi barang minus, dan rinciannya — no
 meminta, yang menyetujui — dikirim bersama data shift ke tabel `pembatalan_nota`. Omzet di mother
 base sudah bersih; nota `BTL-` tidak dihitung sebagai transaksi dan tampil sebagai **Pembatalan**
 (Penjualan → tab Pembatalan, kolom Pembatalan di Ringkasan / Per kasir / Per hari).
+
+**Opname dari kantor.** Untuk angka opname yang tidak bisa diubah pegawai toko: di **Stok & Opname →
+Opname dari kantor → Buat opname untuk toko**, pilih toko lalu upload template opname Trizone (tombol
+**Unduh template toko ini** membuatnya dari stok terakhir yang dikirim toko, dengan `Tanggal_Stok`) atau
+isi baris (Kode + Fisik per zona). Pratinjau menampilkan kesalahan per baris dan perkiraan selisih; simpan
+membuat satu opname per zona (tabel `opname_kantor` / `opname_kantor_baris`). Trizone toko mengambilnya
+otomatis tiap 5 menit (`ambil_opname_kantor`) dan menampilkannya di Stok Opname sebagai kartu
+**Opname dari Kantor**: Gudang / Admin hanya bisa menekan **Terapkan**, tanpa isian angka. Cara hitung
+sama dengan import Excel Trizone (ada stok patokan + `Tanggal_Stok` → hanya selisih Fisik − patokan yang
+ditambahkan; tanpa patokan → stok di-set ke Fisik). Trizone lalu melaporkan nomor dokumen `OP-` toko
+(`opname_kantor_diterapkan`, aman bila dikirim ulang) dan status di kantor menjadi **Diterapkan** dengan
+nomor itu; rincian stok sistem toko & selisihnya tampil setelah dokumen OP- ikut kiriman biasa. Opname
+yang belum diterapkan bisa **dibatalkan** kantor; Trizone menghapusnya dari daftar saat mengambil berikutnya.
 
 ## Asisten AI
 
@@ -70,7 +83,7 @@ base sudah bersih; nota `BTL-` tidak dihitung sebagai transaksi dan tampil sebag
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
    `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`,
    `migrations/20261119000004_satuan_masuk.sql`, `migrations/20261119000005_tanpa_principal.sql`,
-   `migrations/20261119000006_pembatalan_nota.sql`, lalu `seed.sql`
+   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261119000007_opname_kantor.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`

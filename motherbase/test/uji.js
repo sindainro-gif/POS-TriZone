@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261119000007_opname_kantor.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -375,6 +375,123 @@ function fileAccurate() {
   assert.strictEqual(usul('UJ-SAT1'), ''); // PO yang disetujui & belum datang mengurangi kebutuhan
   assert.throws(() => sebagai('00000000-0000-0000-0000-00000000000a', 'select public.buat_po_dari_usulan()'), /Hanya pengguna kantor/);
   ok('usulan beli tanpa principal: semua barang, lead time dari pengaturan, dibulatkan ke isi 1 Coly, satu PO');
+
+  // Opname dari kantor: kantor membuat dari template opname Trizone (dibaca seperti di browser) atau isi baris;
+  // Trizone mengambilnya, toko menerapkan apa adanya; kantor melihat status diterapkan + nomor OP- toko
+  console.log('Opname dari kantor');
+  const OK = require('../web/lib/opname-kantor');
+  const { OPNAME_TEMPLATE_HEADERS } = require(path.join(ROOT, 'src/services'));
+  const PEMILIK_MLG = '00000000-0000-0000-0000-00000000000a';
+  await mb.kirim({ force: true }); // daftar barang & stok terkini toko di mother base
+  const wibLalu = (ms) => new Date(Date.now() + 7 * 3600e3 - ms).toISOString().slice(0, 16).replace('T', ' ');
+  const tglStok = wibLalu(3600e3); // template diunduh 1 jam lalu
+  const sk = (sku) => T.getProduct(sku);
+  const keset0 = sk('UJ-KESET');
+  const kursi0 = sk('UJ-KURSI');
+  const fOp1 = OK.bacaFile(buku([OPNAME_TEMPLATE_HEADERS,
+    ['UJ-KESET', 'Keset Uji', keset0.floor_stock, keset0.floor_stock - 2, keset0.warehouse_stock, keset0.warehouse_stock + 1, keset0.damaged_stock, '', keset0.shopee_stock, '', tglStok],
+    ['2000000000118', 'Kursi Uji (barcode)', kursi0.floor_stock, 0, kursi0.warehouse_stock, '', kursi0.damaged_stock, '', kursi0.shopee_stock, '', tglStok],
+    ['UJ-EMBER', 'Ember Uji (tidak dihitung)', 1, '', 2, '', 0, '', 0, '', tglStok],
+    ['UJ-TIDAK-ADA', 'Kode salah', 0, 3, 0, '', 0, '', 0, '', tglStok],
+  ]));
+  assert.deepStrictEqual([fOp1.bertanggal, fOp1.jumlahBarang, fOp1.baris.length], [true, 3, 4]);
+  assert.deepStrictEqual(fOp1.baris[0], { baris: 2, zona: 'floor', kode: 'UJ-KESET', fisik: keset0.floor_stock - 2, stok_patokan: keset0.floor_stock, tanggal_stok: `${tglStok}:00` });
+  const buatOp = (baris, simpan, uid = ADMIN) => JSON.parse(sebagai(uid, `select public.buat_opname_kantor('trp', ${lit(baris)}, 'SO kantor uji', ${simpan})`));
+  const cOp1 = buatOp(fOp1.baris, false);
+  assert.deepStrictEqual([cOp1.ok, cOp1.error], [false, [{ baris: 5, pesan: 'Kode UJ-TIDAK-ADA tidak ada di daftar barang toko TRP maupun master barang' }]]);
+  assert.strictEqual(buatOp(fOp1.baris, true).disimpan, false); // ada kesalahan → tidak ada yang disimpan
+  assert.strictEqual(q('select count(*) from opname_kantor'), '0');
+  const bersihOp = fOp1.baris.filter((b) => b.kode !== 'UJ-TIDAK-ADA');
+  const cOp2 = buatOp(bersihOp, false);
+  assert.deepStrictEqual(cOp2.opname.map((z) => [z.zona, z.jumlah_baris, z.berpatokan, Number(z.plus_qty), Number(z.minus_qty)]),
+    [['floor', 2, true, 0, 2 + kursi0.floor_stock], ['warehouse', 1, true, 1, 0]]);
+  assert.strictEqual(cOp2.rincian.find((r) => r.kode === '2000000000118').sku, 'UJ-KURSI'); // barcode → SKU
+  // Kesalahan per baris: fisik minus, barang dobel di zona yang sama, Tanggal_Stok belum terjadi / kosong, zona salah
+  const cOp3 = buatOp([{ baris: 1, zona: 'floor', kode: 'UJ-KESET', fisik: -1 }, { baris: 2, zona: 'floor', kode: 'UJ-KESET', fisik: 1 },
+    { baris: 3, zona: 'warehouse', kode: 'UJ-KESET', fisik: 1, stok_patokan: 5, tanggal_stok: wibLalu(-86400e3) },
+    { baris: 4, zona: 'shopee', kode: 'UJ-KESET', fisik: 1, stok_patokan: 5 }, { baris: 5, zona: 'gudang', kode: 'UJ-KESET', fisik: 1 }], false);
+  assert.deepStrictEqual(cOp3.error.map((e) => e.baris), [1, 1, 2, 3, 4, 5], JSON.stringify(cOp3.error));
+  assert.match(cOp3.error.find((e) => e.baris === 3).pesan, /belum terjadi/);
+  // Isi baris (tanpa stok patokan) + template dalam satu simpan: satu opname per zona
+  const manualOp = [{ baris: 1, zona: 'damaged', kode: 'UJ-EMBER', fisik: '3' }];
+  assert.throws(() => buatOp(manualOp, true, PEMILIK_MLG), /Hanya pengguna kantor/);
+  assert.throws(() => q(`set role anon; select public.buat_opname_kantor('TRP', ${lit(manualOp)}, null, true)`), /permission denied/);
+  const s1 = buatOp([...bersihOp, ...manualOp], true);
+  assert.deepStrictEqual([s1.disimpan, s1.id.length], [true, 3]);
+  const [idFloor, idGudang, idBs] = s1.id;
+  assert.strictEqual(q("select string_agg(zona || ':' || jumlah_baris || ':' || status || ':' || dibuat_oleh_nama, ',' order by id) from opname_kantor"),
+    'floor:2:baru:Admin,warehouse:1:baru:Admin,damaged:1:baru:Admin');
+  assert.strictEqual(sebagai(PEMILIK_MLG, 'select count(*) from opname_kantor'), '0');
+  assert.strictEqual(sebagai(PEMILIK_MLG, 'select count(*) from opname_kantor_baris'), '0');
+  assert.strictEqual(sebagai(ADMIN, 'select count(*) from opname_kantor_baris'), '4');
+  assert.strictEqual(q('set role anon; select count(*) from opname_kantor'), '0');
+  assert.throws(() => q('set role anon; select count(*) from public.daftar_opname_kantor()'), /permission denied/);
+  ok('kantor membuat opname dari template Trizone / isi baris: pratinjau, kesalahan per baris, satu opname per zona, hanya kantor, toko lain tidak melihat');
+
+  // Toko mengambil (kunci salah ditolak), menerapkan apa adanya, lalu melapor nomor OP-
+  T.mbSaveConfig({ kunci: 'salah' });
+  await assert.rejects(mb.opnameKantor(), /kunci toko salah/);
+  T.mbSaveConfig({ kunci });
+  const ambilOp = await mb.opnameKantor();
+  assert.deepStrictEqual([ambilOp.baru, ambilOp.menunggu], [3, 3]);
+  assert.strictEqual(q('select count(*) from opname_kantor where diambil_at is not null'), '3');
+  const listOp = T.listOfficeOpnames();
+  assert.deepStrictEqual(listOp.map((o) => [o.id, o.zone, o.line_count, o.notes, o.created_by]),
+    [[idFloor, 'floor', 2, 'SO kantor uji', 'Admin'], [idGudang, 'warehouse', 1, 'SO kantor uji', 'Admin'], [idBs, 'damaged', 1, 'SO kantor uji', 'Admin']]);
+  assert.strictEqual(listOp[0].count_at, `${tglStok}:00`);
+  // Terjual 1 Keset setelah Tanggal_Stok: tetap terhitung (hanya selisih fisik − patokan yang ditambahkan)
+  T.openShift({ cashier_name: 'Rina' });
+  T.checkout({ items: [{ sku: 'UJ-KESET', qty: 1 }], payment_method: 'Tunai', cash_received: 1e5 });
+  const dF = T.applyOfficeOpname({ id: idFloor, applied_by: 'Budi' });
+  const dG = T.applyOfficeOpname({ id: idGudang, applied_by: 'Budi' });
+  const dB = T.applyOfficeOpname({ id: idBs, applied_by: 'Budi' });
+  assert.deepStrictEqual([sk('UJ-KESET').floor_stock, sk('UJ-KURSI').floor_stock, sk('UJ-KESET').warehouse_stock, sk('UJ-EMBER').damaged_stock],
+    [keset0.floor_stock - 2 - 1, 0, keset0.warehouse_stock + 1, 3]);
+  const lapor = await mb.opnameKantor();
+  assert.deepStrictEqual([lapor.dilaporkan, lapor.menunggu], [3, 0]);
+  assert.strictEqual(q("select string_agg(id || ':' || status || ':' || no_op || ':' || diterapkan_oleh, ',' order by id) from opname_kantor"),
+    [[idFloor, dF], [idGudang, dG], [idBs, dB]].map(([i, d]) => `${i}:diterapkan:${d.doc_no}:Budi`).join(','));
+  // Dokumen OP- toko masuk lewat kiriman biasa: kantor melihat selisih & stok sistem toko per baris
+  await mb.kirim();
+  const daftarOp = JSON.parse(sebagai(ADMIN, "select json_agg(x order by id) from public.daftar_opname_kantor('TRP') x"));
+  assert.deepStrictEqual(daftarOp.map((d) => [d.id, d.status, d.no_op, Number(d.plus_qty), Number(d.minus_qty)]),
+    [[idFloor, dF], [idGudang, dG], [idBs, dB]].map(([i, d]) => [i, 'diterapkan', d.doc_no, d.plus_qty, d.minus_qty]));
+  const rinciOp = JSON.parse(sebagai(ADMIN, `select json_agg(x) from public.rincian_opname_kantor(${idFloor}) x`));
+  assert.deepStrictEqual(rinciOp.map((r) => [r.sku, r.fisik, r.stok_patokan, Number(r.stok_sistem_toko), Number(r.selisih_toko)]),
+    [['UJ-KESET', keset0.floor_stock - 2, keset0.floor_stock, keset0.floor_stock, -2], ['UJ-KURSI', 0, kursi0.floor_stock, kursi0.floor_stock, -kursi0.floor_stock]]);
+  // Laporan ulang tidak mengubah nomor OP-; toko lain tidak bisa melaporkan opname Tropodo
+  const lapUlang = (kodeToko, kunciToko, ids) => JSON.parse(q(`set role anon; select public.opname_kantor_diterapkan(${lit({ kode_toko: kodeToko, kunci: kunciToko,
+    diterapkan: ids.map((id) => ({ id, no_op: 'OP-LAIN-999', diterapkan_at: '2026-11-19 10:00:00' })) })})`));
+  assert.deepStrictEqual(lapUlang('TRP', kunci, [idFloor, 999999]), { ok: true, kode_toko: 'TRP', diterima: [idFloor], tidak_ada: [999999] });
+  const kunciMlg = q("select public.buat_kunci_toko('MLG')");
+  assert.deepStrictEqual(lapUlang('MLG', kunciMlg, [idGudang]).tidak_ada, [idGudang]);
+  assert.strictEqual(q(`select string_agg(no_op, ',' order by id) from opname_kantor where id in (${idFloor}, ${idGudang})`), `${dF.doc_no},${dG.doc_no}`);
+  ok('toko mengambil & menerapkan apa adanya (penjualan setelah Tanggal_Stok tetap terhitung); kantor melihat Diterapkan + nomor OP- & selisih toko; laporan ulang aman');
+
+  // Dibatalkan kantor: hilang dari Trizone; yang sudah diterapkan tidak bisa dibatalkan
+  const idBatal = buatOp([{ baris: 1, zona: 'shopee', kode: 'UJ-KESET', fisik: 9 }], true).id[0];
+  assert.strictEqual((await mb.opnameKantor()).baru, 1);
+  assert.throws(() => sebagai(PEMILIK_MLG, `select public.batalkan_opname_kantor(${idBatal})`), /Hanya pengguna kantor/);
+  sebagai(ADMIN, `select public.batalkan_opname_kantor(${idBatal})`);
+  assert.strictEqual(q(`select status || ':' || dibatalkan_oleh_nama from opname_kantor where id = ${idBatal}`), 'dibatalkan:Admin');
+  assert.throws(() => sebagai(ADMIN, `select public.batalkan_opname_kantor(${idBatal})`), /tidak bisa dibatalkan/);
+  assert.throws(() => sebagai(ADMIN, `select public.batalkan_opname_kantor(${idFloor})`), /tidak bisa dibatalkan/);
+  const batalOp = await mb.opnameKantor();
+  assert.deepStrictEqual([batalOp.dibatalkan, batalOp.menunggu], [1, 0]);
+  assert.deepStrictEqual(T.listOfficeOpnames(), []);
+  assert.throws(() => T.applyOfficeOpname({ id: idBatal, applied_by: 'Budi' }), /tidak ditemukan/);
+  // Template dari stok terakhir toko (tombol Unduh template di web): judul kolom sama dengan Trizone, Tanggal_Stok = waktu stok
+  const stokMb = JSON.parse(sebagai(ADMIN, `select json_agg(json_build_object('sku', s.sku, 'nama', p.nama, 'display', s.display, 'gudang', s.gudang,
+    'bs', s.bs, 'shopee', s.shopee, 'per_waktu', s.per_waktu) order by s.sku) from stok_toko s left join produk_toko p using (kode_toko, sku) where s.kode_toko = 'TRP'`));
+  const aoaTpl = OK.barisTemplate(stokMb);
+  assert.deepStrictEqual(XLSX.utils.sheet_to_json(OK.workbook(aoaTpl).Sheets.Opname, { header: 1 })[0], OPNAME_TEMPLATE_HEADERS);
+  const rowKeset = aoaTpl.find((r) => r[0] === 'UJ-KESET');
+  assert.strictEqual(rowKeset[2], sk('UJ-KESET').floor_stock);
+  rowKeset[3] = 4;
+  const fTpl = OK.bacaFile(XLSX.write(OK.workbook(aoaTpl), { type: 'buffer', bookType: 'xlsx' }));
+  assert.deepStrictEqual(fTpl.baris.map((b) => [b.zona, b.kode, b.fisik, b.stok_patokan, b.tanggal_stok]), [['floor', 'UJ-KESET', 4, rowKeset[2], `${rowKeset[10]}:00`]]);
+  assert.strictEqual(buatOp(fTpl.baris, false).ok, true);
+  ok('kantor membatalkan opname yang belum diterapkan (hilang dari Trizone); template kantor dari stok terakhir toko terbaca ulang');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });

@@ -17,7 +17,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
 
 // Mother base palsu: mencatat kiriman, membalas seperti RPC terima_data / ambil_master
 function fakeMotherbase() {
-  const fm = { calls: [], down: false, kunci: 'kunci-rahasia', master: [], rejectShifts: false };
+  const fm = { calls: [], down: false, kunci: 'kunci-rahasia', master: [], rejectShifts: false, opname: [] };
   fm.fetch = async (url, opt) => {
     if (fm.down) { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; }
     const fn = url.split('/rpc/')[1];
@@ -33,6 +33,22 @@ function fakeMotherbase() {
       });
     }
     if (fn === 'ambil_master') return reply(200, { kode_toko: p.kode_toko, server_at: '2026-11-16T10:00:00Z', produk: p.sejak && p.sejak > '2900' ? [] : fm.master });
+    // Opname dari kantor: fm.opname = [{ id, zona, catatan, dibuat_at, dibuat_oleh, baris, status, no_op }]
+    if (fn === 'ambil_opname_kantor') {
+      return reply(200, { kode_toko: p.kode_toko, server_at: '2026-11-19T03:00:00Z',
+        opname: fm.opname.filter((o) => o.status === 'baru').map(({ status, no_op, ...o }) => o) });
+    }
+    if (fn === 'opname_kantor_diterapkan') {
+      const diterima = [];
+      const tidakAda = [];
+      for (const d of p.diterapkan) {
+        const o = fm.opname.find((x) => x.id === d.id);
+        if (!o) { tidakAda.push(d.id); continue; }
+        if (o.status !== 'diterapkan') Object.assign(o, { status: 'diterapkan', no_op: d.no_op, oleh: d.diterapkan_oleh });
+        diterima.push(d.id);
+      }
+      return reply(200, { ok: true, kode_toko: p.kode_toko, diterima, tidak_ada: tidakAda });
+    }
     return reply(404, { message: 'not found' });
   };
   return fm;
@@ -273,6 +289,102 @@ function fakeMotherbase() {
     const before = svc.getProduct('A-1');
     assert.deepStrictEqual(await mb.tes(), { kode_toko: 'TRP', server_at: '2026-11-16T10:00:00Z' });
     assert.deepStrictEqual(svc.getProduct('A-1'), before);
+  });
+
+  // ---------------------------------------------------------------- Opname dari kantor
+  const baris = (sku, fisik, patokan = null, tgl = null) => ({ sku, fisik, stok_patokan: patokan, tanggal_stok: tgl });
+  const opKantor = (id, zona, isi, catatan = '') => ({ id, zona, catatan, dibuat_at: '2026-11-19 09:00:00', dibuat_oleh: 'Owner', status: 'baru', baris: isi });
+  let stokAwal;
+
+  await t('opname dari kantor: diambil saat tick; pratinjau hanya baca (stok sekarang, patokan, fisik kantor, selisih, stok akhir)', async () => {
+    stokAwal = { a: svc.getProduct('A-1'), b: svc.getProduct('B-2') };
+    fm.opname = [
+      opKantor(11, 'floor', [baris('A-1', 40), baris('B-2', 0)], 'Hitung ulang rak depan'),
+      // Stok patokan per Tanggal_Stok: sejak itu 3 keluar dari Gudang Utama → stok akhir 10 − 3 = 7
+      opKantor(12, 'warehouse', [baris('A-1', 10, stokAwal.a.warehouse_stock + 3, '2026-11-19 08:00:00')]),
+      opKantor(13, 'damaged', [baris('A-1', 1), baris('ZZ-9', 2)]),
+      { id: 14, zona: 'gudang', baris: [baris('A-1', 1)], status: 'baru' }, // zona tidak dikenal → dilewati
+    ];
+    fm.calls.length = 0;
+    const r = await mb.tick();
+    assert.deepStrictEqual(r.opnameKantor, { baru: 3, dibatalkan: 0, dilewati: [14], menunggu: 4, dilaporkan: 0 });
+    assert.ok(fm.calls.some((c) => c.fn === 'ambil_opname_kantor' && c.p.kunci === 'kunci-rahasia' && c.p.kode_toko === 'TRP'));
+    const list = svc.listOfficeOpnames();
+    assert.deepStrictEqual(list.map((o) => [o.id, o.zone, o.line_count]), [[11, 'floor', 2], [12, 'warehouse', 1], [13, 'damaged', 2]]);
+    const [o11, o12, o13] = list;
+    assert.deepStrictEqual(o11.lines.map((l) => [l.sku, l.stock_now, l.baseline, l.counted, l.diff, l.after]), [
+      ['A-1', stokAwal.a.floor_stock, null, 40, 40 - stokAwal.a.floor_stock, 40], ['B-2', stokAwal.b.floor_stock, null, 0, -stokAwal.b.floor_stock, 0]]);
+    assert.deepStrictEqual([o11.notes, o11.created_by, o11.created_at, o11.missing], ['Hitung ulang rak depan', 'Owner', '2026-11-19 09:00:00', []]);
+    assert.deepStrictEqual([o12.lines[0].diff, o12.lines[0].after, o12.count_at], [10 - (stokAwal.a.warehouse_stock + 3), 7, '2026-11-19 08:00:00']);
+    assert.deepStrictEqual(o13.missing, ['ZZ-9']);
+    assert.strictEqual(svc.getProduct('A-1').floor_stock, stokAwal.a.floor_stock); // mengambil tidak mengubah stok
+    fm.opname = fm.opname.filter((o) => o.id !== 14);
+  });
+
+  await t('opname dari kantor diterapkan apa adanya: stok = angka kantor, dokumen OP- tercatat, tidak bisa diterapkan dua kali', () => {
+    const d = svc.applyOfficeOpname({ id: 11, applied_by: 'Budi' });
+    assert.match(d.doc_no, /^OP-\d{8}-\d{3}$/);
+    assert.deepStrictEqual([d.zone, d.notes, d.office_id, d.line_count], ['floor', 'Opname kantor #11: Hitung ulang rak depan', 11, 2]);
+    assert.deepStrictEqual([svc.getProduct('A-1').floor_stock, svc.getProduct('B-2').floor_stock], [40, 0]);
+    assert.strictEqual(svc.listOpnames({})[0].doc_no, d.doc_no);
+    throwsMsg(() => svc.applyOfficeOpname({ id: 11, applied_by: 'Budi' }), /sudah diterapkan/);
+    assert.deepStrictEqual(svc.listOfficeOpnames().map((o) => o.id), [12, 13]);
+    // Stok patokan + Tanggal_Stok: hanya selisihnya yang ditambahkan ke stok sekarang
+    const d12 = svc.applyOfficeOpname({ id: 12, applied_by: 'Budi' });
+    assert.strictEqual(svc.getProduct('A-1').warehouse_stock, 7);
+    assert.deepStrictEqual([d12.count_at, d12.items[0].system_qty, d12.items[0].counted_qty], ['2026-11-19 08:00:00', stokAwal.a.warehouse_stock + 3, 10]);
+    // Barang belum ada di Daftar Barang: ditolak dengan petunjuk, stok tidak berubah, pesan tanpa "mother base"
+    const bs = svc.getProduct('A-1').damaged_stock;
+    throwsMsg(() => svc.applyOfficeOpname({ id: 13, applied_by: 'Budi' }), /^Barang berikut belum ada di Daftar Barang: ZZ-9\. Tekan Perbarui Daftar Barang(?!.*mother base)/);
+    assert.strictEqual(svc.getProduct('A-1').damaged_stock, bs);
+    assert.deepStrictEqual(svc.mbOfficeOpnameReports().map((x) => [x.id, x.no_op, x.diterapkan_oleh]), [[11, d.doc_no, 'Budi'], [12, d12.doc_no, 'Budi']]);
+  });
+
+  await t('nomor OP- dilaporkan ke kantor (idempoten); dokumen OP- ikut terkirim; tanpa internet laporan menunggu', async () => {
+    fm.down = true;
+    await assert.rejects(mb.opnameKantor(), /terhubung/);
+    assert.strictEqual(svc.mbOfficeOpnameReports().length, 2);
+    assert.match(svc.mbStatus().opname_error, /terhubung/);
+    fm.down = false;
+    fm.calls.length = 0;
+    const r = await mb.opnameKantor();
+    assert.deepStrictEqual([r.dilaporkan, r.menunggu], [2, 1]);
+    const lapor = fm.calls.find((c) => c.fn === 'opname_kantor_diterapkan').p;
+    assert.deepStrictEqual(lapor.diterapkan.map((x) => [x.id, x.no_op]), [[11, svc.listOpnames({}).find((o) => /#11/.test(o.notes)).doc_no], [12, svc.listOpnames({}).find((o) => /#12/.test(o.notes)).doc_no]]);
+    assert.ok(lapor.diterapkan.every((x) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(x.diterapkan_at)));
+    assert.deepStrictEqual(fm.opname.filter((o) => o.status === 'diterapkan').map((o) => [o.id, o.oleh]), [[11, 'Budi'], [12, 'Budi']]);
+    assert.strictEqual(fm.calls.findIndex((c) => c.fn === 'opname_kantor_diterapkan') < fm.calls.findIndex((c) => c.fn === 'ambil_opname_kantor'), true);
+    assert.strictEqual(svc.mbOfficeOpnameReports().length, 0);
+    // Kiriman berikutnya tidak melapor lagi; yang sudah diterapkan tidak dihapus walau tidak ada di daftar kantor
+    fm.calls.length = 0;
+    await mb.opnameKantor();
+    assert.deepStrictEqual(fm.calls.map((c) => c.fn), ['ambil_opname_kantor']);
+    // Dokumen OP- dikirim seperti opname biasa (dengan catatan nomor opname kantor)
+    fm.calls.length = 0;
+    await mb.kirim();
+    const ops = fm.calls[0].p.dokumen.opnames;
+    assert.deepStrictEqual(ops.map((o) => o.notes), ['Opname kantor #11: Hitung ulang rak depan', 'Opname kantor #12']);
+    assert.deepStrictEqual(ops[0].lines.map((l) => [l.sku, l.counted_qty]), [['A-1', 40], ['B-2', 0]]);
+  });
+
+  await t('opname dibatalkan kantor hilang dari daftar toko; nomor yang tidak dikenal kantor tidak dilaporkan terus', async () => {
+    fm.opname.find((o) => o.id === 13).status = 'dibatalkan';
+    const r = await mb.opnameKantor();
+    assert.deepStrictEqual([r.baru, r.dibatalkan, r.menunggu], [0, 1, 0]);
+    assert.deepStrictEqual(svc.listOfficeOpnames(), []);
+    throwsMsg(() => svc.applyOfficeOpname({ id: 13, applied_by: 'Budi' }), /tidak ditemukan/);
+    // Opname yang dihapus dari kantor setelah diterapkan di toko: kantor membalas tidak_ada → tidak dikirim ulang
+    fm.opname.push(opKantor(15, 'shopee', [baris('B-2', 4)]));
+    await mb.opnameKantor();
+    svc.applyOfficeOpname({ id: 15, applied_by: 'Sari' });
+    assert.strictEqual(svc.getProduct('B-2').shopee_stock, 4);
+    fm.opname = fm.opname.filter((o) => o.id !== 15);
+    fm.calls.length = 0;
+    await mb.opnameKantor();
+    assert.deepStrictEqual(svc.mbOfficeOpnameReports(), []);
+    fm.calls.length = 0;
+    await mb.opnameKantor();
+    assert.deepStrictEqual(fm.calls.map((c) => c.fn), ['ambil_opname_kantor']);
   });
 
   await t('versi DEMO tidak pernah mengirim', async () => {

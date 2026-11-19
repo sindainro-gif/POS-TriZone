@@ -692,6 +692,40 @@ app.on('browser-window-created', (_e, win) => {
           if (!opPdf.ok || opPdf.data.rows.length !== 74 || opPdf.data.rows[1].Kode !== 'SNK-010' || opPdf.data.rows[1]['Fisik Gudang Utama'] !== '75' || opPdfBad.ok) {
             throw new Error('import opname PDF tidak terbaca');
           }
+          // Opname dari kantor: hanya dilihat & diterapkan apa adanya. Kantor sengaja tidak terjangkau → opname yang sudah diterima tetap tampil.
+          svc.mbOfficeOpnamesSync({ opname: [{ id: 21, zona: 'floor', catatan: 'SO kantor rak depan', dibuat_at: '2026-11-19 09:00:00', dibuat_oleh: 'Owner',
+            baris: [{ sku: 'IMP-SMK', fisik: 9, stok_patokan: null, tanggal_stok: null }, { sku: 'MNM-001', fisik: 12, stok_patokan: null, tanggal_stok: null }] }] });
+          await run(`go('opname')`);
+          await wait(1500);
+          const ofUi = await run(`({ shown: document.querySelector('#opOfficeCard').offsetParent !== null, rows: document.querySelectorAll('#opOffice tr').length,
+            inputs: document.querySelectorAll('#opOfficeCard input, #opOfficeCard select, #opOfficeCard textarea').length, text: document.querySelector('#view-opname').innerText })`);
+          await run(`document.querySelector('#opOffice [data-office="21"]').click()`);
+          await wait(600);
+          const ofModal = await run(`({ rows: document.querySelectorAll('#modalRoot tbody tr').length, focus: document.activeElement.textContent,
+            inputs: document.querySelectorAll('#modalRoot input, #modalRoot select, #modalRoot textarea, #modalRoot [contenteditable]').length, text: document.querySelector('#modalRoot').innerText })`);
+          console.log('opname dari kantor:', JSON.stringify({ shown: ofUi.shown, rows: ofUi.rows, inputs: ofUi.inputs, modalRows: ofModal.rows, modalInputs: ofModal.inputs, focus: ofModal.focus }));
+          if (!ofUi.shown || ofUi.rows !== 1 || ofUi.inputs !== 0 || !/Opname dari Kantor/.test(ofUi.text) || /mother base/i.test(ofUi.text)
+            || ofModal.rows !== 2 || ofModal.inputs !== 0 || ofModal.focus !== 'Tutup' || !/Fisik \(Kantor\)/.test(ofModal.text) || /mother base/i.test(ofModal.text)) {
+            throw new Error('kartu Opname dari Kantor tidak sesuai (harus tampil, hanya baca, tanpa kata mother base)');
+          }
+          await shot('11d-opname-dari-kantor');
+          await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Terapkan').click()`);
+          await wait(2000);
+          const ofDone = await run(`({ hidden: document.querySelector('#opOfficeCard').classList.contains('hidden'), hist: document.querySelector('#opHistory tr').innerText.replace(/\\s+/g, ' '),
+            toast: [...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ') })`);
+          const lapor = svc.mbOfficeOpnameReports();
+          console.log('opname dari kantor diterapkan:', JSON.stringify({ ...ofDone, lapor }));
+          if (svc.getProduct('IMP-SMK').floor_stock !== 9 || svc.getProduct('MNM-001').floor_stock !== 12 || !ofDone.hidden || !/Opname kantor #21/.test(ofDone.hist)
+            || !/diterapkan: OP-\d{8}-\d{3}/.test(ofDone.toast) || /mother base/i.test(ofDone.toast)
+            || lapor.length !== 1 || lapor[0].id !== 21 || lapor[0].diterapkan_oleh !== 'Budi' || !/^OP-/.test(lapor[0].no_op)) {
+            throw new Error('opname dari kantor tidak diterapkan apa adanya');
+          }
+          await shot('11e-opname-kantor-diterapkan');
+        }
+        if (name === 'Rina') {
+          const ofDenied = await run(`window.posBridge.call('opname:applyOffice', { id: 21 })`);
+          const ofList = await run(`window.posBridge.call('opname:office')`);
+          if (ofDenied.ok || ofList.ok || !/Akses ditolak/.test(ofDenied.error)) throw new Error('kasir bisa menerapkan opname dari kantor');
         }
         const vpSeen = await run(`window.posBridge.call('settings:voidPin', { reveal: true })`);
         if (vpSeen.ok || !/Akses ditolak/.test(vpSeen.error)) throw new Error(`PIN Pembatalan bisa dilihat oleh ${name}`);

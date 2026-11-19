@@ -1372,7 +1372,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     opnames: { table: 'stock_opname_docs', cursor: 'mb_cursor_opnames' },
   };
   const MB_LIMITS = { shifts: 10, receptions: 100, transfers: 200, opnames: 50 };
-  const MB_STATE_KEYS = ['last_attempt_at', 'last_ok_at', 'last_error', 'last_result', 'master_at', 'master_server_at', 'master_error', 'master_result'];
+  const MB_STATE_KEYS = ['last_attempt_at', 'last_ok_at', 'last_error', 'last_result', 'master_at', 'master_server_at', 'master_error', 'master_result',
+    'opname_at', 'opname_error'];
 
   function masterLocked() {
     return getSetting('mb_kunci_master') === '1';
@@ -1634,6 +1635,118 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return getSetting('mb_master_at');
   }
 
+  // ---------------------------------------------------------------- Opname dari kantor
+  // Kantor membuat stok opname di mother base (RPC ambil_opname_kantor). Toko hanya bisa menerapkannya apa
+  // adanya: lewat createOpname (stok patokan + Tanggal_Stok sama seperti import Excel), lalu nomor OP-
+  // dilaporkan ke kantor (opname_kantor_diterapkan). Tidak ada fungsi untuk mengubah angkanya.
+  function officeLines(row) {
+    try { return JSON.parse(row.lines) || []; } catch (_) { return []; }
+  }
+
+  // Daftar opname kantor yang belum diterapkan, dari mother base. Opname yang belum diterapkan di toko tetapi
+  // tidak ada lagi di daftar kantor = dibatalkan kantor → dihapus. Yang sudah diterapkan tidak pernah disentuh.
+  function mbOfficeOpnamesSync({ opname = [] } = {}) {
+    const out = { baru: 0, dibatalkan: 0, dilewati: [] };
+    const now = localNow();
+    db.tx(() => {
+      const ids = new Set();
+      for (const o of Array.isArray(opname) ? opname : []) {
+        const id = Number(o && o.id);
+        if (!Number.isInteger(id) || id <= 0) continue;
+        ids.add(id);
+        const ok = ZONE_COL[o.zona] && Array.isArray(o.baris) && o.baris.length && o.baris.every((b) => b && b.sku
+          && Number.isInteger(Number(b.fisik)) && Number(b.fisik) >= 0
+          && (b.stok_patokan === null || b.stok_patokan === undefined || Number.isInteger(Number(b.stok_patokan))));
+        if (!ok) { out.dilewati.push(id); continue; }
+        const lines = JSON.stringify(o.baris.map((b) => ({
+          sku: String(b.sku), counted: Number(b.fisik),
+          baseline: b.stok_patokan === null || b.stok_patokan === undefined ? null : Number(b.stok_patokan),
+          count_at: b.tanggal_stok || null,
+        })));
+        const cur = db.get('SELECT doc_id FROM office_opnames WHERE id = ?', [id]);
+        if (cur) {
+          if (!cur.doc_id) {
+            db.run('UPDATE office_opnames SET zone = ?, notes = ?, created_by = ?, created_at = ?, lines = ? WHERE id = ?',
+              [o.zona, o.catatan || '', o.dibuat_oleh || '', o.dibuat_at || '', lines, id]);
+          }
+          continue;
+        }
+        db.run('INSERT INTO office_opnames(id, zone, notes, created_by, created_at, lines, received_at) VALUES(?, ?, ?, ?, ?, ?, ?)',
+          [id, o.zona, o.catatan || '', o.dibuat_oleh || '', o.dibuat_at || '', lines, now]);
+        out.baru++;
+      }
+      for (const r of db.all('SELECT id FROM office_opnames WHERE doc_id IS NULL')) {
+        if (ids.has(r.id)) continue;
+        db.run('DELETE FROM office_opnames WHERE id = ?', [r.id]);
+        out.dibatalkan++;
+      }
+    });
+    return out;
+  }
+
+  // Pratinjau selisih (hanya baca): stok sekarang, stok patokan, fisik kantor, selisih, stok akhir per barang
+  function officePreview(r) {
+    const col = ZONE_COL[r.zone];
+    let plus = 0;
+    let minus = 0;
+    const missing = [];
+    const lines = officeLines(r).map((l) => {
+      const p = getProduct(l.sku);
+      if (!p) {
+        missing.push(l.sku);
+        return { sku: l.sku, name: null, missing: true, stock_now: null, baseline: l.baseline, count_at: l.count_at, counted: l.counted, diff: null, after: null };
+      }
+      const stockNow = Number(p[col]) || 0;
+      const diff = l.counted - (l.baseline === null ? stockNow : l.baseline);
+      if (diff > 0) plus += diff;
+      else minus -= diff;
+      return { sku: l.sku, name: p.name, missing: false, stock_now: stockNow, baseline: l.baseline, count_at: l.count_at, counted: l.counted, diff, after: stockNow + diff };
+    });
+    const dates = lines.map((l) => l.count_at).filter(Boolean).sort();
+    return {
+      id: r.id, zone: r.zone, notes: r.notes, created_by: r.created_by, created_at: r.created_at, received_at: r.received_at,
+      line_count: lines.length, plus_qty: plus, minus_qty: minus, count_at: dates[0] || null, missing, lines,
+      doc_no: r.doc_no || null, applied_at: r.applied_at || null,
+    };
+  }
+
+  function listOfficeOpnames() {
+    return db.all('SELECT * FROM office_opnames WHERE doc_id IS NULL ORDER BY id').map(officePreview);
+  }
+
+  // Terapkan satu opname kantor apa adanya → satu dokumen OP- (satu transaksi; tidak bisa diterapkan dua kali)
+  function applyOfficeOpname({ id, applied_by } = {}) {
+    const r = db.get('SELECT * FROM office_opnames WHERE id = ?', [Number(id)]);
+    if (!r) fail('Opname dari kantor tidak ditemukan. Mungkin sudah dibatalkan kantor.');
+    if (r.doc_id) fail(`Opname dari kantor #${r.id} sudah diterapkan (${r.doc_no}).`);
+    const lines = officeLines(r);
+    const missing = lines.filter((l) => !getProduct(l.sku)).map((l) => l.sku);
+    if (missing.length) {
+      fail(`Barang berikut belum ada di Daftar Barang: ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? `, dan ${missing.length - 10} lainnya` : ''}. `
+        + 'Tekan Perbarui Daftar Barang lalu coba lagi. Bila tetap tidak ada, hubungi kantor.');
+    }
+    const by = toStr(applied_by, 'Nama', { max: 100 });
+    const countAt = lines.map((l) => l.count_at).filter(Boolean).sort()[0] || null;
+    const notes = `Opname kantor #${r.id}${r.notes ? `: ${r.notes}` : ''}`.slice(0, 200);
+    return db.tx(() => {
+      const doc = createOpname({ zone: r.zone, notes, count_at: countAt, items: lines.map((l) => ({ sku: l.sku, counted: l.counted, baseline: l.baseline })) });
+      db.run('UPDATE office_opnames SET doc_id = ?, doc_no = ?, applied_at = ?, applied_by = ? WHERE id = ?', [doc.id, doc.doc_no, doc.created_at, by, r.id]);
+      return { ...doc, office_id: r.id };
+    });
+  }
+
+  // Sudah diterapkan, kantor belum dikabari (dikirim ulang sampai kantor membalas)
+  function mbOfficeOpnameReports() {
+    return db.all(`SELECT id, doc_no AS no_op, applied_at AS diterapkan_at, applied_by AS diterapkan_oleh FROM office_opnames
+                   WHERE doc_id IS NOT NULL AND reported_at IS NULL ORDER BY id`);
+  }
+  function mbOfficeOpnameAck({ ids = [] } = {}) {
+    const now = localNow();
+    db.tx(() => {
+      for (const id of ids) db.run('UPDATE office_opnames SET reported_at = ? WHERE id = ? AND doc_id IS NOT NULL AND reported_at IS NULL', [now, Number(id)]);
+    });
+  }
+
   // Shift yang dibuka sebelum versi ini belum punya ID → dibuatkan sekali
   function ensureShiftUid() {
     const s = getShift();
@@ -1705,6 +1818,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   return {
     ensureShiftUid, shiftData, masterLocked,
     mbConfig, mbSaveConfig, mbStatus, mbShiftSent, mbState, mbSetState, mbQueueHistory, mbBatch, mbAck, mbApplyMaster, mbMasterSince,
+    mbOfficeOpnamesSync, mbOfficeOpnameReports, mbOfficeOpnameAck, listOfficeOpnames, applyOfficeOpname,
     needsSetup, listUsers, saveUser, deleteUser, authCache, verifyLogin,
     listLabelDesigns, getLabelDesign, saveLabelDesign, deleteLabelDesign, setDefaultLabelDesign, labelItemsFromReception,
     meta, getSettings, saveSettings,

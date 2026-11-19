@@ -217,6 +217,17 @@
           <button class="btn ghost" id="opImport">Import Excel / CSV / PDF</button>
         </div>
       </header>
+      <div class="card office-op hidden" id="opOfficeCard">
+        <div class="card-head">
+          <h2>Opname dari Kantor</h2>
+          <span class="muted small" id="opOfficeInfo"></span>
+        </div>
+        <p class="muted small" style="margin-top:-6px">Stok opname yang dibuat kantor. Angkanya tidak bisa diubah di toko: periksa selisihnya, lalu tekan <b>Terapkan</b>.</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>No.</th><th>Zona</th><th>Dibuat Kantor</th><th class="r">Barang</th><th class="r">Selisih +</th><th class="r">Selisih −</th><th>Catatan</th><th class="w-act"></th></tr></thead>
+          <tbody id="opOffice"></tbody>
+        </table></div>
+      </div>
       <div class="card hidden" id="opGudangNote">
         <h2>Stok Opname lewat Excel</h2>
         <p>Akun Gudang melakukan stok opname <b>hanya lewat Excel</b>:</p>
