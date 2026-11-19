@@ -171,9 +171,11 @@ Setiap orang login dengan **nama + PIN 6 digit**. Menu yang tidak diizinkan dise
 - Keterbatasan: pembatasan peran dijalankan oleh aplikasi di tiap PC. Panggilan jaringan antar-PC dilindungi kode pasangan, tetapi tidak dicek per peran.
 - **Update dari versi lama:** perbarui **PC Gudang dulu**, buat akun Admin di sana, baru perbarui PC Kasir.
 
-## Dua komputer: PC Gudang (server) & PC Kasir
+## Dua komputer: PC Server & komputer yang terhubung
 
-Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data langsung ke PC Gudang lewat jaringan toko (LAN/WiFi yang sama). Stok selalu sama di kedua komputer, tanpa proses sinkron terpisah.
+Satu database di **PC Server**; komputer lain (mode **Terhubung ke Server**) membaca & menyimpan semua data langsung ke PC Server lewat jaringan toko (LAN/WiFi yang sama). Stok selalu sama di kedua komputer, tanpa proses sinkron terpisah.
+
+**PC Server boleh PC Gudang atau PC Kasir.** Menu yang tampil tetap mengikuti akun yang login, bukan mode komputernya. Bila PC Kasir menjadi server: kasir tidak pernah masuk MODE DARURAT, tetapi PC Kasir harus menyala selama PC Gudang dipakai (menu gudang memerlukan PC Server), dan database, cadangan, laporan terenkripsi, serta pengiriman ke mother base pindah ke PC Kasir. Contoh di bawah memakai PC Gudang sebagai server.
 
 **Pembagian tugas**
 - PC Gudang: Penerimaan Barang, Cetak Barcode, Mutasi Stok, Daftar Barang (+ semua menu lain). Menyimpan database, cadangan, dan laporan tutup shift; data dikirim ke mother base dari sini.
@@ -182,8 +184,8 @@ Satu database di **PC Gudang**; **PC Kasir** membaca & menyimpan semua data lang
 **Langkah pemasangan**
 1. Instal aplikasi di kedua PC.
 2. Jika data sudah ada di salah satu PC: **Pengaturan → Cadangkan Database…** di PC itu, lalu **Pulihkan dari Cadangan…** di PC Gudang.
-3. **PC Gudang**: Pengaturan → Mode Komputer → **Server (PC Gudang)** → *Simpan & Mulai Ulang*. Catat **alamat IP** dan **kode pasangan 6 digit** yang tampil. Saat Windows Firewall bertanya, pilih **Allow / Izinkan** untuk jaringan **Private**.
-4. **PC Kasir**: Pengaturan → Mode Komputer → **Kasir** → isi alamat IP & kode → **Tes Koneksi** → *Simpan & Mulai Ulang*.
+3. **PC Gudang**: Pengaturan → Mode Komputer → **Server (menyimpan database)** → *Simpan & Mulai Ulang*. Catat **alamat IP** dan **kode pasangan 6 digit** yang tampil. Saat Windows Firewall bertanya, pilih **Allow / Izinkan** untuk jaringan **Private**.
+4. **PC Kasir**: Pengaturan → Mode Komputer → **Terhubung ke Server** → isi alamat IP & kode → **Tes Koneksi** → *Simpan & Mulai Ulang*.
 5. Atur printer di masing-masing PC (pengaturan printer tersimpan per komputer): printer nota di PC Kasir, printer label di PC Gudang.
 
 **Penting**

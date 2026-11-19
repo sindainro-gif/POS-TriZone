@@ -1,5 +1,5 @@
 'use strict';
-// Mode darurat PC Kasir: cache daftar barang + antrian transaksi saat PC Gudang tidak terjangkau.
+// Mode darurat PC Kasir: cache daftar barang + antrian transaksi saat PC Server tidak terjangkau.
 // Disimpan sebagai file JSON di folder data PC kasir. Tanpa Electron agar bisa diuji dengan Node biasa.
 const fs = require('fs');
 const path = require('path');
@@ -105,9 +105,9 @@ function createOfflineStore(dir, { now = localNow } = {}) {
   }
 
   function checkout({ items = [], payment_method, cash_received, client_ref } = {}) {
-    if (!cache) fail('Mode darurat belum siap: daftar barang belum pernah diunduh dari PC Gudang.');
+    if (!cache) fail('Mode darurat belum siap: daftar barang belum pernah diunduh dari PC Server.');
     const shift = cache.shift;
-    if (!shift) fail('Mode darurat: shift belum dibuka saat terakhir terhubung ke PC Gudang. Transaksi tidak bisa diproses.');
+    if (!shift) fail('Mode darurat: shift belum dibuka saat terakhir terhubung ke PC Server. Transaksi tidak bisa diproses.');
     const methods = (cache.meta && cache.meta.paymentMethods) || ['Tunai'];
     if (!methods.includes(payment_method)) fail('Metode pembayaran tidak dikenal.');
     if (!Array.isArray(items) || !items.length) fail('Keranjang masih kosong.');
@@ -198,7 +198,7 @@ function createOfflineStore(dir, { now = localNow } = {}) {
     hasCache: () => !!cache,
     hasUsers: () => !!(cache && Array.isArray(cache.users) && cache.users.length),
     verifyLogin: (a) => {
-      if (!(cache && Array.isArray(cache.users) && cache.users.length)) fail('Login darurat belum siap: data akun belum pernah diunduh dari PC Gudang.');
+      if (!(cache && Array.isArray(cache.users) && cache.users.length)) fail('Login darurat belum siap: data akun belum pernah diunduh dari PC Server.');
       const u = matchLogin(cache && cache.users, a);
       if (!u) fail('Nama atau PIN salah.');
       return u;

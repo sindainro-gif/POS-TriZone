@@ -530,7 +530,7 @@ views.checkout = (() => {
     sound('ok');
     modal({
       title: r.offline ? `MODE DARURAT — Transaksi Disimpan — ${r.receipt_no}` : `Transaksi Berhasil — ${r.receipt_no}`,
-      body: `${r.offline ? `<div class="alert warn" style="margin-bottom:10px"><b>MODE DARURAT.</b> Transaksi tersimpan di komputer kasir ini dan dikirim otomatis ke PC Gudang saat koneksi kembali.${(r.warnings || []).length ? `<br>Perlu dicek: ${r.warnings.map(esc).join(' ')}` : ''}</div>` : ''}
+      body: `${r.offline ? `<div class="alert warn" style="margin-bottom:10px"><b>MODE DARURAT.</b> Transaksi tersimpan di komputer ini dan dikirim otomatis ke PC Server saat koneksi kembali.${(r.warnings || []).length ? `<br>Perlu dicek: ${r.warnings.map(esc).join(' ')}` : ''}</div>` : ''}
         <div class="alert ok" style="text-align:center">
           <div class="muted small">Kembalian</div><div style="font-size:34px;font-weight:800">${rp(r.change)}</div>
           <div class="small">${esc(r.payment_method)} · Total ${rp(r.total)}${r.payment_method === 'Tunai' ? ` · Diterima ${rp(r.cash_received)}` : ''}</div></div>
@@ -571,7 +571,7 @@ views.checkout = (() => {
     if (!cart.length) { sound('err'); toast('Keranjang masih kosong.', 'err'); return; }
     modal({
       title: 'Tahan Transaksi (Draft)',
-      body: `<p class="muted small" style="margin-top:0">Keranjang disimpan di komputer kasir ini supaya bisa melayani pelanggan lain dulu. Stok belum dikurangi sampai dibayar.</p>
+      body: `<p class="muted small" style="margin-top:0">Keranjang disimpan di komputer ini supaya bisa melayani pelanggan lain dulu. Stok belum dikurangi sampai dibayar.</p>
         <div class="field"><label>Nama pelanggan / catatan <span class="muted">(opsional)</span></label><input id="drLabel" maxlength="40" placeholder="Contoh: Bu Ani, kaos merah"></div>`,
       actions: [
         { label: 'Batal', kind: 'ghost' },
@@ -627,7 +627,7 @@ views.checkout = (() => {
     const m = modal({
       title: `Draft Penjualan (${list.length})`,
       wide: true,
-      body: `<p class="muted small" style="margin-top:0">Tersimpan di komputer kasir ini. Stok belum dikurangi; harga &amp; stok dicek ulang saat dilanjutkan.</p>
+      body: `<p class="muted small" style="margin-top:0">Tersimpan di komputer ini. Stok belum dikurangi; harga &amp; stok dicek ulang saat dilanjutkan.</p>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Waktu</th><th>Pelanggan / Catatan</th><th class="r">Biji</th><th class="r">Total</th><th>Kasir</th><th></th></tr></thead><tbody>
         ${list.map((d) => `<tr data-id="${esc(d.id)}"><td class="muted">${fmtTime(d.created_at)}</td>
           <td><b>${esc(d.label)}</b><div class="psub">${esc(d.items.map((i) => `${i.qty}× ${i.name}`).join(', '))}</div></td>
@@ -685,22 +685,22 @@ views.checkout = (() => {
     const banner = $('#emergencyBanner');
     document.body.classList.toggle('emergency', emergencyMode());
     if (emergencyMode()) {
-      banner.innerHTML = `<span class="big">⚠ MODE DARURAT</span>PC Gudang tidak terhubung. Transaksi tetap bisa dibayar: disimpan di komputer kasir ini
-        (nomor struk <b>OFF-…</b>), nota tetap tercetak, dan dikirim otomatis ke PC Gudang saat koneksi kembali. Stok yang tampil = stok terakhir yang diketahui.
+      banner.innerHTML = `<span class="big">⚠ MODE DARURAT</span>PC Server tidak terhubung. Transaksi tetap bisa dibayar: disimpan di komputer ini
+        (nomor struk <b>OFF-…</b>), nota tetap tercetak, dan dikirim otomatis ke PC Server saat koneksi kembali. Stok yang tampil = stok terakhir yang diketahui.
         ${em.pending ? `<br>Antrian: <b>${num(em.pending)} transaksi</b> (${rp(em.pending_total)}) belum terkirim.` : ''}`;
       banner.classList.remove('hidden');
       if (!wasOffline) hideAlert();
     } else {
       banner.classList.add('hidden');
       if (offline) {
-        const why = !em ? '' : !em.products ? 'Mode darurat belum siap: data barang belum pernah diunduh dari PC Gudang. '
+        const why = !em ? '' : !em.products ? 'Mode darurat belum siap: data barang belum pernah diunduh dari PC Server. '
           : 'Mode darurat tidak bisa dipakai karena shift belum dibuka saat terakhir terhubung. ';
-        showAlert(`<b>Terputus dari PC Gudang.</b> ${why}Transaksi tidak bisa diproses sampai koneksi kembali. Periksa PC gudang (menyala &amp; aplikasi terbuka) dan kabel/WiFi.`);
-      } else if (wasOffline) { hideAlert(); toast('Terhubung kembali ke PC Gudang.', 'ok'); if (!state.shift && state.user) refreshShift().then(() => state.view === 'checkout' && show()); }
+        showAlert(`<b>Terputus dari PC Server.</b> ${why}Transaksi tidak bisa diproses sampai koneksi kembali. Periksa PC Server (menyala &amp; aplikasi terbuka) dan kabel/WiFi.`);
+      } else if (wasOffline) { hideAlert(); toast('Terhubung kembali ke PC Server.', 'ok'); if (!state.shift && state.user) refreshShift().then(() => state.view === 'checkout' && show()); }
     }
     const pending = em ? em.pending : 0;
     if (!offline && lastPending > 0 && pending === 0) {
-      toast(`${num(lastPending)} transaksi darurat terkirim ke PC Gudang.`, 'ok', 6000);
+      toast(`${num(lastPending)} transaksi darurat terkirim ke PC Server.`, 'ok', 6000);
       const checks = em.last_sync && em.last_sync.checks ? em.last_sync.checks.length : 0;
       if (checks) toast(`${num(checks)} transaksi darurat perlu dicek stoknya — lihat Laporan Shift.`, 'warn', 12000);
     }
@@ -2037,7 +2037,7 @@ views.shift = (() => {
     if (!checks || !checks.length) return '';
     return `<div class="card">
         <h2>Transaksi Mode Darurat — Perlu Dicek</h2>
-        <p class="muted small">Saat transaksi darurat dikirim, display toko di PC Gudang tidak cukup. Transaksi tetap dicatat dan display toko dibiarkan minus.
+        <p class="muted small">Saat transaksi darurat dikirim, display toko di PC Server tidak cukup. Transaksi tetap dicatat dan display toko dibiarkan minus.
           Cek fisik rak, catat Mutasi / Penerimaan bila perlu, lalu tandai sudah dicek.</p>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>No. Struk</th><th>Waktu</th><th class="r">Total</th><th>Catatan</th><th></th></tr></thead><tbody id="shChecks">
           ${checks.map((c) => `<tr><td class="mono">${esc(c.receipt_no)}</td><td class="muted">${fmtTime(c.created_at)}</td><td class="r">${rp(c.total)}</td>
@@ -2050,8 +2050,8 @@ views.shift = (() => {
     if (state.connected === false && state.emergency) {
       const em = state.emergency;
       root.innerHTML = `<div class="card" style="max-width:640px"><h2>Laporan Shift belum tersedia</h2>
-        <p>PC Gudang tidak terhubung (MODE DARURAT). Laporan shift dan tutup kasir bisa dibuka lagi setelah koneksi kembali.</p>
-        ${em.pending ? `<div class="alert warn">${num(em.pending)} transaksi MODE DARURAT (${rp(em.pending_total)}) menunggu dikirim ke PC Gudang.</div>` : ''}</div>`;
+        <p>PC Server tidak terhubung (MODE DARURAT). Laporan shift dan tutup kasir bisa dibuka lagi setelah koneksi kembali.</p>
+        ${em.pending ? `<div class="alert warn">${num(em.pending)} transaksi MODE DARURAT (${rp(em.pending_total)}) menunggu dikirim ke PC Server.</div>` : ''}</div>`;
       return;
     }
     await refreshShift();
@@ -2144,7 +2144,7 @@ views.shift = (() => {
 // ================================================================ Mode komputer (Mandiri / Server / Kasir)
 const modeCard = (() => {
   let info = null;
-  const LABEL = { standalone: 'Mandiri', server: 'Server (PC Gudang)', client: 'Kasir (terhubung ke PC Gudang)' };
+  const LABEL = { standalone: 'Mandiri', server: 'Server (menyimpan database)', client: 'Terhubung ke Server' };
   const selected = () => ($('input[name="mdMode"]:checked') || {}).value || 'standalone';
 
   function renderPanels() {
@@ -2171,14 +2171,14 @@ const modeCard = (() => {
   }
 
   $('#mdNewKey').addEventListener('click', async () => {
-    if (!(await confirmDialog('Buat Kode Baru', 'PC kasir yang sudah terhubung harus memasukkan kode baru. Lanjutkan?', { okLabel: 'Buat Kode Baru' }))) return;
+    if (!(await confirmDialog('Buat Kode Baru', 'Komputer yang sudah terhubung harus memasukkan kode baru. Lanjutkan?', { okLabel: 'Buat Kode Baru' }))) return;
     try { info = await api('device:newKey'); $('#mdKey').textContent = info.server_pair_key; toast('Kode pasangan baru dibuat.', 'ok'); } catch (e) { toast(e.message, 'err'); }
   });
 
   $('#mdTest').addEventListener('click', async () => {
     const out = $('#mdTestResult');
     out.className = 'small muted';
-    out.textContent = 'Menghubungi PC gudang…';
+    out.textContent = 'Menghubungi PC Server…';
     try {
       const r = await api('device:test', { host: $('#mdHost').value, port: $('#mdPort').value, key: $('#mdPair').value });
       out.className = 'small diff-pos';
@@ -2193,8 +2193,8 @@ const modeCard = (() => {
     const mode = selected();
     const msg = {
       standalone: 'Komputer ini akan bekerja sendiri dengan database lokal.',
-      server: 'Komputer ini menjadi <b>PC Gudang (server)</b>. Biarkan aplikasi tetap terbuka agar PC kasir bisa terhubung.',
-      client: 'Komputer ini menjadi <b>PC Kasir</b>. Semua data barang, stok, dan penjualan akan dibaca &amp; disimpan di PC gudang. Data lokal komputer ini tidak dipakai (tidak dihapus).',
+      server: 'Komputer ini menjadi <b>PC Server</b> (menyimpan database). Biarkan aplikasi tetap terbuka agar komputer lain bisa terhubung.',
+      client: 'Komputer ini akan <b>terhubung ke PC Server</b>. Semua data barang, stok, dan penjualan akan dibaca &amp; disimpan di PC Server. Data lokal komputer ini tidak dipakai (tidak dihapus).',
     }[mode];
     if (!(await confirmDialog('Ganti Mode Komputer', `${msg}<br><br>Aplikasi akan dimulai ulang.`, { okLabel: 'Simpan & Mulai Ulang' }))) return;
     try {
@@ -2468,7 +2468,7 @@ function showLogin(status) {
   setTimeout(() => $('#lgName').focus(), 30);
 }
 
-// Status koneksi ke PC gudang (mode kasir) / alamat server (mode server)
+// Status koneksi ke PC Server (mode terhubung) / alamat server (mode server)
 async function refreshConnection() {
   const s = await api('app:status').catch(() => null);
   const b = $('#connBadge');
@@ -2483,16 +2483,16 @@ async function refreshConnection() {
     b.innerHTML = `<b>Server aktif</b><br>${esc(s.addresses.join(' / ') || '-')} : ${s.port}`;
   } else if (s.connected && em && em.pending) {
     b.className = 'conn-badge syncing';
-    b.innerHTML = `<b>Terhubung ke PC Gudang</b><br>Mengirim ${num(em.pending)} transaksi darurat…`;
+    b.innerHTML = `<b>Terhubung ke PC Server</b><br>Mengirim ${num(em.pending)} transaksi darurat…`;
   } else if (!s.connected && em && em.ready) {
     b.className = 'conn-badge emergency';
-    b.innerHTML = `⚠ MODE DARURAT<br><span class="small">Terputus dari PC Gudang · ${num(em.pending)} transaksi antre</span>`;
+    b.innerHTML = `⚠ MODE DARURAT<br><span class="small">Terputus dari PC Server · ${num(em.pending)} transaksi antre</span>`;
   } else if (s.connected) {
     b.className = 'conn-badge on';
-    b.innerHTML = `<b>Terhubung ke PC Gudang</b><br>${esc(s.server)}`;
+    b.innerHTML = `<b>Terhubung ke PC Server</b><br>${esc(s.server)}`;
   } else {
     b.className = 'conn-badge off';
-    b.innerHTML = `⚠ Terputus dari PC Gudang<br><span class="small">${esc(s.server)}</span>`;
+    b.innerHTML = `⚠ Terputus dari PC Server<br><span class="small">${esc(s.server)}</span>`;
   }
   views.checkout.connectionChanged();
 }

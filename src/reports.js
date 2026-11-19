@@ -71,7 +71,7 @@ ${lowStock.length ? `<h2>Peringatan Display Toko Menipis</h2>
 <table><tr><th>SKU</th><th>Nama Barang</th><th class="r">Display Toko</th><th class="r">Min</th><th class="r">Gudang Utama</th><th class="r">Gudang BS</th></tr>
 ${lowStock.map((p) => `<tr><td>${esc(p.sku)}</td><td>${esc(p.name)}</td><td class="r">${num(p.floor_stock)}</td><td class="r">${num(p.min_floor_alert)}</td><td class="r">${num(p.warehouse_stock)}</td><td class="r">${num(p.damaged_stock)}</td></tr>`).join('')}
 </table>` : ''}
-${off.receipts ? `<p>Termasuk <b>${num(off.receipts)} transaksi MODE DARURAT</b> (nomor struk OFF-…) yang dicatat PC kasir saat PC gudang tidak terhubung.</p>` : ''}
+${off.receipts ? `<p>Termasuk <b>${num(off.receipts)} transaksi MODE DARURAT</b> (nomor struk OFF-…) yang dicatat saat PC Server tidak terhubung.</p>` : ''}
 ${off.checks.length ? `<h2>Transaksi Mode Darurat — Perlu Dicek</h2>
 <table><tr><th>No. Struk</th><th>Waktu</th><th class="r">Total</th><th>Catatan</th></tr>
 ${off.checks.map((c) => `<tr><td>${esc(c.receipt_no)}</td><td>${esc(c.created_at)}</td><td class="r">${rp(c.total)}</td><td>${c.notes.map(esc).join('<br>')}</td></tr>`).join('')}

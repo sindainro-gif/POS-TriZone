@@ -37,7 +37,7 @@ function startServer({ port = DEFAULT_PORT, host = '0.0.0.0', getKey, call, info
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/ping') return send(res, 200, { ok: true, app: 'POS Tri-Zone', ...info() });
     if (req.method !== 'POST' || req.url !== '/rpc') return send(res, 404, { ok: false, error: 'Tidak ditemukan.' });
-    if (!sameKey(req.headers['x-pos-key'], getKey())) return send(res, 401, { ok: false, error: 'Kode pasangan salah. Periksa kode di PC gudang.' });
+    if (!sameKey(req.headers['x-pos-key'], getKey())) return send(res, 401, { ok: false, error: 'Kode pasangan salah. Periksa kode di PC Server.' });
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
@@ -80,12 +80,12 @@ function request({ host, port, key, method, path, body, timeout }) {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (_) { reject(posError('Balasan PC gudang tidak dikenali.')); }
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (_) { reject(posError('Balasan PC Server tidak dikenali.')); }
       });
     });
     req.on('timeout', () => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })));
     req.on('error', (err) => reject(posError(
-      `Tidak terhubung ke komputer gudang (${host}:${port}). Pastikan PC gudang menyala, aplikasi POS terbuka dalam mode Server, dan kedua PC satu jaringan.`,
+      `Tidak terhubung ke PC Server (${host}:${port}). Pastikan PC Server menyala, aplikasi POS terbuka dalam mode Server, dan kedua PC satu jaringan.`,
       { network: true, code: err.code },
     )));
     if (data) req.write(data);
@@ -96,7 +96,7 @@ function request({ host, port, key, method, path, body, timeout }) {
 function createRemoteClient({ host, port = DEFAULT_PORT, key, timeout = 10000 }) {
   async function rpc(method, args) {
     const r = await request({ host, port, key, method: 'POST', path: '/rpc', body: { method, args }, timeout });
-    if (!r.ok) throw posError(r.error || 'Perintah gagal di PC gudang.');
+    if (!r.ok) throw posError(r.error || 'Perintah gagal di PC Server.');
     return r.data;
   }
   async function ping(t = 3000) {

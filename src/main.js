@@ -336,7 +336,7 @@ async function closeShiftClient(a) {
     await pingGudang();
     await maintainOffline();
     const left = offline.pending().length;
-    if (left) throw userError(`Masih ada ${left} transaksi MODE DARURAT yang belum terkirim ke PC Gudang. Pastikan PC Gudang terhubung, tunggu sampai terkirim, lalu tutup shift.`);
+    if (left) throw userError(`Masih ada ${left} transaksi MODE DARURAT yang belum terkirim ke PC Server. Pastikan PC Server terhubung, tunggu sampai terkirim, lalu tutup shift.`);
   }
   const r = await runMain('main.closeShift', a);
   offline.setShift(null);
@@ -401,7 +401,7 @@ function saveTemplate({ title, fileName, sheet, headers, sample, textCols }) {
 
 // ---------------------------------------------------------------- Cadangkan / pulihkan database
 function requireLocalReports() {
-  if (isClient()) throw userError('Laporan tutup shift ada di PC gudang. Buka dari Pengaturan di PC gudang.');
+  if (isClient()) throw userError('Laporan tutup shift ada di PC Server. Buka dari Pengaturan di PC Server.');
 }
 
 // Buka satu file laporan: didekripsi ke folder sementara lalu dibuka dengan program bawaan Windows
@@ -424,7 +424,7 @@ async function openReport({ folder, file } = {}) {
 }
 
 function requireLocalDb() {
-  if (isClient()) throw userError('Komputer ini terhubung ke PC gudang. Cadangkan / pulihkan database dilakukan di PC gudang.');
+  if (isClient()) throw userError('Komputer ini terhubung ke PC Server. Cadangkan / pulihkan database dilakukan di PC Server.');
 }
 
 async function backupDatabase() {
@@ -454,7 +454,7 @@ async function restoreDatabase() {
     type: 'warning',
     title: 'Pulihkan Database',
     message: 'Ganti seluruh data aplikasi dengan isi file cadangan ini?',
-    detail: `${path.basename(r.filePaths[0])}\nBerisi ${info.products} barang, ${info.receptions} penerimaan, ${info.sales} baris penjualan shift.\n\nData saat ini akan disimpan dulu ke folder backup sebelum diganti.${device.mode === 'server' ? '\n\nPC kasir yang terhubung akan langsung memakai data ini.' : ''}`,
+    detail: `${path.basename(r.filePaths[0])}\nBerisi ${info.products} barang, ${info.receptions} penerimaan, ${info.sales} baris penjualan shift.\n\nData saat ini akan disimpan dulu ke folder backup sebelum diganti.${device.mode === 'server' ? '\n\nKomputer yang terhubung ke server ini akan langsung memakai data ini.' : ''}`,
     buttons: ['Batal', 'Ya, Pulihkan'],
     defaultId: 0,
     cancelId: 0,
@@ -515,7 +515,7 @@ function deviceInfo() {
 
 function normalizeHost(h) {
   const host = String(h || '').trim().replace(/^https?:\/\//, '').replace(/[:/].*$/, '');
-  if (!/^[A-Za-z0-9.-]+$/.test(host)) throw userError('Alamat IP PC gudang tidak valid. Contoh: 192.168.1.10');
+  if (!/^[A-Za-z0-9.-]+$/.test(host)) throw userError('Alamat IP PC Server tidak valid. Contoh: 192.168.1.10');
   return host;
 }
 
@@ -540,7 +540,7 @@ async function saveDeviceMode({ mode, host, port, key }) {
     patch.server_host = normalizeHost(host);
     patch.server_port = normalizePort(port);
     patch.pair_key = String(key || '').trim();
-    if (!/^\d{6}$/.test(patch.pair_key)) throw userError('Kode pasangan harus 6 digit (lihat di Pengaturan PC gudang).');
+    if (!/^\d{6}$/.test(patch.pair_key)) throw userError('Kode pasangan harus 6 digit (lihat di Pengaturan PC Server).');
     await testConnection({ host: patch.server_host, port: patch.server_port, key: patch.pair_key });
   }
   if (mode === 'server') {
@@ -634,11 +634,11 @@ const handlers = {
 
   'app:info': () => ({
     version: app.getVersion(),
-    dbFile: isClient() ? `Di PC gudang (${device.server_host}:${device.server_port})` : DB_FILE,
+    dbFile: isClient() ? `Di PC Server (${device.server_host}:${device.server_port})` : DB_FILE,
     mode: device.mode,
   }),
   // Hanya Admin (tidak tercantum di ACCESS): lokasi file laporan tidak boleh diketahui kasir
-  'app:reportsDir': () => (isClient() ? 'Di PC gudang (laporan tutup shift dibuat di sana)' : reportsRoot()),
+  'app:reportsDir': () => (isClient() ? 'Di PC Server (laporan tutup shift dibuat di sana)' : reportsRoot()),
   'app:status': () => connectionStatus(),
   // Laporan tutup shift terenkripsi: hanya Admin (tidak tercantum di ACCESS), hanya di PC pemilik database
   'reports:list': () => { requireLocalReports(); return reportCrypt.listReports(reportsRoot()); },
@@ -875,7 +875,7 @@ async function startup() {
         info: () => ({ store_name: localSvc.getSettings().store_name }),
       });
     } catch (err) {
-      dialog.showErrorBox('Server jaringan gagal dijalankan', `${err.message}\n\nAplikasi tetap berjalan, tetapi PC kasir belum bisa terhubung.`);
+      dialog.showErrorBox('Server jaringan gagal dijalankan', `${err.message}\n\nAplikasi tetap berjalan, tetapi komputer lain belum bisa terhubung.`);
     }
   }
 }

@@ -74,7 +74,7 @@ async function t(name, fn) {
 
   await t('server mati → pesan "Tidak terhubung"', async () => {
     await new Promise((r) => server.close(r));
-    await assert.rejects(svc.listProducts({}), /Tidak terhubung ke komputer gudang/);
+    await assert.rejects(svc.listProducts({}), /Tidak terhubung ke PC Server/);
     await assert.rejects(kasir.ping(), /Tidak terhubung/);
   });
 

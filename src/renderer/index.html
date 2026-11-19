@@ -448,7 +448,7 @@
           <button class="btn sm primary" id="usAdd">+ Tambah Pengguna</button>
         </div>
         <p class="muted small" style="margin-top:-6px"><b>Admin</b>: semua menu. <b>Gudang</b>: Mutasi, Penerimaan, Daftar Barang, Cetak Barcode.
-          <b>Kasir</b>: Kasir / Pembayaran, Laporan Shift, dan Daftar Barang (hanya lihat). Akun disimpan di database PC Gudang dan berlaku di semua komputer.</p>
+          <b>Kasir</b>: Kasir / Pembayaran, Laporan Shift, dan Daftar Barang (hanya lihat). Akun disimpan di database PC Server dan berlaku di semua komputer.</p>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Dibuat</th><th class="w-act2"></th></tr></thead><tbody id="usBody"></tbody></table></div>
       </div>
       <div class="card" id="mbCard">
@@ -458,7 +458,7 @@
         </div>
         <p class="muted small" style="margin-top:-6px">Penjualan setiap tutup shift, penerimaan, mutasi, stok opname, dan stok 4 zona dikirim otomatis ke <b>mother base</b> lewat internet.
           Tanpa internet, toko tetap jalan: data menunggu di komputer ini dan dikirim saat internet tersambung. Password dan PIN <b>tidak</b> ikut.</p>
-        <div id="mbClient" class="mode-panel hidden">Pengiriman ke mother base dijalankan oleh komputer yang menyimpan database (PC Gudang). Atur di Pengaturan PC Gudang.</div>
+        <div id="mbClient" class="mode-panel hidden">Pengiriman ke mother base dijalankan oleh komputer yang menyimpan database (PC Server). Atur di Pengaturan PC Server.</div>
         <div id="mbDemo" class="mode-panel hidden">Versi DEMO tidak mengirim data ke mother base.</div>
         <div id="mbBody">
           <div class="row-3">
@@ -486,11 +486,11 @@
       </div>
       <div class="card">
         <h2>Mode Komputer &amp; Jaringan</h2>
-        <p class="muted small" style="margin-top:-6px">Untuk 2 komputer: PC Gudang menjadi <b>Server</b> (menyimpan database), PC Kasir memakai mode <b>Kasir</b> dan terhubung ke PC Gudang lewat jaringan toko. Stok selalu sama di kedua komputer.</p>
+        <p class="muted small" style="margin-top:-6px">Untuk 2 komputer: satu komputer menjadi <b>Server</b> (menyimpan database), boleh PC Gudang atau PC Kasir. Komputer lainnya memakai mode <b>Terhubung ke Server</b> lewat jaringan toko. Stok selalu sama di kedua komputer, dan menu tetap mengikuti akun yang login.</p>
         <div class="mode-opts" id="mdModes">
           <label class="mode-opt"><input type="radio" name="mdMode" value="standalone"><div><b>Mandiri</b><span>Satu komputer saja, database di komputer ini.</span></div></label>
-          <label class="mode-opt"><input type="radio" name="mdMode" value="server"><div><b>Server (PC Gudang)</b><span>Database di komputer ini, PC kasir terhubung ke sini.</span></div></label>
-          <label class="mode-opt"><input type="radio" name="mdMode" value="client"><div><b>Kasir (terhubung ke PC Gudang)</b><span>Semua data dibaca &amp; disimpan di PC gudang.</span></div></label>
+          <label class="mode-opt"><input type="radio" name="mdMode" value="server"><div><b>Server (menyimpan database)</b><span>Database di komputer ini; komputer lain terhubung ke sini.</span></div></label>
+          <label class="mode-opt"><input type="radio" name="mdMode" value="client"><div><b>Terhubung ke Server</b><span>Semua data dibaca &amp; disimpan di PC Server.</span></div></label>
         </div>
         <div id="mdServer" class="mode-panel hidden">
           <div class="row-3">
@@ -498,11 +498,11 @@
             <div class="field"><label>Port</label><input id="mdServerPort" type="number" min="1024" max="65535"></div>
             <div class="field"><label>Kode Pasangan</label><div class="btn-row"><div id="mdKey" class="big-code"></div><button class="btn sm ghost" id="mdNewKey">Buat Kode Baru</button></div></div>
           </div>
-          <p class="muted small">Ketik alamat IP &amp; kode ini di Pengaturan PC kasir. Saat pertama kali, Windows Firewall akan bertanya — pilih <b>Allow / Izinkan</b> untuk jaringan <b>Private</b>.</p>
+          <p class="muted small">Ketik alamat IP &amp; kode ini di Pengaturan komputer yang akan terhubung. Saat pertama kali, Windows Firewall akan bertanya — pilih <b>Allow / Izinkan</b> untuk jaringan <b>Private</b>.</p>
         </div>
         <div id="mdClient" class="mode-panel hidden">
           <div class="row-3">
-            <div class="field"><label>Alamat IP PC Gudang</label><input id="mdHost" placeholder="192.168.1.10"></div>
+            <div class="field"><label>Alamat IP PC Server</label><input id="mdHost" placeholder="192.168.1.10"></div>
             <div class="field"><label>Port</label><input id="mdPort" type="number" min="1024" max="65535"></div>
             <div class="field"><label>Kode Pasangan (6 digit)</label><input id="mdPair" maxlength="6" inputmode="numeric" placeholder="000000"></div>
           </div>
