@@ -93,15 +93,25 @@ function request({ host, port, key, method, path, body, timeout }) {
   });
 }
 
-function createRemoteClient({ host, port = DEFAULT_PORT, key, timeout = 10000 }) {
+// version = versi aplikasi komputer ini (untuk pesan bila PC Server masih versi lama)
+function createRemoteClient({ host, port = DEFAULT_PORT, key, timeout = 10000, version = '' }) {
+  let serverVersion = ''; // dari ping terakhir
   async function rpc(method, args) {
     const r = await request({ host, port, key, method: 'POST', path: '/rpc', body: { method, args }, timeout });
-    if (!r.ok) throw posError(r.error || 'Perintah gagal di PC Server.');
+    if (!r.ok) {
+      // PC Server versi lama belum mengenal perintah fitur baru: jelaskan, jangan tampilkan nama perintah internal
+      if (/^Perintah tidak dikenal: /.test(String(r.error || ''))) {
+        throw posError(`Fitur ini belum ada di PC Server karena aplikasinya masih versi lama${serverVersion ? ` (${serverVersion})` : ''}. `
+          + `Perbarui aplikasi POS di PC Server${version ? ` ke versi ${version}` : ''} (sama dengan komputer ini), lalu coba lagi.`, { outdated: true });
+      }
+      throw posError(r.error || 'Perintah gagal di PC Server.');
+    }
     return r.data;
   }
   async function ping(t = 3000) {
     const r = await request({ host, port, method: 'GET', path: '/ping', timeout: t });
     if (!r.ok || r.app !== 'POS Tri-Zone') throw posError('Alamat itu bukan aplikasi POS Tri-Zone.');
+    serverVersion = String(r.version || '');
     return r;
   }
   // svc.namaMetode(...args) → dijalankan di PC gudang

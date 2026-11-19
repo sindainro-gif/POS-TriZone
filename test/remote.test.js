@@ -57,10 +57,22 @@ async function t(name, fn) {
   });
 
   await t('perintah terlarang & tidak dikenal ditolak', async () => {
-    await assert.rejects(svc.mbConfig(), /tidak dikenal/);
-    await assert.rejects(svc.archiveShift(), /tidak dikenal/);
-    await assert.rejects(kasir.rpc('hapusSemua', []), /tidak dikenal/);
+    await assert.rejects(svc.mbConfig(), /belum ada di PC Server/);
+    await assert.rejects(svc.archiveShift(), /belum ada di PC Server/);
+    await assert.rejects(kasir.rpc('hapusSemua', []), /belum ada di PC Server/);
     assert.strictEqual(gudang.shiftSalesRows().length, 1);
+  });
+
+  await t('PC Server versi lama tidak mengenal fitur baru → pesan jelas berisi versi kedua PC (tanpa nama perintah internal)', async () => {
+    const baru = createRemoteClient({ host: '127.0.0.1', port, key, version: '9.9.10' });
+    await baru.ping();
+    await assert.rejects(baru.services['main.createOrder']({}), (e) => {
+      assert.strictEqual(e.message, 'Fitur ini belum ada di PC Server karena aplikasinya masih versi lama (9.9.9). Perbarui aplikasi POS di PC Server ke versi 9.9.10 (sama dengan komputer ini), lalu coba lagi.');
+      assert.ok(e.outdated && e.userFacing);
+      return true;
+    });
+    // Galat biasa dari PC Server tetap diteruskan apa adanya
+    await assert.rejects(baru.services.checkout({ items: [{ sku: 'TIDAK-ADA', qty: 1 }], payment_method: 'Tunai' }), /tidak ditemukan/);
   });
 
   await t('kode pasangan salah ditolak', async () => {

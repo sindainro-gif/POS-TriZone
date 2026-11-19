@@ -1016,7 +1016,7 @@ async function startup() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   drafts = createDraftStore(DATA_DIR);
   if (isClient()) {
-    remote = createRemoteClient({ host: device.server_host, port: Number(device.server_port) || DEFAULT_PORT, key: device.pair_key });
+    remote = createRemoteClient({ host: device.server_host, port: Number(device.server_port) || DEFAULT_PORT, key: device.pair_key, version: APP_VERSION });
     svc = remote.services;
     offline = createOfflineStore(DATA_DIR);
     // Cek cepat sebelum jendela dibuka: bila gudang mati, aplikasi langsung memakai data darurat
