@@ -250,6 +250,7 @@ async function pullMasterLocal() {
 // Perintah yang boleh dipanggil PC kasir lewat jaringan
 const SERVER_MAIN = {
   'main.checkout': checkoutLocal,
+  'main.voidReceipt': (a) => localSvc.voidReceipt(a),
   'main.closeShift': closeShiftLocal,
   'main.pullMaster': pullMasterLocal,
 };
@@ -607,7 +608,7 @@ const ACCESS = {
   'labels:fromReception': GUDANG, 'labels:preview': GUDANG, 'labels:print': GUDANG,
   'drafts:list': KASIR, 'drafts:save': KASIR, 'drafts:take': KASIR, 'drafts:delete': KASIR,
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR,
-  'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR,
+  'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'receipt:void': KASIR,
 };
 
 function checkAccess(channel) {
@@ -727,6 +728,15 @@ const handlers = {
   'printer:list': async () => (await win.webContents.getPrintersAsync()).map((p) => ({ name: p.name, displayName: p.displayName || p.name, isDefault: !!p.isDefault })),
   'receipt:print': (receipt) => printReceipt(receipt),
   'receipt:reprint': async (a) => printReceipt(await svc.receiptForReprint(a), { reprint: true }),
+  // Batal nota: kasir meminta, Admin menyetujui dengan PIN. Peminta diambil dari akun yang login, bukan dari layar.
+  'receipt:void': async (a = {}) => {
+    try {
+      return await runMain('main.voidReceipt', { ...a, requested_by: session.name });
+    } catch (err) {
+      if (/PIN Admin salah/.test(err.message)) await new Promise((r) => setTimeout(r, 800)); // memperlambat tebak-tebakan PIN
+      throw err;
+    }
+  },
   'receipt:test': () => printReceipt({ ...SAMPLE_RECEIPT, created_at: localNow() }),
   'receipt:preview': async ({ settings }) => buildReceiptLines({ ...SAMPLE_RECEIPT, created_at: localNow() }, { ...(await getSettings()), ...(settings || {}) }),
 

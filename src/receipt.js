@@ -62,12 +62,19 @@ function buildReceiptLines(receipt, settings = {}, { reprint = false, now = new 
   if (settings.demo) out.push(center('** DEMO - BUKAN NOTA ASLI **', cols));
   // Transaksi saat PC gudang tidak terhubung (nomor OFF-...), dikirim ke gudang setelah koneksi kembali
   if (/^OFF-/.test(receipt.receipt_no)) out.push(center('** MODE DARURAT **', cols));
+  // Pembatalan dicetak sebagai nota tersendiri; nota asli yang dicetak ulang diberi tanda sudah dibatalkan
+  if (receipt.void_of) out.push(center('** NOTA PEMBATALAN **', cols));
+  if (receipt.voided_by) out.push(center('** NOTA SUDAH DIBATALKAN **', cols));
   out.push(dash);
 
   const t = parseTime(receipt.created_at);
   // Nomor struk tidak dicetak (tetap tersimpan & tampil di Laporan Shift)
   out.push(...leftRight(`Tgl: ${t ? `${t.d}-${t.mo}-${t.y.slice(2)}` : '-'}`, t ? `${t.h}:${t.mi}:${t.s}` : '', cols));
   out.push(...wrap(`Ksr: ${receipt.cashier || '-'}`, cols));
+  if (receipt.void_of) {
+    const o = parseTime(receipt.void_of_at);
+    out.push(...wrap(`Batal nota: ${o ? `${o.d}-${o.mo}-${o.y.slice(2)} ${o.h}:${o.mi}:${o.s}` : '-'}`, cols));
+  }
   out.push(dash);
 
   for (const l of receipt.lines) {
@@ -80,7 +87,12 @@ function buildReceiptLines(receipt, settings = {}, { reprint = false, now = new 
   out.push(`BRS=${receipt.lines.length} ,QTY ${num(qty)}`);
   out.push(...leftRight('Total       =', num(receipt.total), cols));
   const isCash = receipt.payment_method === 'Tunai';
-  if (isCash && !reprint) {
+  if (receipt.void_of) {
+    out.push(...leftRight('Dikembalikan=', num(receipt.total), cols));
+    out.push(dash);
+    out.push(...wrap(`Alasan: ${receipt.reason || '-'}`, cols));
+    out.push(...wrap(`Disetujui: ${receipt.approved_by || '-'}`, cols));
+  } else if (isCash && !reprint) {
     out.push(...leftRight('Tunai       =', num(receipt.cash_received), cols));
     out.push(dash);
     out.push(...leftRight('Kembali     =', num(receipt.change), cols));

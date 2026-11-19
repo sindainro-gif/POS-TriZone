@@ -96,6 +96,12 @@ Di layar Kasir, kursor selalu kembali ke kolom **scan barcode**. Kolom **Jumlah*
 
 **Pembayaran:** kasir hanya memakai **Tunai** (sejak 1.14.0 tidak ada pilihan QRIS / Transfer). Isi **Uang Diterima** (F12; F12 lagi = Uang Pas), kembalian dihitung otomatis. Transaksi QRIS / Transfer lama tetap tercatat apa adanya di laporan, dan transaksi darurat lama yang masih antre tetap diterima.
 
+**Batal nota (persetujuan Admin):** di **Laporan Shift → Transaksi Shift Ini → Detail → Batalkan Nota**. Kasir mengisi alasan dan memilih stok tujuan per barang (Display Toko bila masih bagus, Gudang BS bila rusak), lalu **Admin mengetik PIN-nya** di komputer itu. PIN Kasir / Gudang tidak berlaku.
+- Nota asli **tidak dihapus atau diubah**. Pembatalan dicatat sebagai nota baru `BTL-YYYYMMDD-NNNN` berisi baris minus: omset dan uang tunai berkurang, stok kembali, dan nota pembatalan tercetak (alasan + nama Admin).
+- Hanya nota **shift yang sedang berjalan**; satu nota hanya bisa dibatalkan sekali. Tukar barang = batalkan nota, lalu buat transaksi baru.
+- Pembatalan tampil di daftar transaksi (badge *Dibatalkan* / *Pembatalan*), di Rekap PDF tutup shift (bagian "Pembatalan Nota"), dan ikut terkirim ke mother base sebagai baris minus. Barang yang dikembalikan ke Gudang BS tercatat sebagai dokumen mutasi.
+- Butuh PC Server (tidak tersedia saat MODE DARURAT).
+
 **Draft penjualan:** bila pelanggan belum siap bayar, klik **Tahan (Draft)** (boleh diberi nama pelanggan / catatan). Keranjang tersimpan di komputer kasir itu dan layar kosong untuk pelanggan berikutnya. **Daftar Draft** menampilkan semua draft; **Lanjutkan** memasukkan isinya kembali ke keranjang (keranjang yang sedang berisi bisa ditahan otomatis dulu). Stok tidak dipesan: harga & stok dicek ulang saat dilanjutkan dan saat bayar. Draft tetap ada walau aplikasi ditutup, juga saat MODE DARURAT.
 
 **Menjual melebihi display toko:** kasir selalu boleh menjual walaupun display toko di sistem kurang (barangnya ada di tangan pelanggan). Keranjang hanya menampilkan peringatan kuning, dan display toko menjadi 0 atau minus. Stok Gudang Utama dan Gudang BS tidak pernah dipotong. Barang yang display tokonya habis/minus muncul **merah dan paling atas** di **Mutasi → Saran Restock Rak Toko** (label HABIS / MINUS −N), dan menu Mutasi menampilkan angka merah berisi jumlah barang tersebut untuk akun Gudang & Admin. Klik **Isi Rak** untuk mencatat mutasi Gudang Utama → Toko.

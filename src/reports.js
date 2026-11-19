@@ -36,6 +36,7 @@ function stockCsv(rows) {
 function summaryHtml({ store, summary, closedAt, notes, lowStock }) {
   const { shift, totals, byMethod, byItem } = summary;
   const off = summary.offline || { receipts: 0, checks: [] };
+  const voids = (summary.voids && summary.voids.list) || [];
   return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Rekap Shift</title>
 <style>
   body{font-family:"Segoe UI",Arial,sans-serif;color:#111;font-size:11px;margin:0}
@@ -63,6 +64,11 @@ ${notes ? `<p><b>Catatan kasir:</b> ${esc(notes)}</p>` : ''}
 <table><tr><th>Metode</th><th class="r">Transaksi</th><th class="r">Total</th></tr>
 ${byMethod.map((m) => `<tr><td>${esc(m.method)}</td><td class="r">${num(m.receipts)}</td><td class="r">${rp(m.total)}</td></tr>`).join('') || '<tr><td colspan="3">Tidak ada penjualan.</td></tr>'}
 </table>
+${voids.length ? `<h2>Pembatalan Nota (disetujui Admin)</h2>
+<p class="muted">Omset di atas sudah dikurangi pembatalan berikut. Nota asli tidak dihapus.</p>
+<table><tr><th>No. Pembatalan</th><th>Nota Asal</th><th>Waktu</th><th class="r">Dikembalikan</th><th>Alasan</th><th>Diminta</th><th>Disetujui</th></tr>
+${voids.map((v) => `<tr><td>${esc(v.void_no)}</td><td>${esc(v.receipt_no)}</td><td>${esc(v.created_at)}</td><td class="r">${rp(v.total)}</td><td>${esc(v.reason)}</td><td>${esc(v.requested_by)}</td><td>${esc(v.approved_by)}</td></tr>`).join('')}
+</table>` : ''}
 <h2>Rincian Barang Terjual</h2>
 <table><tr><th>SKU</th><th>Nama Barang</th><th class="r">Jumlah (Biji)</th><th class="r">Total</th></tr>
 ${byItem.map((i) => `<tr><td>${esc(i.sku)}</td><td>${esc(i.name)}</td><td class="r">${num(i.qty)}</td><td class="r">${rp(i.total)}</td></tr>`).join('') || '<tr><td colspan="4">Tidak ada penjualan.</td></tr>'}

@@ -2007,11 +2007,14 @@ views.barcode = (() => {
 views.shift = (() => {
   const root = $('#shiftContent');
 
-  // Isi satu struk shift berjalan + tombol cetak ulang. ref = { receipt_no }
-  function showReceipt(lines, ref) {
+  // Isi satu struk shift berjalan + tombol cetak ulang / batalkan. ref = { receipt_no }, row = baris di daftar transaksi
+  function showReceipt(lines, ref, row = {}) {
+    const canVoid = !row.void_no && !row.void_of && state.connected !== false;
     modal({
       title: `Struk ${ref.receipt_no}`,
-      body: `<table class="receipt-lines">${lines.map((l) => `<tr><td>${esc(l.product_name)}</td><td class="r muted">${num(l.qty_sold)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>
+      body: `${row.void_no ? `<div class="alert warn" style="margin-bottom:10px">Nota ini <b>sudah dibatalkan</b> (${esc(row.void_no)}).</div>` : ''}
+        ${row.void_of ? `<div class="alert warn" style="margin-bottom:10px">Nota pembatalan untuk <b>${esc(row.void_of)}</b>.</div>` : ''}
+        <table class="receipt-lines">${lines.map((l) => `<tr><td>${esc(l.product_name)}</td><td class="r muted">${num(l.qty_sold)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>
         <div class="kv total-line"><span>Total (${esc(lines[0]?.payment_method || '')})</span><span>${rp(lines.reduce((a, l) => a + l.line_total, 0))}</span></div>`,
       actions: [
         {
@@ -2021,8 +2024,56 @@ views.shift = (() => {
             try { await api('receipt:reprint', ref); toast('Nota dicetak ulang.', 'ok'); } catch (err) { toast(err.message, 'err', 8000); }
           },
         },
+        ...(canVoid ? [{ label: 'Batalkan Nota', kind: 'danger', onClick: ({ close }) => { close(); openVoidForm(lines, ref.receipt_no); } }] : []),
         { label: 'Tutup', kind: 'primary' },
       ],
+    });
+  }
+
+  // Batal nota: kasir mengisi alasan & stok tujuan, Admin menyetujui dengan PIN. Nota asli tidak dihapus;
+  // pembatalan dicatat sebagai nota baru BTL-... (omset, uang tunai, dan stok terkoreksi).
+  function openVoidForm(lines, receipt_no) {
+    const total = lines.reduce((a, l) => a + l.line_total, 0);
+    modal({
+      title: `Batalkan Nota ${receipt_no}`,
+      wide: true,
+      body: `<div class="alert warn" style="margin-bottom:10px">Nota asli tidak dihapus. Pembatalan dicatat sebagai nota baru: omset &amp; uang tunai berkurang
+          <b>${rp(total)}</b> dan barang kembali ke stok yang dipilih. Perlu persetujuan <b>PIN Admin</b>.</div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Barang</th><th class="r">Biji</th><th class="r">Subtotal</th><th>Kembali ke</th></tr></thead><tbody>
+        ${lines.map((l) => `<tr><td>${esc(l.product_name)}</td><td class="r">${num(l.qty_sold)}</td><td class="r">${rp(l.line_total)}</td>
+          <td><select data-void-sku="${esc(l.sku)}"><option value="floor">Display Toko (masih bagus)</option><option value="damaged">Gudang BS (rusak)</option></select></td></tr>`).join('')}
+        </tbody></table></div>
+        <div class="row-2" style="margin-top:12px">
+          <div class="field"><label>Alasan pembatalan *</label><input id="vdReason" maxlength="200" placeholder="Contoh: salah input / pelanggan batal beli"></div>
+          <div class="field"><label>PIN Admin *</label><input id="vdPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>
+        </div>`,
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        {
+          label: 'Batalkan Nota',
+          kind: 'danger',
+          onClick: async ({ close, el, btn }) => {
+            const items = [...el.querySelectorAll('[data-void-sku]')].map((s) => ({ sku: s.dataset.voidSku, destination: s.value }));
+            btn.disabled = true;
+            try {
+              const r = await api('receipt:void', { receipt_no, reason: $('#vdReason', el).value, approver_pin: $('#vdPin', el).value, items });
+              close();
+              toast(`Nota ${receipt_no} dibatalkan (${r.receipt_no}). Uang dikembalikan ${rp(r.total)}.`, 'ok', 8000);
+              if (state.settings.auto_print !== '0') api('receipt:print', r).catch((err) => toast(err.message, 'err', 8000));
+              show();
+            } catch (err) {
+              btn.disabled = false;
+              toast(err.message, 'err', 7000);
+              if (/PIN/.test(err.message)) { $('#vdPin', el).value = ''; $('#vdPin', el).focus(); }
+            }
+          },
+        },
+      ],
+      onOpen: (el) => {
+        $('#vdReason', el).focus();
+        $('#vdReason', el).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#vdPin', el).focus(); } });
+        $('#vdPin', el).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('.modal-foot .btn.danger', el).click(); } });
+      },
     });
   }
 
@@ -2082,7 +2133,7 @@ views.shift = (() => {
       <div class="card">
         <h2>Transaksi Shift Ini</h2>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Waktu</th><th>No. Struk</th><th>Metode</th><th class="r">Biji</th><th class="r">Total</th><th></th></tr></thead><tbody id="shReceipts">
-          ${s.receipts.map((r) => `<tr><td class="muted">${fmtTime(r.created_at)}</td><td class="mono">${esc(r.receipt_no)}</td><td>${esc(r.payment_method)}</td><td class="r">${num(r.qty)}</td><td class="r"><b>${rp(r.total)}</b></td>
+          ${s.receipts.map((r) => `<tr><td class="muted">${fmtTime(r.created_at)}</td><td class="mono">${esc(r.receipt_no)}${r.void_no ? ' <span class="badge bs">Dibatalkan</span>' : ''}${r.void_of ? ` <span class="badge wh">Pembatalan</span> <span class="small muted">${esc(r.void_of)}</span>` : ''}</td><td>${esc(r.payment_method)}</td><td class="r">${num(r.qty)}</td><td class="r"><b>${rp(r.total)}</b></td>
             <td><button class="btn sm ghost" data-r="${esc(r.receipt_no)}">Detail</button></td></tr>`).join('') || '<tr><td colspan="6" class="empty-row">Belum ada transaksi.</td></tr>'}
         </tbody></table></div>
       </div>`;
@@ -2099,7 +2150,7 @@ views.shift = (() => {
     $('#shReceipts').addEventListener('click', async (e) => {
       const b = e.target.closest('[data-r]');
       if (!b) return;
-      showReceipt(await api('shift:receipt', { receipt_no: b.dataset.r }), { receipt_no: b.dataset.r });
+      showReceipt(await api('shift:receipt', { receipt_no: b.dataset.r }), { receipt_no: b.dataset.r }, s.receipts.find((x) => x.receipt_no === b.dataset.r));
     });
 
     $('#shClose').addEventListener('click', async () => {

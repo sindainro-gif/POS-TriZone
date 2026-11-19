@@ -216,6 +216,18 @@ CREATE TABLE IF NOT EXISTS offline_sales (
     checked_at DATETIME
 );
 
+-- Pembatalan nota (disetujui PIN Admin). Nota asli tidak diubah: pembatalannya adalah nota BTL-... berisi
+-- baris minus di shift_sales. UNIQUE(receipt_no) mencegah satu nota dibatalkan dua kali.
+CREATE TABLE IF NOT EXISTS receipt_voids (
+    void_no TEXT PRIMARY KEY,
+    receipt_no TEXT NOT NULL UNIQUE,
+    reason TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    approved_by TEXT NOT NULL,
+    total INTEGER NOT NULL,
+    created_at DATETIME NOT NULL
+);
+
 -- Penanda unik tiap percobaan bayar dari PC kasir, agar transaksi yang sudah masuk online
 -- tidak tercatat lagi lewat antrian darurat (mis. koneksi putus tepat saat menunggu balasan).
 CREATE TABLE IF NOT EXISTS checkout_refs (

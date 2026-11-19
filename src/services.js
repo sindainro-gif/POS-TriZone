@@ -2,7 +2,7 @@
 // Logika bisnis POS — tidak bergantung pada Electron agar bisa diuji dengan Node biasa.
 const crypto = require('crypto');
 const { normalizeDesign, DEFAULT_DESIGN } = require('./labels');
-const { ROLES, hashPin, matchLogin } = require('./auth');
+const { ROLES, hashPin, checkPin, matchLogin } = require('./auth');
 const { rankProducts } = require('./search');
 
 const PAYMENT_METHODS = ['Tunai', 'QRIS', 'Transfer'];
@@ -485,28 +485,35 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   function shiftSummary() {
     const shift = getShift();
+    // Nota pembatalan (BTL-...) berisi baris minus: omset, barang, dan tunai otomatis bersih,
+    // tetapi tidak dihitung sebagai struk penjualan.
     const totals = db.get(
-      'SELECT COUNT(DISTINCT receipt_no) AS receipts, COALESCE(SUM(line_total),0) AS revenue, COALESCE(SUM(qty_sold),0) AS qty FROM shift_sales',
+      `SELECT (SELECT COUNT(DISTINCT receipt_no) FROM shift_sales WHERE receipt_no NOT LIKE 'BTL-%') AS receipts,
+              COALESCE(SUM(line_total),0) AS revenue, COALESCE(SUM(qty_sold),0) AS qty FROM shift_sales`,
     );
     const byMethod = db.all(
-      `SELECT payment_method AS method, COUNT(DISTINCT receipt_no) AS receipts, SUM(line_total) AS total
+      `SELECT payment_method AS method, COUNT(DISTINCT CASE WHEN receipt_no NOT LIKE 'BTL-%' THEN receipt_no END) AS receipts, SUM(line_total) AS total
        FROM shift_sales GROUP BY payment_method ORDER BY total DESC`,
     );
     const byItem = db.all(
       `SELECT sku, product_name AS name, SUM(qty_sold) AS qty, SUM(line_total) AS total
-       FROM shift_sales GROUP BY sku, product_name ORDER BY total DESC`,
+       FROM shift_sales GROUP BY sku, product_name HAVING SUM(qty_sold) <> 0 ORDER BY total DESC`,
     );
     const receipts = db.all(
-      `SELECT receipt_no, MIN(created_at) AS created_at, payment_method, SUM(qty_sold) AS qty, SUM(line_total) AS total
-       FROM shift_sales GROUP BY receipt_no ORDER BY MIN(id) DESC LIMIT 100`,
+      `SELECT s.receipt_no, MIN(s.created_at) AS created_at, s.payment_method, SUM(s.qty_sold) AS qty, SUM(s.line_total) AS total,
+              v.void_no, vo.receipt_no AS void_of
+       FROM shift_sales s LEFT JOIN receipt_voids v ON v.receipt_no = s.receipt_no LEFT JOIN receipt_voids vo ON vo.void_no = s.receipt_no
+       GROUP BY s.receipt_no ORDER BY MIN(s.id) DESC LIMIT 100`,
     );
+    const voidList = db.all('SELECT * FROM receipt_voids WHERE void_no IN (SELECT receipt_no FROM shift_sales) ORDER BY created_at');
+    const voids = { count: voidList.length, total: voidList.reduce((s, v) => s + v.total, 0), list: voidList };
     const cashSales = byMethod.filter((m) => m.method === 'Tunai').reduce((s, m) => s + m.total, 0);
     const offline = {
       receipts: db.get("SELECT COUNT(DISTINCT receipt_no) AS n FROM shift_sales WHERE receipt_no LIKE 'OFF-%'").n,
       checks: offlineChecks(),
     };
     return {
-      shift, totals, byMethod, byItem, receipts, offline,
+      shift, totals, byMethod, byItem, receipts, offline, voids,
       cashSales,
     };
   }
@@ -519,13 +526,88 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   function receiptForReprint({ receipt_no } = {}) {
     const rows = receiptDetail({ receipt_no });
     if (!rows.length) fail('Struk tidak ditemukan.');
+    if (/^BTL-/.test(receipt_no)) return voidSlip(receipt_no);
     const total = rows.reduce((s, r) => s + r.line_total, 0);
     const shift = getShift();
+    const v = db.get('SELECT void_no FROM receipt_voids WHERE receipt_no = ?', [receipt_no]);
     return {
       receipt_no, created_at: rows[0].created_at, payment_method: rows[0].payment_method,
-      cashier: shift ? shift.cashier_name : '-', total, cash_received: total, change: 0,
+      cashier: shift ? shift.cashier_name : '-', total, cash_received: total, change: 0, voided_by: v ? v.void_no : '',
       lines: rows.map((r) => ({ sku: r.sku, name: r.product_name, qty: r.qty_sold, unit_price: r.unit_price, line_total: r.line_total })),
     };
+  }
+
+  // ---------------------------------------------------------------- Batal nota (disetujui PIN Admin)
+  // Nota asli TIDAK diubah atau dihapus. Pembatalan = nota baru BTL-... berisi baris minus di shift_sales,
+  // sehingga omset, uang tunai, stok, Rekap, dan kiriman ke mother base ikut terkoreksi. Hanya nota shift berjalan.
+  function nextVoidNo() {
+    const d = localNow().slice(0, 10).replace(/-/g, '');
+    const seq = getSetting('void_date') === d ? Number(getSetting('void_seq', '0')) + 1 : 1;
+    setSetting('void_date', d);
+    setSetting('void_seq', seq);
+    return `BTL-${d}-${String(seq).padStart(4, '0')}`;
+  }
+
+  // PIN dicocokkan ke semua akun Admin aktif; PIN Kasir / Gudang tidak berlaku
+  function approverAdmin(pin) {
+    const p = String(pin || '');
+    const u = p && authCache().find((x) => x.active && x.role === 'admin' && checkPin(p, x.pin_salt, x.pin_hash));
+    if (!u) fail('PIN Admin salah.');
+    return u.name;
+  }
+
+  function voidSlip(void_no) {
+    const v = db.get('SELECT * FROM receipt_voids WHERE void_no = ?', [void_no]);
+    if (!v) fail('Data pembatalan tidak ditemukan.');
+    const rows = receiptDetail({ receipt_no: void_no });
+    const orig = receiptDetail({ receipt_no: v.receipt_no });
+    return {
+      receipt_no: void_no, void_of: v.receipt_no, void_of_at: orig.length ? orig[0].created_at : '', created_at: v.created_at,
+      payment_method: rows.length ? rows[0].payment_method : 'Tunai', cashier: v.requested_by,
+      reason: v.reason, requested_by: v.requested_by, approved_by: v.approved_by, total: v.total,
+      lines: rows.map((r) => ({ sku: r.sku, name: r.product_name, qty: -r.qty_sold, unit_price: r.unit_price, line_total: -r.line_total })),
+    };
+  }
+
+  function voidReceipt({ receipt_no, reason, items = [], requested_by, approver_pin } = {}) {
+    const shift = getShift();
+    if (!shift) fail('Shift belum dibuka.');
+    const no = toStr(receipt_no, 'No. struk', { required: true, max: 40 });
+    if (/^BTL-/.test(no)) fail('Nota pembatalan tidak bisa dibatalkan.');
+    const rows = receiptDetail({ receipt_no: no });
+    if (!rows.length) fail('Nota tidak ditemukan di shift berjalan. Hanya nota shift yang sedang berjalan yang bisa dibatalkan.');
+    const done = db.get('SELECT void_no FROM receipt_voids WHERE receipt_no = ?', [no]);
+    if (done) fail(`Nota ini sudah dibatalkan (${done.void_no}).`);
+    const why = toStr(reason, 'Alasan pembatalan', { required: true, max: 200 });
+    if (why.length < 3) fail('Alasan pembatalan minimal 3 huruf.');
+    const dest = new Map((Array.isArray(items) ? items : []).filter(Boolean).map((i) => [i.sku, i.destination]));
+    for (const r of rows) {
+      if (!['floor', 'damaged'].includes(dest.get(r.sku))) fail(`Pilih stok tujuan untuk "${r.product_name}" (Display Toko / Gudang BS).`);
+    }
+    const approved_by = approverAdmin(approver_pin);
+    const by = toStr(requested_by, 'Diminta oleh', { max: 80 }) || shift.cashier_name;
+    return db.tx(() => {
+      const void_no = nextVoidNo();
+      const now = localNow();
+      const toBs = [];
+      for (const r of rows) {
+        db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [r.sku]);
+        db.run('UPDATE inventory SET floor_stock = floor_stock + ? WHERE sku = ?', [r.qty_sold, r.sku]);
+        db.run(
+          `INSERT INTO shift_sales(receipt_no, sku, product_name, qty_sold, unit_price, line_total, payment_method, created_at)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+          [void_no, r.sku, r.product_name, -r.qty_sold, r.unit_price, -r.line_total, r.payment_method, now],
+        );
+        if (dest.get(r.sku) === 'damaged') toBs.push({ p: getProduct(r.sku) || { sku: r.sku, name: r.product_name }, qty: r.qty_sold });
+        else clearSoldOut(r.sku);
+      }
+      // Barang rusak: dari Display Toko langsung dipindah ke Gudang BS (tercatat sebagai dokumen mutasi)
+      if (toBs.length) writeTransferDoc('floor', 'damaged', `Retur pelanggan (batal nota ${no}, ${void_no})`, toBs, now, { allowShort: true });
+      const total = rows.reduce((s, r) => s + r.line_total, 0);
+      db.run('INSERT INTO receipt_voids(void_no, receipt_no, reason, requested_by, approved_by, total, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)',
+        [void_no, no, why, by, approved_by, total, now]);
+      return voidSlip(void_no);
+    });
   }
 
   function shiftSalesRows() {
@@ -544,6 +626,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   function pruneShiftHistory({ today } = {}) {
     const cutoff = historyCutoff(today);
+    const oldVoids = 'FROM receipt_voids WHERE created_at < ? AND void_no NOT IN (SELECT receipt_no FROM shift_sales)';
+    if (db.get(`SELECT COUNT(*) AS n ${oldVoids}`, [cutoff]).n) db.tx(() => db.run(`DELETE ${oldVoids}`, [cutoff]));
     const n = db.get('SELECT COUNT(*) AS n FROM shift_history WHERE closed_at < ?', [cutoff]).n;
     if (!n) return 0;
     db.tx(() => {
@@ -689,31 +773,35 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       else lines.push({ p, qty: n });
     });
     const now = localNow();
-    const id = db.tx(() => {
-      for (const { p, qty: n } of lines) {
-        db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [p.sku]);
-        if (ZONE_COL[from_zone]) {
-          const col = ZONE_COL[from_zone];
-          const r = db.run(`UPDATE inventory SET ${col} = ${col} - ? WHERE sku = ? AND ${col} >= ?`, [n, p.sku, n]);
-          if (r.changes !== 1) fail(`${ZONE_LABEL[from_zone]} untuk "${p.name}" tidak cukup. Tersedia ${p[col]} Biji.`);
-        }
-        if (ZONE_COL[to_zone]) {
-          const col = ZONE_COL[to_zone];
-          db.run(`UPDATE inventory SET ${col} = ${col} + ? WHERE sku = ?`, [n, p.sku]);
-          if (to_zone === 'floor') clearSoldOut(p.sku);
-        }
-      }
-      const docNo = nextDocNo('MT', 'stock_transfer_docs', now);
-      db.run('INSERT INTO stock_transfer_docs(doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty) VALUES(?, ?, ?, ?, ?, ?, ?)', [
-        docNo, from_zone, to_zone, why, now, lines.length, lines.reduce((s, l) => s + l.qty, 0),
-      ]);
-      const did = db.lastId();
-      for (const { p, qty: n } of lines) {
-        db.run('INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason, created_at, doc_id) VALUES(?, ?, ?, ?, ?, ?, ?)', [p.sku, from_zone, to_zone, n, why, now, did]);
-      }
-      return did;
-    });
+    const id = db.tx(() => writeTransferDoc(from_zone, to_zone, why, lines, now));
     return getTransferDoc({ id });
+  }
+
+  // Tulis dokumen mutasi (dipanggil di dalam transaksi). allowShort hanya untuk proses internal
+  // (batal nota → barang rusak ke Gudang BS) yang boleh membuat display toko minus.
+  function writeTransferDoc(from_zone, to_zone, why, lines, now, { allowShort = false } = {}) {
+    for (const { p, qty: n } of lines) {
+      db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [p.sku]);
+      if (ZONE_COL[from_zone]) {
+        const col = ZONE_COL[from_zone];
+        const r = db.run(`UPDATE inventory SET ${col} = ${col} - ? WHERE sku = ?${allowShort ? '' : ` AND ${col} >= ?`}`, allowShort ? [n, p.sku] : [n, p.sku, n]);
+        if (r.changes !== 1) fail(`${ZONE_LABEL[from_zone]} untuk "${p.name}" tidak cukup. Tersedia ${p[col]} Biji.`);
+      }
+      if (ZONE_COL[to_zone]) {
+        const col = ZONE_COL[to_zone];
+        db.run(`UPDATE inventory SET ${col} = ${col} + ? WHERE sku = ?`, [n, p.sku]);
+        if (to_zone === 'floor') clearSoldOut(p.sku);
+      }
+    }
+    const docNo = nextDocNo('MT', 'stock_transfer_docs', now);
+    db.run('INSERT INTO stock_transfer_docs(doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty) VALUES(?, ?, ?, ?, ?, ?, ?)', [
+      docNo, from_zone, to_zone, String(why).slice(0, 200), now, lines.length, lines.reduce((s, l) => s + l.qty, 0),
+    ]);
+    const did = db.lastId();
+    for (const { p, qty: n } of lines) {
+      db.run('INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason, created_at, doc_id) VALUES(?, ?, ?, ?, ?, ?, ?)', [p.sku, from_zone, to_zone, n, String(why).slice(0, 200), now, did]);
+    }
+    return did;
   }
 
   // Mutasi satu barang (dipakai demo/tes): satu dokumen berisi satu baris
@@ -1570,7 +1658,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     meta, getSettings, saveSettings,
     getProduct, listProducts, categories, findByCode, searchProducts, saveProduct, deleteProduct, importRows,
     stockSnapshot, lowStock,
-    getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, shiftSalesRows,
+    getShift, openShift, checkout, shiftSummary, receiptDetail, receiptForReprint, voidReceipt, shiftSalesRows,
     archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,
     createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,

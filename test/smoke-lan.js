@@ -98,6 +98,15 @@ app.on('browser-window-created', (_e, win) => {
       if (nav !== 'checkout,products,shift') throw new Error('menu kasir tidak sesuai peran');
       const denied = await run(`window.posBridge.call('device:get')`);
       if (denied.ok) throw new Error('kasir bisa membuka pengaturan mode komputer');
+      // Batal nota dari PC kasir: diteruskan ke PC server dan disetujui PIN Admin
+      const lanSale = await run(`window.posBridge.call('sales:checkout', { items: [{ sku: 'BRS-001', qty: 1 }], payment_method: 'Tunai', cash_received: 6000 })`);
+      const noRef = await run(`window.posBridge.call('receipt:void', { reason: 'Uji batal LAN', approver_pin: '123456', items: [] })`);
+      if (!lanSale.ok || noRef.ok) throw new Error('persiapan batal nota LAN salah');
+      const lanVoid2 = await run(`window.posBridge.call('receipt:void', { receipt_no: ${JSON.stringify(lanSale.data.receipt_no)}, reason: 'Uji batal LAN', approver_pin: '123456', items: [{ sku: 'BRS-001', destination: 'floor' }] })`);
+      console.log('batal nota dari PC kasir:', JSON.stringify(lanVoid2.data ? [lanVoid2.data.receipt_no, lanVoid2.data.requested_by, lanVoid2.data.approved_by] : lanVoid2.error));
+      if (!lanVoid2.ok || lanVoid2.data.requested_by !== 'Kasir LAN' || lanVoid2.data.approved_by !== 'Admin' || (await readGudangStock()).floor_stock !== 17) {
+        throw new Error('batal nota dari PC kasir tidak diteruskan ke PC server');
+      }
       // Ambil Master Barang dari PC kasir diteruskan ke PC gudang (di sana mother base belum diatur)
       const pull = await run(`window.posBridge.call('products:pullMaster')`);
       console.log('ambil master dari PC kasir:', JSON.stringify(pull));

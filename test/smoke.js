@@ -670,6 +670,34 @@ app.on('browser-window-created', (_e, win) => {
         const edits = await run(`document.querySelectorAll('#pdBody [data-edit]').length + (document.querySelector('#pdAdd').classList.contains('hidden') ? 0 : 1)`);
         if ((name === 'Rina') !== (edits === 0)) throw new Error(`hak ubah Daftar Barang untuk ${name} salah`);
         await shot(`11-login-${name.toLowerCase()}`);
+        if (name === 'Rina') {
+          // Batal nota: kasir meminta, Admin menyetujui dengan PIN; nota asli tidak hilang
+          const sale = svc.checkout({ items: [{ sku: 'MNM-001', qty: 2 }], payment_method: 'Tunai', cash_received: 10000 });
+          const floorBefore = svc.getProduct('MNM-001').floor_stock;
+          await run(`go('shift')`);
+          await wait(900);
+          await run(`[...document.querySelectorAll('#shReceipts [data-r]')].find((b) => b.dataset.r === ${JSON.stringify(sale.receipt_no)}).click()`);
+          await wait(600);
+          await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Batalkan Nota').click()`);
+          await wait(500);
+          // PIN kasir sendiri ditolak
+          await run(`(() => { document.querySelector('#vdReason').value = 'Salah input barang'; document.querySelector('#vdPin').value = '222222'; document.querySelector('#modalRoot .modal-foot .btn.danger').click(); })()`);
+          await wait(1600);
+          const wrongPin = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
+          if (!/PIN Admin salah/.test(wrongPin) || svc.shiftSummary().voids.count !== 0) throw new Error(`PIN kasir seharusnya tidak bisa menyetujui pembatalan: ${wrongPin}`);
+          await shot('11a-batal-nota-pin-admin');
+          await run(`(() => { document.querySelector('#vdPin').value = '111111'; document.querySelector('#modalRoot .modal-foot .btn.danger').click(); })()`);
+          await wait(1500);
+          const vsum = svc.shiftSummary();
+          const listText = await run(`document.querySelector('#shReceipts').innerText`);
+          console.log('batal nota:', JSON.stringify(vsum.voids.list.map((v) => [v.void_no, v.receipt_no, v.requested_by, v.approved_by, v.total])));
+          if (vsum.voids.count !== 1 || vsum.voids.list[0].receipt_no !== sale.receipt_no || vsum.voids.list[0].requested_by !== 'Rina'
+            || vsum.voids.list[0].approved_by !== 'Pemilik' || svc.getProduct('MNM-001').floor_stock !== floorBefore + 2
+            || svc.receiptDetail({ receipt_no: sale.receipt_no }).length !== 1 || !/Dibatalkan/.test(listText) || !/Pembatalan/.test(listText)) {
+            throw new Error('batal nota tidak tercatat dengan benar');
+          }
+          await shot('11b-nota-dibatalkan');
+        }
       }
     } catch (e) {
       console.error('SMOKE GAGAL:', e);
