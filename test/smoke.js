@@ -682,6 +682,16 @@ app.on('browser-window-created', (_e, win) => {
             throw new Error('akses stok opname Gudang tidak sesuai (seharusnya hanya lewat Excel)');
           }
           await shot('11c-opname-gudang-excel');
+          // Gudang juga bisa memilih PDF hasil "Save as PDF" Excel dari template opname
+          process.env.POS_OPEN_FILE = path.join(__dirname, 'fixtures', 'opname-excel.pdf');
+          const opPdf = await run(`window.posBridge.call('opname:importFile')`);
+          process.env.POS_OPEN_FILE = path.join(__dirname, 'fixtures', 'tidak-ada.txt.pdf');
+          const opPdfBad = await run(`window.posBridge.call('opname:importFile')`);
+          delete process.env.POS_OPEN_FILE;
+          console.log('opname PDF (Gudang):', JSON.stringify(opPdf.ok ? [opPdf.data.file, opPdf.data.rows.length, opPdf.data.rows[1]] : opPdf.error), '· PDF rusak:', opPdfBad.error);
+          if (!opPdf.ok || opPdf.data.rows.length !== 74 || opPdf.data.rows[1].Kode !== 'SNK-010' || opPdf.data.rows[1]['Fisik Gudang Utama'] !== '75' || opPdfBad.ok) {
+            throw new Error('import opname PDF tidak terbaca');
+          }
         }
         const vpSeen = await run(`window.posBridge.call('settings:voidPin', { reveal: true })`);
         if (vpSeen.ok || !/Akses ditolak/.test(vpSeen.error)) throw new Error(`PIN Pembatalan bisa dilihat oleh ${name}`);

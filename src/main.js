@@ -18,6 +18,7 @@ const { seedDemo, DEMO_ACCOUNTS } = require('./demo');
 const { createDraftStore } = require('./drafts');
 const { createMotherbase } = require('./motherbase');
 const reportCrypt = require('./reportcrypt');
+const { readPdfTable } = require('./pdftable');
 
 // Versi DEMO (Jalankan DEMO.bat): data latihan di folder terpisah; mencetak ke printer sungguhan, tidak mengirim ke mother base
 const DEMO = process.argv.includes('--demo') || process.env.POS_DEMO === '1';
@@ -346,16 +347,28 @@ async function closeShiftClient(a) {
 
 // ---------------------------------------------------------------- Import / template Excel
 // Dialog buka file Excel/CSV → baris sheet pertama (null bila dibatalkan)
-async function pickSheetRows(title) {
-  const r = await dialog.showOpenDialog(win, {
-    title,
-    filters: [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
-    properties: ['openFile'],
-  });
-  if (r.canceled || !r.filePaths.length) return null;
-  const wb = XLSX.readFile(r.filePaths[0], { raw: false, cellText: false });
+// pdf = { headers, keyHeader }: juga menerima PDF hasil "Save as PDF" Excel dari template (lihat src/pdftable.js).
+// POS_OPEN_FILE = uji otomatis tanpa dialog.
+async function pickSheetRows(title, { pdf = null } = {}) {
+  let file = process.env.POS_OPEN_FILE || '';
+  if (!file) {
+    const r = await dialog.showOpenDialog(win, {
+      title,
+      filters: [pdf ? { name: 'Excel / CSV / PDF', extensions: ['xlsx', 'xls', 'csv', 'pdf'] } : { name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }],
+      properties: ['openFile'],
+    });
+    if (r.canceled || !r.filePaths.length) return null;
+    file = r.filePaths[0];
+  }
+  if (/\.pdf$/i.test(file)) {
+    if (!pdf) throw userError('File PDF tidak didukung di sini. Gunakan Excel / CSV.');
+    try {
+      return { file: path.basename(file), rows: await readPdfTable(fs.readFileSync(file), pdf) };
+    } catch (err) { throw userError(err.message); }
+  }
+  const wb = XLSX.readFile(file, { raw: false, cellText: false });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  return { file: path.basename(r.filePaths[0]), rows: XLSX.utils.sheet_to_json(sheet, { raw: true, defval: '' }) };
+  return { file: path.basename(file), rows: XLSX.utils.sheet_to_json(sheet, { raw: true, defval: '' }) };
 }
 
 async function importProducts() {
@@ -771,7 +784,8 @@ const handlers = {
     title: 'Simpan template stok opname', fileName: `Opname_${localNow().slice(0, 10)}.xlsx`,
     sheet: 'Opname', headers: OPNAME_TEMPLATE_HEADERS, sample: await svc.opnameSheet(), textCols: ['A'],
   }),
-  'opname:importFile': () => pickSheetRows('Pilih file hasil stok opname'),
+  // Hasil opname boleh Excel / CSV, atau PDF hasil "Save as PDF" Excel dari template opname
+  'opname:importFile': () => pickSheetRows('Pilih file hasil stok opname (Excel / CSV / PDF)', { pdf: { headers: OPNAME_TEMPLATE_HEADERS, keyHeader: 'Kode' } }),
   'opname:import': (a) => svc.importOpname(a),
 };
 
