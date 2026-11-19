@@ -2590,6 +2590,16 @@ async function refreshConnection() {
     b.className = 'conn-badge off';
     b.innerHTML = `⚠ Terputus dari PC Server<br><span class="small">${esc(s.server)}</span>`;
   }
+  // Versi aplikasi PC Kasir ≠ PC Server (mis. baru satu komputer yang di-update): peringatkan, transaksi tetap jalan
+  if (s.version_mismatch) {
+    const other = s.server_version || 'versi lama';
+    b.className = 'conn-badge emergency';
+    b.innerHTML += `<br><span class="small" id="connVersion">⚠ Versi beda: komputer ini ${esc(s.version)}, PC Server ${esc(other)}</span>`;
+    if (state.versionWarned !== other) {
+      state.versionWarned = other;
+      toast(`Versi POS komputer ini (${s.version}) berbeda dengan PC Server (${other}). Pasang versi yang sama di semua komputer.`, 'warn', 12000);
+    }
+  }
   views.checkout.connectionChanged();
 }
 

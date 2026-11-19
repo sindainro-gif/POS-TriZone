@@ -10,7 +10,30 @@ node node_modules/electron/install.js   # hanya jika biner Electron belum terund
 npm start
 ```
 
-Membuat installer Windows (.exe): `npm run dist` → hasil di folder `dist/`.
+Membuat installer Windows (.exe): klik **`Buat Installer.bat`** (menjalankan `npm test` lalu `npm run dist`) → hasil `dist\POS Tri-Zone Setup <versi>.exe`.
+
+## Pasang & update di toko
+
+Komputer toko memakai **installer .exe** (tidak perlu Node.js, Git, atau akses GitHub). Data toko ada di `%APPDATA%\POS Tri-Zone` dan **tidak tersentuh** saat aplikasi dipasang ulang atau di-update.
+
+**Pasang pertama kali**
+1. Salin `POS Tri-Zone Setup <versi>.exe` ke PC (flashdisk / Google Drive), lalu jalankan. Installer belum bertanda tangan digital, jadi Windows bisa menampilkan "Windows protected your PC" → klik **More info → Run anyway**.
+2. Pasang di **PC Server dulu**, lalu di PC Kasir. Buka aplikasi lewat shortcut di Desktop / Start menu.
+3. Atur **Pengaturan → Mode Komputer & Jaringan** (lihat bagian dua komputer di bawah).
+
+**Update (setelah tutup shift / sebelum toko buka)**
+1. Tutup shift. Bila mau, Admin menekan **Pengaturan → Cadangkan Database…** (cadangan harian otomatis juga ada).
+2. Tutup aplikasi POS di semua komputer.
+3. **PC Server dulu:** jalankan installer versi baru (Next → Install, folder sama). Buka aplikasi, cek **Pengaturan → Informasi → Versi aplikasi**.
+4. Lalu PC Kasir: jalankan installer yang sama.
+5. Selama versi PC Kasir berbeda dengan PC Server, kotak status koneksi di PC Kasir menampilkan **⚠ Versi beda** (transaksi tetap jalan). Pasang versi yang sama di semua komputer.
+- **Bila ada masalah setelah update:** pasang lagi installer versi sebelumnya (simpan 2 installer terakhir).
+- **Bila rilis juga mengubah aplikasi kantor (folder `motherbase/`):** terapkan migrasi mother base di Supabase **sebelum** toko di-update.
+
+**Alur rilis (pengembang)**
+1. Kerjakan & uji di branch `motherbase` (`npm test`, `npm run smoke`, `smoke:lan`, `smoke:demo`), naikkan `version` di `package.json`.
+2. Gabungkan ke `main` (`main` = versi yang terpasang di toko) dan beri tag `v<versi>`, lalu push.
+3. Klik `Buat Installer.bat`, kirim `dist\POS Tri-Zone Setup <versi>.exe` ke toko.
 
 ## Versi DEMO (latihan)
 

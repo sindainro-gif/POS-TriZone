@@ -18,6 +18,8 @@ const { seedDemo, DEMO_ACCOUNTS } = require('./demo');
 const { createDraftStore } = require('./drafts');
 const { createMotherbase } = require('./motherbase');
 const reportCrypt = require('./reportcrypt');
+// Versi POS dari package.json (sama di aplikasi terpasang, saat dijalankan dari folder, dan saat uji otomatis)
+const APP_VERSION = require('../package.json').version;
 const { readPdfTable } = require('./pdftable');
 
 // Versi DEMO (Jalankan DEMO.bat): data latihan di folder terpisah; mencetak ke printer sungguhan, tidak mengirim ke mother base
@@ -34,6 +36,7 @@ let remote; // klien jaringan (mode kasir)
 let server; // server HTTP (mode server)
 let offline; // cache barang + antrian transaksi darurat (mode kasir)
 let online = true; // hasil ping terakhir ke PC gudang (mode kasir)
+let serverVersion = ''; // versi aplikasi di PC Server (dari ping terakhir; kosong = versi lama sebelum 1.17.2)
 let session = null; // akun yang sedang login di komputer ini: { id, name, role }
 let drafts; // draft penjualan yang ditahan (disimpan di komputer ini)
 let mb; // pengirim data ke mother base (hanya di PC pemilik database)
@@ -320,7 +323,11 @@ function maintainOffline({ forceRefresh = false } = {}) {
 }
 
 async function pingGudang(timeout = 3000) {
-  try { await remote.ping(timeout); online = true; } catch (_) { online = false; }
+  try {
+    const r = await remote.ping(timeout);
+    serverVersion = String(r.version || '');
+    online = true;
+  } catch (_) { online = false; }
   if (online) maintainOffline();
   return online;
 }
@@ -521,6 +528,10 @@ async function connectionStatus() {
   if (isClient()) {
     base.connected = await pingGudang();
     base.emergency = offline.summary();
+    // Setelah update, PC Server & PC Kasir harus memakai versi yang sama
+    base.version = APP_VERSION;
+    base.server_version = serverVersion;
+    base.version_mismatch = base.connected && serverVersion !== APP_VERSION;
   }
   return base;
 }
@@ -657,7 +668,7 @@ const handlers = {
   'drafts:delete': ({ id }) => drafts.remove(id),
 
   'app:info': () => ({
-    version: app.getVersion(),
+    version: APP_VERSION,
     dbFile: isClient() ? `Di PC Server (${device.server_host}:${device.server_port})` : DB_FILE,
     mode: device.mode,
   }),
@@ -859,7 +870,7 @@ async function openLocalDatabase() {
   localSvc = createServices(db, secrets);
   svc = localSvc;
   if (DEMO && localSvc.needsSetup()) seedDemo(localSvc);
-  mb = createMotherbase({ svc: localSvc, appVersion: app.getVersion(), demo: DEMO });
+  mb = createMotherbase({ svc: localSvc, appVersion: APP_VERSION, demo: DEMO });
   localSvc.mbQueueHistory(); // shift di Riwayat Shift yang ditutup sebelum ada mother base
   // Migrasi sekali: pengaturan printer lama di database → device.json komputer ini
   if (!device._exists) {
@@ -913,7 +924,7 @@ async function startup() {
         host: process.env.POS_SERVER_HOST || '0.0.0.0',
         getKey: () => device.server_pair_key,
         call: serverCall,
-        info: () => ({ store_name: localSvc.getSettings().store_name }),
+        info: () => ({ store_name: localSvc.getSettings().store_name, version: APP_VERSION }),
       });
     } catch (err) {
       dialog.showErrorBox('Server jaringan gagal dijalankan', `${err.message}\n\nAplikasi tetap berjalan, tetapi komputer lain belum bisa terhubung.`);

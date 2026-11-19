@@ -98,6 +98,10 @@ app.on('browser-window-created', (_e, win) => {
       if (nav !== 'checkout,products,shift') throw new Error('menu kasir tidak sesuai peran');
       const denied = await run(`window.posBridge.call('device:get')`);
       if (denied.ok) throw new Error('kasir bisa membuka pengaturan mode komputer');
+      // Versi sama di PC Server & PC Kasir → tidak ada peringatan beda versi
+      const ver = await run(`api('app:status').then((s) => ({ v: s.version, sv: s.server_version, mm: s.version_mismatch, warn: !!document.querySelector('#connVersion') }))`);
+      console.log('versi kasir / server:', JSON.stringify(ver));
+      if (!ver.v || ver.v !== ver.sv || ver.mm || ver.warn) throw new Error('versi PC Server tidak terbaca / dianggap berbeda');
       // Batal nota dari PC kasir: diteruskan ke PC server dan disetujui PIN Admin
       const lanSale = await run(`window.posBridge.call('sales:checkout', { items: [{ sku: 'BRS-001', qty: 1 }], payment_method: 'Tunai', cash_received: 6000 })`);
       const noRef = await run(`window.posBridge.call('receipt:void', { reason: 'Uji batal LAN', approver_pin: '123456', items: [] })`);

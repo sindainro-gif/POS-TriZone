@@ -22,7 +22,7 @@ async function t(name, fn) {
       if (blocked.has(m) || typeof gudang[m] !== 'function') { const e = new Error(`Perintah tidak dikenal: ${m}`); e.userFacing = true; throw e; }
       return gudang[m](...args);
     },
-    info: () => ({ store_name: 'Toko Uji' }),
+    info: () => ({ store_name: 'Toko Uji', version: '9.9.9' }),
   });
   const port = server.address().port;
   const kasir = createRemoteClient({ host: '127.0.0.1', port, key });
@@ -30,9 +30,10 @@ async function t(name, fn) {
 
   await t('kode pasangan 6 digit', () => assert.match(newPairKey(), /^\d{6}$/));
 
-  await t('ping mengembalikan nama toko', async () => {
+  await t('ping mengembalikan nama toko & versi aplikasi PC Server', async () => {
     const p = await kasir.ping();
     assert.strictEqual(p.store_name, 'Toko Uji');
+    assert.strictEqual(p.version, '9.9.9');
   });
 
   await t('gudang input barang → kasir melihat stok yang sama', async () => {
