@@ -136,12 +136,12 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#voiceBtn').click()`);
       const silent = await run(`(() => { voice.announce({ name: 'Tes' }, 1); return { n: window.__spoken.length, on: document.querySelector('#voiceBtn').classList.contains('on') }; })()`);
       if (silent.n !== 3 || silent.on) throw new Error(`suara seharusnya mati: ${JSON.stringify(silent)}`);
-      // F12 dari metode QRIS → pindah ke Tunai & fokus Uang Diterima; ketik uang lalu Enter = bayar
-      await run(`document.querySelector('#payMethods [data-m="QRIS"]').click()`);
+      // Hanya metode Tunai: tidak ada pilihan metode; F12 = fokus Uang Diterima; ketik uang lalu Enter = bayar
+      if (await run(`!!document.querySelector('#payMethods') || /QRIS|Transfer/.test(document.querySelector('#view-checkout').innerText)`)) throw new Error('pilihan metode pembayaran seharusnya sudah dihapus');
       const f12 = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true }));
-        return { focus: document.activeElement.id, method: document.querySelector('#payMethods .active').dataset.m, view: state.view }; })()`);
+        return { focus: document.activeElement.id, view: state.view }; })()`);
       console.log('F12:', JSON.stringify(f12));
-      if (f12.focus !== 'cashInput' || f12.method !== 'Tunai' || f12.view !== 'checkout') throw new Error('F12 tidak mengisi Uang Diterima');
+      if (f12.focus !== 'cashInput' || f12.view !== 'checkout') throw new Error('F12 tidak mengisi Uang Diterima');
       // F12 lagi di kolom Uang Diterima = Uang Pas
       const f12Pas = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true }));
         return { cash: document.querySelector('#cashInput').value.replace(/\\D/g, ''), pas: document.querySelector('#quickCash [data-v]').dataset.v, focus: document.activeElement.id }; })()`);
@@ -524,15 +524,15 @@ app.on('browser-window-created', (_e, win) => {
       console.log('setelah tahan draft:', JSON.stringify(afterHold));
       if (afterHold.rows !== 0 || !/1/.test(afterHold.btn)) throw new Error('keranjang tidak ditahan sebagai draft');
       if (svc.getProduct('SBN-005').floor_stock !== sabunBefore) throw new Error('draft tidak boleh mengurangi stok');
-      const payQris = async () => {
-        await run(`document.querySelector('#payMethods [data-m="QRIS"]').click()`);
+      const payCash = async () => {
+        await run(`document.querySelector('#quickCash [data-v]').click()`);
         await run(`document.querySelector('#payBtn').click()`);
         await wait(900);
         await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`);
         await wait(300);
       };
       await scan('8991234567890'); // pelanggan B
-      await payQris();
+      await payCash();
       await run(`document.querySelector('#draftListBtn').click()`);
       await wait(600);
       await shot('12-daftar-draft');
@@ -541,7 +541,7 @@ app.on('browser-window-created', (_e, win) => {
       const resumed = await run(`[...document.querySelectorAll('#cartBody tr')].map((r) => r.dataset.sku + ':' + r.querySelector('[data-act=qty]').value).join(',')`);
       console.log('draft dilanjutkan:', resumed);
       if (resumed !== 'SBN-005:3') throw new Error('isi draft tidak kembali ke keranjang');
-      await payQris();
+      await payCash();
       const draftsLeft = await run(`window.posBridge.call('drafts:list').then((r) => r.data.length)`);
       if (draftsLeft !== 0 || svc.shiftSummary().totals.receipts !== receiptsBefore + 2 || svc.getProduct('SBN-005').floor_stock !== sabunBefore - 3) {
         throw new Error('alur draft → bayar tidak sesuai');

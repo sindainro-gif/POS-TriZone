@@ -46,7 +46,7 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#qtyInput').value = '2'`);
       await run(`(() => { const i = document.querySelector('#scanInput'); i.focus(); i.value = '${mnm.barcode}'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
       await wait(600);
-      await run(`document.querySelector('#payMethods [data-m="QRIS"]').click()`);
+      await run(`document.querySelector('#quickCash [data-v]').click()`); // Uang Pas (Tunai)
       await shot('demo-02-kasir');
       await run(`document.querySelector('#payBtn').click()`);
       await wait(2500);

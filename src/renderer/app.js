@@ -223,7 +223,7 @@ const voice = (() => {
 // ================================================================ 1. KASIR
 views.checkout = (() => {
   const cart = []; // {sku, name, barcode, unit_price, qty, floor_stock, warehouse_stock, damaged_stock, min_floor_alert}
-  let method = 'Tunai';
+  const METHOD = 'Tunai'; // satu-satunya metode pembayaran di kasir
   let busy = false;
   const scan = $('#scanInput');
   const qtyInput = $('#qtyInput');
@@ -413,33 +413,18 @@ views.checkout = (() => {
     if (e.target.dataset.act === 'qty' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
   });
 
-  function renderMethods() {
-    $('#payMethods').innerHTML = state.meta.paymentMethods.map((m) => `<button data-m="${esc(m)}" class="${m === method ? 'active' : ''}">${esc(m)}</button>`).join('');
-    $('#cashBlock').classList.toggle('hidden', method !== 'Tunai');
-    updateChange();
-  }
-  // F12: kolom uang hanya ada untuk Tunai, jadi metode dipindah ke Tunai dulu.
-  // F12 lagi saat sudah di kolom uang = Uang Pas.
+  // F12 = fokus Uang Diterima; F12 lagi saat sudah di kolom uang = Uang Pas.
   function focusCash() {
     if (!state.shift || $('#modalRoot').children.length) return;
-    if (method === 'Tunai' && document.activeElement === cashInput && total() > 0) {
+    if (document.activeElement === cashInput && total() > 0) {
       setMoney(cashInput, total());
       updateChange();
       cashInput.select();
       return;
     }
-    if (method !== 'Tunai') { method = 'Tunai'; renderMethods(); }
     cashInput.focus();
     cashInput.select();
   }
-
-  $('#payMethods').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-m]');
-    if (!b) return;
-    method = b.dataset.m;
-    renderMethods();
-    if (method === 'Tunai') cashInput.focus(); else focusScan();
-  });
 
   function renderQuickCash(t) {
     const opts = [];
@@ -465,20 +450,17 @@ views.checkout = (() => {
   function updateChange() {
     const t = total();
     const el = $('#coChange');
-    let ok = cart.length > 0 && !!state.shift && (state.connected !== false || emergencyMode());
-    if (method === 'Tunai') {
-      const c = moneyVal(cashInput);
-      const diff = c - t;
-      el.textContent = c ? (diff < 0 ? `Kurang ${rp(-diff)}` : rp(diff)) : rp(0);
-      el.classList.toggle('neg', c > 0 && diff < 0);
-      ok = ok && c >= t;
-    }
+    const c = moneyVal(cashInput);
+    const diff = c - t;
+    el.textContent = c ? (diff < 0 ? `Kurang ${rp(-diff)}` : rp(diff)) : rp(0);
+    el.classList.toggle('neg', c > 0 && diff < 0);
+    const ok = cart.length > 0 && !!state.shift && (state.connected !== false || emergencyMode()) && c >= t;
     $('#payBtn').disabled = !ok || busy;
   }
 
   async function pay() {
     if (busy || !cart.length) return;
-    if (method === 'Tunai' && moneyVal(cashInput) < total()) {
+    if (moneyVal(cashInput) < total()) {
       sound('err');
       toast('Uang diterima kurang dari total belanja.', 'err');
       cashInput.focus();
@@ -489,8 +471,8 @@ views.checkout = (() => {
     try {
       const res = await api('sales:checkout', {
         items: cart.map((l) => ({ sku: l.sku, qty: l.qty })),
-        payment_method: method,
-        cash_received: method === 'Tunai' ? moneyVal(cashInput) : undefined,
+        payment_method: METHOD,
+        cash_received: moneyVal(cashInput),
       });
       cart.length = 0;
       resetQty();
@@ -670,7 +652,7 @@ views.checkout = (() => {
   }
 
   function show() {
-    renderMethods();
+    updateChange();
     renderShiftInfo();
     render();
     refreshDrafts();

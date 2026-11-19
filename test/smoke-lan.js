@@ -81,7 +81,7 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#qtyInput').value = '3'`);
       await run(`(() => { const i = document.querySelector('#scanInput'); i.focus(); i.value = '4006381333931'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
       await wait(800);
-      await run(`document.querySelector('#payMethods [data-m="QRIS"]').click()`);
+      await run(`document.querySelector('#quickCash [data-v]').click()`); // Uang Pas (Tunai)
       await shot('lan-01-kasir-keranjang');
       await run(`document.querySelector('#payBtn').click()`);
       await wait(1200);
@@ -126,7 +126,7 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#qtyInput').value = '2'`);
       await run(`(() => { const i = document.querySelector('#scanInput'); i.focus(); i.value = '4006381333931'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
       await wait(800);
-      await run(`document.querySelector('#payMethods [data-m="QRIS"]').click()`);
+      await run(`document.querySelector('#quickCash [data-v]').click()`); // Uang Pas (Tunai)
       const payDisabled = await run(`document.querySelector('#payBtn').disabled`);
       if (payDisabled) throw new Error('tombol Bayar nonaktif di mode darurat');
       await run(`document.querySelector('#payBtn').click()`);
