@@ -206,9 +206,30 @@ function fileAccurate() {
     await page.fill('#stCari', 'keset');
     await tunggu(700);
     assert.ok((await page.$$('#stHasil tbody tr')).length >= 3);
+    // Filter: kondisi stok, kategori, merk, toko; jumlah barang; reset
+    await page.fill('#stCari', '');
+    await page.selectOption('#stToko', 'TRP');
+    await tunggu(700);
+    const semuaTrp = await page.$$eval('#stHasil tbody tr', (x) => x.length);
+    assert.match(await page.textContent('#stJumlah'), new RegExp(`^${semuaTrp} barang`));
+    const kategori = await page.$$eval('#stKategori option', (o) => o.map((x) => x.value).filter(Boolean));
+    assert.ok(kategori.includes('Rotan') && kategori.includes('Plastik'), kategori.join(','));
+    await page.selectOption('#stKategori', 'Rotan');
+    await tunggu(700);
+    const rotan = await page.$$eval('#stHasil tbody tr', (x) => x.map((tr) => tr.textContent));
+    assert.ok(rotan.length > 0 && rotan.length < semuaTrp && rotan.every((r) => /RTN-/.test(r) && /TRP/.test(r)), rotan.join('|'));
+    await page.selectOption('#stKondisi', 'habis');
+    await tunggu(700);
+    const habis = await db(`select count(*)::int n from stok_toko s join produk_toko p using (kode_toko, sku)
+      where s.kode_toko = 'TRP' and p.kategori = 'Rotan' and s.display + s.gudang + s.shopee <= 0`);
+    assert.strictEqual(await page.locator('#stHasil tbody tr').count(), habis[0].n);
+    await shot('03c-filter-stok');
+    await page.click('#stReset');
+    await tunggu(700);
+    assert.deepStrictEqual(await page.$$eval('#stKondisi, #stKategori, #stMerk', (x) => x.map((e) => e.value)), ['', '', '']);
     await page.click('#stTab [data-t="lambat"]');
     await tunggu(500);
-    ok('stok: cari stok, stok lambat (menu terpisah dari Stock Opname)');
+    ok('stok: cari stok dengan filter kondisi / kategori / merk / toko, stok lambat (menu terpisah dari Stock Opname)');
 
     await buka('kiriman');
     await page.setInputFiles('#kjFile', fileAccurate());

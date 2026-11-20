@@ -600,21 +600,53 @@ async function halamanStok(el, jenis) {
   }
 
   async function cari() {
-    isi.innerHTML = `<div class="card"><div class="card-head"><div class="row"><input id="stCari" placeholder="Cari nama, SKU, atau barcode" style="min-width:240px">
-      ${S.toko.length > 1 ? pilihToko('stToko') : ''}</div><button class="btn sm" id="stCsv">Unduh CSV</button></div><div id="stHasil"></div></div>`;
+    const KONDISI = [['', 'Semua kondisi'], ['ada', 'Ada stok'], ['habis', 'Habis (tidak bisa dijual)'], ['menipis', 'Display di bawah minimum'],
+      ['isi_display', 'Perlu isi display (gudang ada)'], ['minus', 'Stok minus'], ['bs', 'Ada barang BS']];
+    const f = S.filterStok || (S.filterStok = { cari: '', toko: '', kondisi: '', kategori: '', merk: '' });
+    const opsi = (daftar, nilai) => daftar.map(([v, l]) => `<option value="${esc(v)}" ${v === nilai ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    isi.innerHTML = `<div class="card"><div class="card-head"><div class="row" style="flex-wrap:wrap">
+        <input id="stCari" placeholder="Cari nama, SKU, atau barcode" style="min-width:220px" value="${esc(f.cari)}">
+        ${S.toko.length > 1 ? pilihToko('stToko', f.toko) : ''}
+        <select id="stKondisi" aria-label="Kondisi stok">${opsi(KONDISI, f.kondisi)}</select>
+        <select id="stKategori" aria-label="Kategori"><option value="">Semua kategori</option></select>
+        <select id="stMerk" aria-label="Merk"><option value="">Semua merk</option></select>
+        <button class="btn sm ghost" id="stReset">Reset</button><button class="btn sm" id="stCsv">Unduh CSV</button></div></div>
+      <div class="muted small" id="stJumlah" style="margin:-4px 0 8px"></div><div id="stHasil"></div></div>`;
     let rows = [];
-    const kolom = [{ k: 'kode_toko', judul: 'Toko' }, { k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
-      { k: 'display', judul: 'Display', num: true, fmt: (v, r) => `<span class="${Number(v) <= Number(r.min_display || 0) ? 'pill warn' : ''}">${num(v)}</span>` },
-      { k: 'gudang', judul: 'Gudang', num: true, fmt: (v) => num(v) }, { k: 'bs', judul: 'BS', num: true, fmt: (v) => num(v) },
+    const kolom = [{ k: 'kode_toko', judul: 'Toko' }, { k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` },
+      { k: 'nama', judul: 'Nama', fmt: (v, r) => `${esc(v || '')}${r.kategori || r.merk ? `<div class="muted small">${esc([r.kategori, r.merk && r.merk !== '-' ? r.merk : ''].filter(Boolean).join(' · '))}</div>` : ''}` },
+      { k: 'display', judul: 'Display', num: true, fmt: (v, r) => `<span class="${Number(v) < 0 ? 'pill bad' : Number(v) <= Number(r.min_display || 0) ? 'pill warn' : ''}">${num(v)}</span>` },
+      { k: 'gudang', judul: 'Gudang', num: true, fmt: (v) => `<span class="${Number(v) < 0 ? 'pill bad' : ''}">${num(v)}</span>` },
+      { k: 'bs', judul: 'BS', num: true, fmt: (v) => num(v) },
       { k: 'shopee', judul: 'Shopee', num: true, fmt: (v) => num(v) }, { k: 'per_waktu', judul: 'Stok per', fmt: (v) => esc(fmtWaktu(v)) }];
+    const BATAS = 2000;
     let t;
     const muat = async () => {
-      rows = await rpc('laporan_stok_produk', { p_cari: $('#stCari', isi).value.trim() || null, p_kode_toko: ($('#stToko', isi) || {}).value || null, p_batas: 500 });
-      $('#stHasil', isi).innerHTML = tabel(kolom, rows, { kosong: 'Tidak ada barang yang cocok.' });
+      rows = await rpc('laporan_stok_produk', { p_cari: f.cari || null, p_kode_toko: f.toko || null, p_batas: BATAS,
+        p_kondisi: f.kondisi || null, p_kategori: f.kategori || null, p_merk: f.merk || null });
+      $('#stJumlah', isi).textContent = `${num(rows.length)} barang${rows.length >= BATAS ? ` (hanya ${num(BATAS)} pertama ditampilkan; persempit filter)` : ''}`;
+      $('#stHasil', isi).innerHTML = tabel(kolom, rows, { kosong: 'Tidak ada barang yang cocok dengan filter.' });
     };
-    $('#stCari', isi).addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => muat().catch((e) => toast(pesanError(e), 'bad')), 250); });
-    if ($('#stToko', isi)) $('#stToko', isi).addEventListener('change', muat);
-    $('#stCsv', isi).addEventListener('click', () => unduhCsv('stok.csv', kolom, rows));
+    const muatPilihan = async () => {
+      const p = await rpc('pilihan_filter_stok', { p_kode_toko: f.toko || null });
+      if (f.kategori && !p.kategori.includes(f.kategori)) f.kategori = '';
+      if (f.merk && !p.merk.includes(f.merk)) f.merk = '';
+      $('#stKategori', isi).innerHTML = `<option value="">Semua kategori</option>${opsi(p.kategori.map((k) => [k, k]), f.kategori)}`;
+      $('#stMerk', isi).innerHTML = `<option value="">Semua merk</option>${opsi(p.merk.map((m) => [m, m]), f.merk)}`;
+    };
+    const ulang = () => muat().catch((e) => toast(pesanError(e), 'bad'));
+    $('#stCari', isi).addEventListener('input', (e) => { f.cari = e.target.value.trim(); clearTimeout(t); t = setTimeout(ulang, 250); });
+    if ($('#stToko', isi)) $('#stToko', isi).addEventListener('change', async (e) => { f.toko = e.target.value; await muatPilihan(); ulang(); });
+    $('#stKondisi', isi).addEventListener('change', (e) => { f.kondisi = e.target.value; ulang(); });
+    $('#stKategori', isi).addEventListener('change', (e) => { f.kategori = e.target.value; ulang(); });
+    $('#stMerk', isi).addEventListener('change', (e) => { f.merk = e.target.value; ulang(); });
+    $('#stReset', isi).addEventListener('click', () => { S.filterStok = null; cari().catch((e) => toast(pesanError(e), 'bad')); });
+    $('#stCsv', isi).addEventListener('click', () => unduhCsv('stok.csv',
+      [{ k: 'kode_toko', judul: 'Toko' }, { k: 'sku', judul: 'SKU' }, { k: 'nama', judul: 'Nama' }, { k: 'kategori', judul: 'Kategori' }, { k: 'merk', judul: 'Merk' },
+        { k: 'display', judul: 'Display' }, { k: 'min_display', judul: 'Min. display' }, { k: 'gudang', judul: 'Gudang' }, { k: 'bs', judul: 'BS' },
+        { k: 'shopee', judul: 'Shopee' }, { k: 'per_waktu', judul: 'Stok per' }],
+      rows.map((r) => ({ ...r, per_waktu: fmtWaktu(r.per_waktu) }))));
+    await muatPilihan();
     await muat();
   }
 
