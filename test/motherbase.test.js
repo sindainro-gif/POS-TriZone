@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Database } = require('../src/db');
-const { createServices, PAYMENT_METHODS, SHIFT_HISTORY_DAYS } = require('../src/services');
+const { createServices, PAYMENT_METHODS, SHIFT_HISTORY_DAYS, localNow } = require('../src/services');
 const { createMotherbase } = require('../src/motherbase');
 
 let passed = 0;
@@ -92,10 +92,12 @@ function fakeMotherbase() {
 
   await t('tutup shift: penjualan masuk antrean mother base di transaksi yang sama, status Menunggu di riwayat', () => {
     const uid = svc.getShift().shift_uid;
-    svc.archiveShift({ closed_at: '2026-11-16 21:05:00', notes: 'uji' });
+    // Pakai tanggal hari ini: riwayat shift yang lebih tua dari SHIFT_HISTORY_DAYS hari terhapus otomatis saat tutup shift
+    const closedAt = `${localNow().slice(0, 10)} 21:05:00`;
+    svc.archiveShift({ closed_at: closedAt, notes: 'uji' });
     const row = db.get('SELECT * FROM mb_outbox_shift WHERE shift_uid = ?', [uid]);
     const p = JSON.parse(row.payload);
-    assert.strictEqual(p.shift.closed_at, '2026-11-16 21:05:00');
+    assert.strictEqual(p.shift.closed_at, closedAt);
     assert.strictEqual(p.shift.receipts, 3);
     assert.strictEqual(p.sales.length, 3);
     assert.deepStrictEqual(p.pembatalan, []); // tanpa batal nota: daftar kosong, bentuk kiriman lain tidak berubah

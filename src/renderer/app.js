@@ -1368,7 +1368,7 @@ views.opname = (() => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
     const n = Number(qty.value);
-    if (!Number.isInteger(n) || n < 0) { sound('err'); toast('Jumlah fisik harus angka 0 atau lebih.', 'err'); return; }
+    if (String(qty.value).trim() === '' || !Number.isInteger(n)) { sound('err'); toast('Jumlah fisik harus angka bulat (boleh minus, mis. -3).', 'err'); return; }
     if (picked) add(picked, n);
     picker.focus();
     picker.select();
@@ -1414,7 +1414,7 @@ views.opname = (() => {
     $('#opItems').innerHTML = items.length ? items.map((i, idx) => `<tr data-i="${idx}">
         <td class="r muted">${idx + 1}</td><td class="mono">${esc(i.product.sku)}</td><td>${esc(i.product.name)}</td>
         <td class="r muted">${num(sysStock(i.product))}</td>
-        <td class="r"><input type="number" min="0" value="${i.counted}" data-act="qty" style="width:80px;text-align:right"></td>
+        <td class="r"><input type="number" step="1" value="${i.counted}" data-act="qty" style="width:80px;text-align:right"></td>
         <td class="r"><b>${signed(i.counted - sysStock(i.product))}</b></td>
         <td class="c"><button class="icon-btn" data-act="del">✕</button></td></tr>`).join('')
       : '<tr><td colspan="7" class="empty-row">Belum ada barang. Scan barang, isi Jumlah Fisik, lalu Enter — atau Import Excel.</td></tr>';
@@ -1438,7 +1438,7 @@ views.opname = (() => {
   $('#opItems').addEventListener('change', (e) => {
     if (e.target.dataset.act !== 'qty') return;
     const q = Number(e.target.value);
-    if (Number.isInteger(q) && q >= 0) items[Number(e.target.closest('tr').dataset.i)].counted = q;
+    if (String(e.target.value).trim() !== '' && Number.isInteger(q)) items[Number(e.target.closest('tr').dataset.i)].counted = q;
     render();
   });
   $('#opItems').addEventListener('keydown', (e) => {

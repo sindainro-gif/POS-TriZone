@@ -88,7 +88,7 @@ function toInt(v, label, { min = 0, max = 1e12, def } = {}) {
   if (typeof v === 'number') {
     n = v;
   } else {
-    const s = String(v).trim().replace(/^rp\.?\s*/i, '').replace(/\s/g, '').replace(/\./g, '').replace(/,0+$/, '');
+    const s = String(v).trim().replace(/^[\u2212\u2013]/, '-').replace(/^rp\.?\s*/i, '').replace(/\s/g, '').replace(/\./g, '').replace(/,0+$/, '');
     if (!/^-?\d+$/.test(s)) fail(`${label} harus berupa angka bulat.`);
     n = Number(s);
   }
@@ -1064,7 +1064,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     items.forEach((it, idx) => {
       const p = getProduct(it && it.sku);
       if (!p) fail(`Barang baris ${idx + 1} tidak ditemukan.`);
-      const n = toInt(it.counted, `Jumlah fisik "${p.name}"`, { min: 0 });
+      const n = toInt(it.counted, `Jumlah fisik "${p.name}"`, { min: -1e9 }); // boleh minus (stok dicatat minus)
       const baseline = it.baseline === undefined || it.baseline === null ? null : toInt(it.baseline, `Stok patokan "${p.name}"`, { min: -1e12 });
       const same = lines.find((l) => l.sku === p.sku);
       if (same) same.counted += n;
@@ -1169,7 +1169,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       }
       for (const [zone, c] of filled) {
         try {
-          const counted = toInt(r[c], `Fisik ${ZONE_LABEL[zone]} "${p.name}"`, { min: 0 });
+          const counted = toInt(r[c], `Fisik ${ZONE_LABEL[zone]} "${p.name}"`, { min: -1e9 }); // boleh minus
           const baseline = dated ? toInt(r[OPNAME_STOCK[zone]], `Stok ${ZONE_LABEL[zone]} di file untuk "${p.name}"`, { min: -1e12 }) : null;
           const list = zones[zone] || (zones[zone] = []);
           const same = list.find((it) => it.sku === p.sku);

@@ -312,10 +312,10 @@ app.on('browser-window-created', (_e, win) => {
       const whBefore = svc.getProduct('IMP-SMK').warehouse_stock;
       await opAdd('7770000000059', 5);
       await opAdd('7770000000059', 2); // hitung dua tumpukan → dijumlahkan
-      await opAdd('7770000000080', 0);
+      await opAdd('7770000000080', -2); // hitungan minus boleh
       const opList = await run(`({ rows: [...document.querySelectorAll('#opItems tr[data-i]')].map((r) => r.children[1].textContent + ':' + r.querySelector('[data-act=qty]').value + ':' + r.children[5].textContent), total: document.querySelector('#opTotal').textContent })`);
       console.log('list Opname:', JSON.stringify(opList));
-      if (opList.rows.join(',') !== `IMP-SMK:7:${7 - whBefore > 0 ? '+' : '−'}${Math.abs(7 - whBefore)},BELUM-ADA:0:−6`) throw new Error('list Stok Opname salah');
+      if (opList.rows.join(',') !== `IMP-SMK:7:${7 - whBefore > 0 ? '+' : '−'}${Math.abs(7 - whBefore)},BELUM-ADA:-2:−8`) throw new Error('list Stok Opname salah');
       await shot('05d-stok-opname');
       await run(`document.querySelector('#opSubmit').click()`);
       await wait(300);
@@ -324,7 +324,7 @@ app.on('browser-window-created', (_e, win) => {
       const opDoc = await run(`({ first: document.querySelector('#opHistory tr').innerText.replace(/\\s+/g, ' '), left: document.querySelectorAll('#opItems tr[data-i]').length })`);
       console.log('riwayat Opname teratas:', JSON.stringify(opDoc));
       if (!/OP-\d{8}-001/.test(opDoc.first) || !/Gudang Utama/.test(opDoc.first) || opDoc.left !== 0) throw new Error('Stok Opname tidak tersimpan');
-      if (svc.getProduct('IMP-SMK').warehouse_stock !== 7 || svc.getProduct('BELUM-ADA').warehouse_stock !== 0) throw new Error('stok Gudang Utama tidak sesuai hitungan fisik');
+      if (svc.getProduct('IMP-SMK').warehouse_stock !== 7 || svc.getProduct('BELUM-ADA').warehouse_stock !== -2) throw new Error('stok Gudang Utama tidak sesuai hitungan fisik');
       // Import Excel 3 zona: Fisik Display Toko & Gudang BS terisi → dua dokumen OP
       const opImp = await run(`window.posBridge.call('opname:import', { notes: 'Import smoke', rows: [
         { Kode: 'IMP-SMK', 'Fisik Display Toko': 4, 'Fisik Gudang Utama': '', 'Fisik Gudang BS': 1 },

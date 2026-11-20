@@ -341,7 +341,8 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.match(d2.doc_no, /^OP-\d{8}-002$/);
     assert.strictEqual(svc.getProduct('OP-A').warehouse_stock, 0);
     throwsMsg(() => svc.createOpname({ zone: 'customer', items: [{ sku: 'OP-A', counted: 1 }] }), /Zona opname tidak valid/);
-    throwsMsg(() => svc.createOpname({ zone: 'floor', items: [{ sku: 'OP-A', counted: -1 }] }), /minimal 0/);
+    throwsMsg(() => svc.createOpname({ zone: 'floor', items: [{ sku: 'OP-A', counted: 'abc' }] }), /angka bulat/);
+    throwsMsg(() => svc.createOpname({ zone: 'floor', items: [{ sku: 'OP-A', counted: 1.5 }] }), /angka bulat/);
     throwsMsg(() => svc.createOpname({ zone: 'floor', items: [] }), /minimal satu barang/);
     assert.deepStrictEqual(svc.listOpnames({ q: 'Opname B' }).map((x) => x.doc_no), [d.doc_no]);
     throwsMsg(() => svc.deleteProduct({ sku: 'OP-A' }), /opname/);
@@ -376,6 +377,28 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     const c = svc.getProduct('OP-C');
     assert.deepStrictEqual([c.floor_stock, c.damaged_stock], [7, 1]);
     throwsMsg(() => svc.planOpnameImport([{ Kode: 'OP-A', Stok_Sistem: 8, Fisik: 1 }]), /template opname terbaru/);
+  });
+
+  await t('stok opname: hitungan minus boleh (form manual & import Excel / CSV / PDF)', () => {
+    svc.importRows([
+      { Barcode: '7101', SKU: 'OP-M1', Nama_Barang: 'Opname Minus 1', Harga_Jual: 1000, Stok_Awal_Toko: 4, Stok_Awal_Gudang: 6 },
+      { Barcode: '7102', SKU: 'OP-M2', Nama_Barang: 'Opname Minus 2', Harga_Jual: 1000, Stok_Awal_Toko: 0 },
+    ]);
+    // Form manual: stok di-set ke angka minus, selisih tercatat
+    const d = svc.createOpname({ zone: 'floor', items: [{ sku: 'OP-M1', counted: -3 }, { sku: 'OP-M2', counted: '-2' }] });
+    assert.deepStrictEqual(d.items.map((i) => [i.sku, i.system_qty, i.counted_qty, i.diff]), [['OP-M1', 4, -3, -7], ['OP-M2', 0, -2, -2]]);
+    assert.deepStrictEqual([d.plus_qty, d.minus_qty], [0, 9]);
+    assert.deepStrictEqual([svc.getProduct('OP-M1').floor_stock, svc.getProduct('OP-M2').floor_stock], [-3, -2]);
+    // Scan barang yang sama lagi: jumlah dijumlahkan (−3 + 5 = 2)
+    svc.createOpname({ zone: 'floor', items: [{ sku: 'OP-M1', counted: -3 }, { sku: 'OP-M1', counted: 5 }] });
+    assert.strictEqual(svc.getProduct('OP-M1').floor_stock, 2);
+    // Import: angka minus dari Excel (angka), CSV/PDF (teks "-4"), dan tanda minus Unicode "−1"
+    const row = (Kode, fd, fg) => ({ Kode, Nama_Barang: '', 'Display Toko': 0, 'Fisik Display Toko': fd, 'Gudang Utama': 0, 'Fisik Gudang Utama': fg, 'Gudang BS': 0, 'Fisik Gudang BS': '' });
+    const plan = svc.importOpname({ rows: [row('OP-M1', -5, '-4'), row('OP-M2', '−1', '')], dry_run: true });
+    assert.deepStrictEqual(plan.errors, []);
+    svc.importOpname({ rows: [row('OP-M1', -5, '-4'), row('OP-M2', '−1', '')], notes: 'Opname minus' });
+    const m1 = svc.getProduct('OP-M1');
+    assert.deepStrictEqual([m1.floor_stock, m1.warehouse_stock, svc.getProduct('OP-M2').floor_stock], [-5, -4, -1]);
   });
 
   await t('stok opname: Tanggal_Stok → selisih terhadap stok di file, diterapkan ke stok sekarang', () => {
