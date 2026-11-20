@@ -203,6 +203,10 @@ app.on('browser-window-created', (_e, win) => {
       if (f12Pas.cash !== f12Pas.pas || f12Pas.focus !== 'cashInput') throw new Error('F12 kedua tidak mengisi Uang Pas');
       await run(`(() => { const c = document.querySelector('#cashInput'); c.value = '200.000'; c.dispatchEvent(new Event('input')); })()`);
       await shot('02-kasir-keranjang');
+      // Jumlah barang (biji) & jenis barang terlihat jelas sebelum Bayar: 11 Keripik + 12 Air Mineral
+      const counts = await run(`({ qty: document.querySelector('#coQty').textContent, kinds: document.querySelector('#coKinds').textContent, text: document.querySelector('.co-counts').innerText.replace(/\\s+/g, ' ') })`);
+      console.log('jumlah di kasir:', JSON.stringify(counts));
+      if (counts.qty !== '23' || counts.kinds !== '2' || !/Jumlah Barang 23 Biji/.test(counts.text) || !/Jenis Barang 2 jenis/.test(counts.text)) throw new Error('jumlah barang / jenis barang di kasir tidak sesuai');
       const alertText = await run(`document.querySelector('#stockAlert').className + ' | ' + document.querySelector('#stockAlert').innerText`);
       console.log('peringatan stok:', alertText);
       // Keripik: display toko 4, di keranjang 11 → tetap masuk keranjang dengan peringatan kuning
@@ -212,6 +216,7 @@ app.on('browser-window-created', (_e, win) => {
       await wait(700);
       const receiptTitle = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);
       if (!/Transaksi Berhasil/.test(receiptTitle)) throw new Error('Enter di Uang Diterima tidak membayar');
+      if (await run(`document.querySelector('#coQty').textContent + '/' + document.querySelector('#coKinds').textContent`) !== '0/0') throw new Error('jumlah barang tidak kembali 0 setelah bayar');
       await shot('03-kasir-struk');
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
 

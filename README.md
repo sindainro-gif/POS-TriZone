@@ -129,6 +129,8 @@ Di layar Kasir, kursor selalu kembali ke kolom **scan barcode**. Kolom **Jumlah*
 - Pembatalan tampil di daftar transaksi (badge *Dibatalkan* / *Pembatalan*), di Rekap PDF tutup shift (bagian "Pembatalan Nota"), dan ikut terkirim ke mother base sebagai baris minus. Barang yang dikembalikan ke Gudang BS tercatat sebagai dokumen mutasi.
 - Butuh PC Server (tidak tersedia saat MODE DARURAT).
 
+**Jumlah barang:** kotak **Total Belanja** di layar Kasir menampilkan **Jumlah Barang** (total biji) dan **Jenis Barang** (jumlah barang berbeda) dengan angka besar, supaya kasir bisa mencocokkan dengan barang di meja sebelum menekan **Bayar**.
+
 **Draft penjualan:** bila pelanggan belum siap bayar, klik **Tahan (Draft)** (boleh diberi nama pelanggan / catatan). Keranjang tersimpan di komputer kasir itu dan layar kosong untuk pelanggan berikutnya. **Daftar Draft** menampilkan semua draft; **Lanjutkan** memasukkan isinya kembali ke keranjang (keranjang yang sedang berisi bisa ditahan otomatis dulu). Stok tidak dipesan: harga & stok dicek ulang saat dilanjutkan dan saat bayar. Draft tetap ada walau aplikasi ditutup, juga saat MODE DARURAT.
 
 **Pesanan pelanggan (barang dipesan / belum dibawa):** isi keranjang seperti biasa, lalu klik **Jadikan Pesanan** (di bawah Tahan / Daftar Draft).

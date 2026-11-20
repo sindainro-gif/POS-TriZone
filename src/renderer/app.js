@@ -455,7 +455,9 @@ views.checkout = (() => {
     $('#cartEmpty').classList.toggle('hidden', cart.length > 0);
     const t = total();
     $('#coTotal').textContent = rp(t);
-    $('#coCount').textContent = `${num(cart.reduce((s, l) => s + l.qty, 0))} Biji · ${cart.length} baris`;
+    // Jumlah barang (biji) & jenis barang (barang yang sama sudah digabung jadi satu baris keranjang)
+    $('#coQty').textContent = num(cart.reduce((s, l) => s + l.qty, 0));
+    $('#coKinds').textContent = num(cart.length);
     renderQuickCash(t);
     updateChange();
   }

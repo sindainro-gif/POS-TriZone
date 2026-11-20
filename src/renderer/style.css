@@ -247,6 +247,12 @@ tr.low td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .total-box .lbl { color: rgba(255,255,255,.75); }
 .total { font-size: 34px; font-weight: 800; letter-spacing: -.5px; margin: 4px 0; font-variant-numeric: tabular-nums; }
 .total-box .sub { color: rgba(255,255,255,.75); font-size: 12.5px; }
+/* Jumlah barang (biji) & jenis barang: dicocokkan kasir dengan barang di meja sebelum Bayar */
+.co-counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.co-counts > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.14); }
+.co-counts .lbl { font-size: 12px; }
+.co-counts span:last-child { font-size: 13px; color: rgba(255,255,255,.85); }
+.co-counts b { font-size: 24px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
 .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .seg button { padding: 10px 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; font-weight: 600; font-size: 13px; }
 .seg button.active { background: var(--blue-bg); border-color: var(--accent); color: var(--on-active); }
