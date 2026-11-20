@@ -228,12 +228,12 @@ app.on('browser-window-created', (_e, win) => {
         badge: (document.querySelector('#nav [data-view="transfers"] .nav-badge:not(.hidden)') || {}).textContent || '' })`);
       console.log('saran restock teratas:', JSON.stringify(restock));
       if (!/\bout\b/.test(restock.first) || !/MINUS -7/.test(restock.first) || !/Keripik/.test(restock.first) || !restock.badge) throw new Error('barang minus tidak tampil merah paling atas / badge Mutasi tidak muncul');
-      // Form Mutasi: kursor awal di Barang, Enter di Barang kosong → Jumlah, Enter di Jumlah → Barang; tanpa Satuan
+      // Form Mutasi: kursor awal di Barang, Enter di Barang kosong → Jumlah, Enter di Jumlah → Barang; Satuan bawaan Biji
       const trNav = await run(`(() => { const enter = (el) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         const start = document.activeElement.id; enter(document.querySelector('#trPicker')); const toQty = document.activeElement.id;
-        enter(document.querySelector('#trQty')); return { start, toQty, back: document.activeElement.id, unit: !!document.querySelector('#trUnit') }; })()`);
+        enter(document.querySelector('#trQty')); return { start, toQty, back: document.activeElement.id, unit: document.querySelector('#trUnit').value }; })()`);
       console.log('navigasi Mutasi:', JSON.stringify(trNav));
-      if (trNav.start !== 'trPicker' || trNav.toQty !== 'trQty' || trNav.back !== 'trPicker' || trNav.unit) throw new Error('navigasi Enter Barang/Jumlah di Mutasi salah');
+      if (trNav.start !== 'trPicker' || trNav.toQty !== 'trQty' || trNav.back !== 'trPicker' || trNav.unit !== 'Biji') throw new Error('navigasi Enter Barang/Jumlah di Mutasi salah');
       // Form Mutasi multi-barang: scan → Jumlah → Enter = masuk list; Simpan = satu nomor mutasi
       const bsBefore = svc.getProduct('SNK-010').damaged_stock;
       await run(`(() => { const d = document.querySelector('#trDirection'); d.value = 'customer>damaged'; d.dispatchEvent(new Event('change')); })()`);
@@ -262,6 +262,41 @@ app.on('browser-window-created', (_e, win) => {
       const trDetail = await run(`document.querySelectorAll('#modalRoot tbody tr').length`);
       if (trDetail !== 2) throw new Error(`detail mutasi seharusnya 2 baris, bukan ${trDetail}`);
       await shot('04b-mutasi-detail');
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(200);
+      // Satuan Coly: tekan C di Jumlah → 2 Coly isi 24 = 48 Biji; satuan kembali ke Biji setelah masuk list
+      const whMnm = svc.getProduct('MNM-001').warehouse_stock;
+      const flMnm = svc.getProduct('MNM-001').floor_stock;
+      await run(`(() => { const d = document.querySelector('#trDirection'); d.value = 'warehouse>floor'; d.dispatchEvent(new Event('change')); })()`);
+      await run(`(() => { const i = document.querySelector('#trPicker'); i.focus(); i.value = '8991234567890'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await wait(400);
+      const colyPick = await run(`(() => { const q = document.querySelector('#trQty'); q.value = '2'; q.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }));
+        return { unit: document.querySelector('#trUnit').value, opt: document.querySelector('#trUnit option[value="Coly"]').textContent,
+          hl: document.querySelector('.unit-field').classList.contains('coly'), qty: q.value, focus: document.activeElement.id }; })()`);
+      await shot('04c-mutasi-coly-pilih');
+      await run(`document.querySelector('#trQty').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+      await wait(200);
+      const colyList = await run(`({ row: document.querySelector('#trItems tr[data-i]').innerText.replace(/\\s+/g, ' '), total: document.querySelector('#trTotal').textContent,
+        unit: document.querySelector('#trUnit').value, hl: document.querySelector('.unit-field').classList.contains('coly') })`);
+      console.log('mutasi coly:', JSON.stringify({ pilih: colyPick, list: colyList }));
+      if (colyPick.unit !== 'Coly' || colyPick.opt !== 'Coly (isi 24)' || !colyPick.hl || colyPick.qty !== '2' || colyPick.focus !== 'trQty'
+        || !/Coly \(isi 24\) = 48 Biji/.test(colyList.row) || colyList.total !== '1 baris · 48 Biji' || colyList.unit !== 'Biji' || colyList.hl) {
+        throw new Error('pilihan satuan Coly di Mutasi tidak sesuai');
+      }
+      await run(`document.querySelector('#trSubmit').click()`);
+      await wait(300);
+      const colyConfirm = await run(`document.querySelector('#modalRoot').innerText`);
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(700);
+      if (!/48 Biji/.test(colyConfirm) || svc.getProduct('MNM-001').warehouse_stock !== whMnm - 48 || svc.getProduct('MNM-001').floor_stock !== flMnm + 48) {
+        throw new Error('mutasi 2 Coly tidak memindahkan 48 Biji');
+      }
+      await run(`document.querySelector('#trHistory [data-id]').click()`);
+      await wait(400);
+      const colyDetail = await run(`document.querySelector('#modalRoot tbody').innerText.replace(/\\s+/g, ' ')`);
+      console.log('detail mutasi coly:', colyDetail);
+      if (!/2 Coly \(isi 24\) = 48 Biji/.test(colyDetail)) throw new Error('detail mutasi tidak menampilkan Coly');
+      await shot('04c-mutasi-coly-detail');
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
       await wait(200);
       const f12View = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true })); return state.view + '/' + document.activeElement.id; })()`);

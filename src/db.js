@@ -313,7 +313,9 @@ const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfe
   ['stock_opname_docs', 'count_at', 'DATETIME'], ['stock_opname_items', 'before_qty', 'INTEGER'],
   ['inventory', 'shopee_stock', 'INTEGER DEFAULT 0'],
   ['active_shift', 'shift_uid', 'TEXT'], // ID unik shift (kunci data shift di mother base)
-  ['shift_history', 'email_sent_at', 'DATETIME'], ['shift_history', 'email_error', 'TEXT']];
+  ['shift_history', 'email_sent_at', 'DATETIME'], ['shift_history', 'email_error', 'TEXT'],
+  // Mutasi: satuan yang diisi di form (qty tetap dalam Biji). Coly: pack_qty coly × isi = qty Biji
+  ['stock_transfers', 'pack_type', "TEXT DEFAULT 'Biji'"], ['stock_transfers', 'pack_qty', 'INTEGER']];
 
 // Tabel lama punya CHECK zona tanpa Gudang Shopee. SQLite tidak bisa mengubah CHECK,
 // jadi tabelnya dibangun ulang dari definisi lamanya (kolom tambahan ikut) dengan daftar zona baru.

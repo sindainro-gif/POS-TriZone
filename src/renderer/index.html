@@ -148,9 +148,10 @@
             <label>Barang</label>
             <div class="scan-row compact">
               <div class="picker-wrap grow"><input id="trPicker" autocomplete="off" placeholder="Scan barcode / ketik nama barang…"></div>
-              <label class="qty-field" for="trQty"><span>Jumlah (Biji)</span><input id="trQty" type="number" min="1" step="1" value="1" inputmode="numeric" autocomplete="off"></label>
+              <label class="qty-field" for="trQty"><span>Jumlah</span><input id="trQty" type="number" min="1" step="1" value="1" inputmode="numeric" autocomplete="off"></label>
+              <label class="unit-field" for="trUnit"><span>Satuan</span><select id="trUnit"><option value="Biji">Biji</option><option value="Coly">Coly</option></select></label>
             </div>
-            <div id="trPicked" class="hint">Scan barang → isi Jumlah → Enter = masuk list · Enter di Barang kosong = ke Jumlah</div>
+            <div id="trPicked" class="hint">Scan barang → isi Jumlah → Enter = masuk list · Enter di Barang kosong = ke Jumlah · Satuan bawaan Biji (tekan C di Jumlah = Coly, B = Biji)</div>
           </div>
           <div class="tbl-wrap"><table class="tbl">
             <thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Jumlah</th><th>Satuan</th><th class="r">Stok Asal</th><th class="w-act"></th></tr></thead>

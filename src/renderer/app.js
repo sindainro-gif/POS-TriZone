@@ -893,8 +893,18 @@ views.checkout = (() => {
 // ================================================================ 2. MUTASI
 views.transfers = (() => {
   let picked = null; // barang hasil scan yang menunggu Jumlah
-  const items = []; // {product, qty} — satu form = satu arah + satu alasan
+  const items = []; // {product, qty, unit: 'Biji' | 'Coly'} — satu form = satu arah + satu alasan
   const qty = $('#trQty');
+  const unit = $('#trUnit');
+  // Coly = satuan masuk barang (Dus / Karton) dengan isi pack_ratio Biji. Bawaan Biji, kembali ke Biji tiap barang masuk list.
+  const ratioOf = (p) => Math.max(1, Number(p && p.pack_ratio) || 1);
+  const pieces = (i) => (i.unit === 'Coly' ? i.qty * ratioOf(i.product) : i.qty);
+  function setUnit(u) {
+    unit.value = u === 'Coly' ? 'Coly' : 'Biji';
+    unit.closest('.unit-field').classList.toggle('coly', unit.value === 'Coly');
+  }
+  const colyLabel = (p) => { unit.querySelector('option[value="Coly"]').textContent = p ? `Coly (isi ${num(ratioOf(p))})` : 'Coly'; };
+  unit.addEventListener('change', () => setUnit(unit.value));
   const dir = $('#trDirection');
   const picker = $('#trPicker');
   const HINT = $('#trPicked').innerHTML;
@@ -902,15 +912,22 @@ views.transfers = (() => {
 
   // Kursor default di Barang. Scan → Jumlah; Enter di Jumlah → barang masuk list, kembali ke Barang
   qty.addEventListener('focus', () => qty.select());
-  qty.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
+  function commitQty() {
     const n = Number(qty.value);
-    if (!Number.isInteger(n) || n < 1) { sound('err'); toast('Jumlah minimal 1.', 'err'); return; }
-    if (picked) add(picked, n);
+    if (!Number.isInteger(n) || n < 1) { sound('err'); toast('Jumlah minimal 1.', 'err'); qty.focus(); return; }
+    if (picked) add(picked, n, unit.value);
     picker.focus();
     picker.select();
+  }
+  qty.addEventListener('keydown', (e) => {
+    // C = Coly, B = Biji tanpa melepas tangan dari keyboard / scanner
+    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); setUnit('Coly'); return; }
+    if (e.key === 'b' || e.key === 'B') { e.preventDefault(); setUnit('Biji'); return; }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    commitQty();
   });
+  unit.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitQty(); } });
   picker.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !picker.value.trim()) { e.preventDefault(); qty.focus(); }
   });
@@ -919,17 +936,20 @@ views.transfers = (() => {
     onPick: (p) => {
       picked = p;
       picker.value = '';
-      $('#trPicked').innerHTML = `Dipilih: <b>${esc(p.name)}</b> · ${esc(p.sku)} — isi Jumlah lalu Enter`;
+      colyLabel(p);
+      $('#trPicked').innerHTML = `Dipilih: <b>${esc(p.name)}</b> · ${esc(p.sku)} · 1 Coly = ${num(ratioOf(p))} Biji — isi Jumlah lalu Enter`;
       qty.focus();
     },
   });
 
-  function add(p, n) {
-    const same = items.find((i) => i.product.sku === p.sku);
+  function add(p, n, u = 'Biji') {
+    const same = items.find((i) => i.product.sku === p.sku && i.unit === u);
     if (same) same.qty += n;
-    else items.push({ product: p, qty: n });
+    else items.push({ product: p, qty: n, unit: u });
     picked = null;
     qty.value = 1;
+    setUnit('Biji');
+    colyLabel(null);
     $('#trPicked').innerHTML = HINT;
     render();
   }
@@ -939,16 +959,18 @@ views.transfers = (() => {
   function render() {
     $('#trItems').innerHTML = items.length ? items.map((i, idx) => {
       const avail = zoneStock(i.product);
-      const short = avail !== null && avail < i.qty;
+      // Barang sama bisa ada di dua baris (Biji & Coly): stok asal dibandingkan dengan totalnya
+      const need = items.filter((x) => x.product.sku === i.product.sku).reduce((s, x) => s + pieces(x), 0);
+      const short = avail !== null && avail < need;
       return `<tr data-i="${idx}">
         <td class="r muted">${idx + 1}</td><td class="mono">${esc(i.product.sku)}</td><td>${esc(i.product.name)}</td>
         <td class="r"><input type="number" min="1" value="${i.qty}" data-act="qty" style="width:80px;text-align:right"></td>
-        <td>Biji</td>
+        <td>${i.unit === 'Coly' ? `<b>Coly</b> <span class="muted small">(isi ${num(ratioOf(i.product))}) = ${num(pieces(i))} Biji</span>` : 'Biji'}</td>
         <td class="r ${short ? 'diff-neg' : 'muted'}">${avail === null ? '-' : `${num(avail)}${short ? ' — KURANG' : ''}`}</td>
         <td class="c"><button class="icon-btn" data-act="del">✕</button></td></tr>`;
     }).join('')
       : '<tr><td colspan="7" class="empty-row">Belum ada barang. Scan barang, isi Jumlah, lalu Enter.</td></tr>';
-    $('#trTotal').textContent = `${items.length} baris · ${num(items.reduce((s, i) => s + i.qty, 0))} Biji`;
+    $('#trTotal').textContent = `${items.length} baris · ${num(items.reduce((s, i) => s + pieces(i), 0))} Biji`;
   }
   dir.addEventListener('change', render);
   $('#trItems').addEventListener('click', (e) => {
@@ -969,6 +991,8 @@ views.transfers = (() => {
     picked = null;
     picker.value = '';
     qty.value = 1;
+    setUnit('Biji');
+    colyLabel(null);
     $('#trReason').value = '';
     $('#trPicked').innerHTML = HINT;
     render();
@@ -986,11 +1010,13 @@ views.transfers = (() => {
   $('#trSubmit').addEventListener('click', async () => {
     if (!items.length) { toast('Tambahkan minimal satu barang ke list.', 'err'); picker.focus(); return; }
     const [from_zone, to_zone] = dir.value.split('>');
-    const total = items.reduce((s, i) => s + i.qty, 0);
+    const total = items.reduce((s, i) => s + pieces(i), 0);
     const ok = await confirmDialog('Simpan Mutasi', `Simpan mutasi <b>${esc(state.meta.zones[from_zone])} → ${esc(state.meta.zones[to_zone])}</b> berisi ${items.length} baris (${num(total)} Biji)? Stok akan langsung berpindah.`, { okLabel: 'Simpan' });
     if (!ok) return;
     try {
-      const d = await api('transfers:create', { from_zone, to_zone, reason: $('#trReason').value, items: items.map((i) => ({ sku: i.product.sku, qty: i.qty })) });
+      const d = await api('transfers:create', { from_zone, to_zone, reason: $('#trReason').value, items: items.map((i) => (i.unit === 'Coly'
+        ? { sku: i.product.sku, qty: pieces(i), pack_type: 'Coly', pack_qty: i.qty } // qty dalam Biji; coly sebagai keterangan
+        : { sku: i.product.sku, qty: i.qty })) });
       toast(`Mutasi ${d.doc_no} tersimpan: ${num(d.line_count)} baris, ${num(d.total_qty)} Biji.`, 'ok');
       reset();
       loadLow();
@@ -1044,7 +1070,8 @@ views.transfers = (() => {
         <div class="kv"><span>Arah</span><b>${zoneTag(d.from_zone)} → ${zoneTag(d.to_zone)}</b></div>
         <div class="kv"><span>Alasan</span><b>${esc(d.reason || '-')}</b></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Jumlah</th><th>Satuan</th></tr></thead><tbody>
-        ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td><td class="r"><b>${num(i.qty)}</b></td><td>Biji</td></tr>`).join('')}
+        ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td><td class="r"><b>${num(i.pack_type === 'Coly' ? i.pack_qty : i.qty)}</b></td>
+          <td>${i.pack_type === 'Coly' ? `Coly <span class="muted">(isi ${num(i.qty / i.pack_qty)}) = ${num(i.qty)} Biji</span>` : 'Biji'}</td></tr>`).join('')}
         </tbody></table></div>`,
       actions: [{ label: 'Tutup', kind: 'primary' }],
     });

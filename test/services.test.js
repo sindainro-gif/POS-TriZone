@@ -141,6 +141,27 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(svc.getTransferDoc({ id: d.id }).reason, 'Restock pagi');
   });
 
+  await t('form mutasi: satuan Coly (qty tetap Biji; coly disimpan sebagai keterangan)', () => {
+    svc.importRows([{ Barcode: '7770000000097', SKU: 'TF-C', Nama_Barang: 'Mutasi Coly', Harga_Jual: 1000, Rasio_Isi_Dus: 24, Stok_Awal_Gudang: 500 }]);
+    const rows = (d) => d.items.map((i) => [i.sku, i.qty, i.pack_type, i.pack_qty]);
+    // 2 Coly isi 24 = 48 Biji berpindah
+    const d = svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'TF-C', qty: 48, pack_type: 'Coly', pack_qty: 2 }] });
+    assert.deepStrictEqual(rows(d), [['TF-C', 48, 'Coly', 2]]);
+    assert.strictEqual(d.total_qty, 48);
+    assert.deepStrictEqual([svc.getProduct('TF-C').warehouse_stock, svc.getProduct('TF-C').floor_stock], [452, 48]);
+    // Barang sama, satuan sama → coly dijumlahkan; satuan campur → dicatat dalam Biji
+    assert.deepStrictEqual(rows(svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [
+      { sku: 'TF-C', qty: 24, pack_type: 'Coly', pack_qty: 1 }, { sku: 'TF-C', qty: 48, pack_type: 'Coly', pack_qty: 2 }] })), [['TF-C', 72, 'Coly', 3]]);
+    assert.deepStrictEqual(rows(svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [
+      { sku: 'TF-C', qty: 24, pack_type: 'Coly', pack_qty: 1 }, { sku: 'TF-C', qty: 5 }] })), [['TF-C', 29, 'Biji', 29]]);
+    // Isi per coly tidak cocok (data barang di layar sudah usang) → jumlah Biji yang tampil tetap dipakai, dicatat Biji
+    assert.deepStrictEqual(rows(svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'TF-C', qty: 30, pack_type: 'Coly', pack_qty: 1 }] })), [['TF-C', 30, 'Biji', 30]]);
+    // Tanpa keterangan satuan (versi lama / proses internal) → Biji
+    assert.deepStrictEqual(rows(svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'TF-C', qty: 7 }] })), [['TF-C', 7, 'Biji', 7]]);
+    throwsMsg(() => svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'TF-C', qty: 24, pack_type: 'Coly', pack_qty: 0 }] }), /Jumlah coly/);
+    assert.strictEqual(svc.getProduct('TF-C').warehouse_stock, 500 - 48 - 72 - 29 - 30 - 7);
+  });
+
   await t('form mutasi: satu barang kurang stok = seluruh form batal', () => {
     const docs = svc.listTransferDocs().length;
     throwsMsg(() => svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'TF-A', qty: 1 }, { sku: 'TF-B', qty: 999 }] }), /Mutasi Uji B.*tidak cukup/);

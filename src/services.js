@@ -974,10 +974,21 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     items.forEach((it, idx) => {
       const p = getProduct(it && it.sku);
       if (!p) fail(`Barang baris ${idx + 1} tidak ditemukan.`);
+      // qty SELALU dalam Biji (PC Server versi lama tetap memindahkan jumlah yang benar).
+      // Satuan Coly dari form hanya keterangan: disimpan bila coly × isi per coly barang ini = qty.
       const n = toInt(it.qty, `Jumlah "${p.name}"`, { min: 1 });
+      const packQty = it.pack_type === 'Coly' ? toInt(it.pack_qty, `Jumlah coly "${p.name}"`, { min: 1, def: 0 }) : 0;
+      const coly = packQty > 0 && packQty * Math.max(1, Number(p.pack_ratio) || 1) === n;
+      const unit = coly ? 'Coly' : 'Biji';
+      const entered = coly ? packQty : n;
       const same = lines.find((l) => l.p.sku === p.sku);
-      if (same) same.qty += n;
-      else lines.push({ p, qty: n });
+      if (!same) lines.push({ p, qty: n, pack_type: unit, pack_qty: entered });
+      else {
+        same.qty += n;
+        // Barang sama: satuan sama → dijumlahkan; satuan campur (Coly + Biji) → dicatat dalam Biji
+        if (same.pack_type === unit) same.pack_qty += entered;
+        else { same.pack_type = 'Biji'; same.pack_qty = same.qty; }
+      }
     });
     const now = localNow();
     const id = db.tx(() => writeTransferDoc(from_zone, to_zone, why, lines, now));
@@ -1005,8 +1016,10 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       docNo, from_zone, to_zone, String(why).slice(0, 200), now, lines.length, lines.reduce((s, l) => s + l.qty, 0),
     ]);
     const did = db.lastId();
-    for (const { p, qty: n } of lines) {
-      db.run('INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason, created_at, doc_id) VALUES(?, ?, ?, ?, ?, ?, ?)', [p.sku, from_zone, to_zone, n, String(why).slice(0, 200), now, did]);
+    for (const { p, qty: n, pack_type: unit, pack_qty: packQty } of lines) {
+      db.run('INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason, created_at, doc_id, pack_type, pack_qty) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+        p.sku, from_zone, to_zone, n, String(why).slice(0, 200), now, did, unit === 'Coly' ? 'Coly' : 'Biji', unit === 'Coly' ? packQty : n,
+      ]);
     }
     return did;
   }
@@ -1033,7 +1046,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const d = db.get('SELECT * FROM stock_transfer_docs WHERE id = ?', [id]);
     if (!d) fail('Dokumen mutasi tidak ditemukan.');
     d.items = db.all(
-      `SELECT t.sku, t.qty, p.name, p.barcode FROM stock_transfers t
+      `SELECT t.sku, t.qty, COALESCE(t.pack_type, 'Biji') AS pack_type, COALESCE(t.pack_qty, t.qty) AS pack_qty, p.name, p.barcode FROM stock_transfers t
        LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = ? ORDER BY t.id`,
       [id],
     );
