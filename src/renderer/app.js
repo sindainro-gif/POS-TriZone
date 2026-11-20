@@ -2262,7 +2262,7 @@ views.orders = (() => {
     const b = e.target.closest('[data-st]');
     if (!b) return;
     status = b.dataset.st;
-    $('#orTabs [data-st]').forEach((x) => x.classList.toggle('active', x === b));
+    $$('#orTabs [data-st]').forEach((x) => x.classList.toggle('active', x === b));
     load();
   });
   $('#orSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(load, 250); });

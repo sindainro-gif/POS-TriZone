@@ -1,4 +1,5 @@
 :root {
+  --sb-w: 248px; /* lebar menu samping (diubah lewat garis geser, disimpan per komputer) */
   --bg: #0d0f14;
   --panel: #151922;
   --panel-2: #1b2030;
@@ -54,7 +55,7 @@ code { font-family: var(--mono); font-size: 12px; color: var(--code); word-break
 
 /* ---------------- Sidebar ---------------- */
 .sidebar {
-  width: 248px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border);
+  width: var(--sb-w); flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; padding: 16px 12px;
   overflow-y: auto; /* tampilan diperbesar di layar pendek: menu bawah tetap bisa di-scroll */
 }
@@ -63,7 +64,8 @@ code { font-family: var(--mono); font-size: 12px; color: var(--code); word-break
   width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: 13px;
   background: linear-gradient(135deg, var(--accent), #7c3aed); letter-spacing: .5px;
 }
-.brand-name { font-weight: 700; font-size: 15px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand > div:last-child { min-width: 0; }
+.brand-name { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .brand-sub { color: var(--muted); font-size: 12px; }
 nav { display: flex; flex-direction: column; gap: 4px; }
 .nav-btn {
@@ -79,6 +81,27 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .shift-badge.on { background: var(--green-bg); color: var(--t-green); }
 .shift-badge.off { background: var(--amber-bg); color: var(--t-amber); }
 .clock { color: var(--muted); font-size: 12px; text-align: center; padding-top: 6px; }
+
+/* Lebar menu samping: garis geser (klik dua kali = 248 px) dan tombol ciutkan jadi ikon */
+.sb-resizer { flex: 0 0 8px; margin: 0 -4px; position: relative; z-index: 5; cursor: col-resize; outline: none; touch-action: none; }
+.sb-resizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background .15s; }
+.sb-resizer:hover::after, .sb-resizer:focus-visible::after, body.sb-resizing .sb-resizer::after { background: var(--accent); }
+body.sb-resizing, body.sb-resizing * { cursor: col-resize !important; user-select: none !important; }
+.sb-toggle {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer; text-align: left; font-size: 12.5px;
+}
+.sb-toggle:hover { background: var(--panel-2); color: var(--text); }
+body.sb-collapsed .sidebar { width: 68px; padding: 16px 8px; }
+body.sb-collapsed .sb-resizer { display: none; }
+body.sb-collapsed .brand { justify-content: center; padding: 4px 0 18px; }
+body.sb-collapsed .brand > div:last-child,
+body.sb-collapsed .nav-btn > span:nth-child(2),
+body.sb-collapsed .nav-btn kbd,
+body.sb-collapsed .sb-toggle > span:nth-child(2),
+body.sb-collapsed .sidebar-foot > :not(.nav-btn):not(.sb-toggle) { display: none !important; }
+body.sb-collapsed .nav-btn, body.sb-collapsed .sb-toggle { justify-content: center; padding: 11px 0; position: relative; }
+body.sb-collapsed .nav-badge { position: absolute; top: 3px; right: 3px; margin: 0; min-width: 16px; padding: 0 4px; font-size: 10px; line-height: 15px; }
 
 /* ---------------- Layout ---------------- */
 main { flex: 1; min-width: 0; position: relative; overflow: hidden; }

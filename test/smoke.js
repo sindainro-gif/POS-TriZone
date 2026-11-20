@@ -88,6 +88,55 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#zoomCtl [data-zoom="0"]').click()`); // kembali 100% untuk langkah berikutnya
       await wait(300);
 
+      // Lebar menu samping: geser garis batas (180–400 px), klik dua kali = 248, ciutkan jadi ikon; tersimpan per komputer
+      const sbOf = () => run(`({ w: Math.round(document.querySelector('.sidebar').getBoundingClientRect().width), saved: localStorage.getItem('pos-sidebar-w'),
+        col: document.body.classList.contains('sb-collapsed'), savedCol: localStorage.getItem('pos-sidebar-collapsed') })`);
+      const sbDrag = (x) => run(`(() => { const r = document.querySelector('#sbResizer'); const o = { bubbles: true, pointerId: 1, button: 0, clientY: 300 };
+        r.dispatchEvent(new PointerEvent('pointerdown', { ...o, clientX: 248 })); r.dispatchEvent(new PointerEvent('pointermove', { ...o, clientX: ${x} }));
+        r.dispatchEvent(new PointerEvent('pointerup', { ...o, clientX: ${x} })); })()`);
+      const sbDbl = () => run(`document.querySelector('#sbResizer').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+      await sbDrag(320);
+      const sb320 = await sbOf();
+      await sbDrag(50);
+      const sbMin = await sbOf();
+      await sbDrag(900);
+      const sbMax = await sbOf();
+      await sbDbl();
+      const sbDef = await sbOf();
+      console.log('lebar menu:', JSON.stringify({ geser: sb320, min: sbMin, max: sbMax, klikDua: sbDef }));
+      if (sb320.w !== 320 || sb320.saved !== '320' || sbMin.w !== 180 || sbMax.w !== 400 || sbDef.w !== 248 || sbDef.saved !== '248') throw new Error('geser lebar menu tidak sesuai');
+      await sbDrag(300);
+      await run(`document.querySelector('#sbToggle').click()`);
+      await wait(300);
+      const sbCol = await run(`({ w: Math.round(document.querySelector('.sidebar').getBoundingClientRect().width),
+        label: getComputedStyle(document.querySelector('#nav [data-view="checkout"] span:nth-child(2)')).display,
+        tip: document.querySelector('#nav [data-view="checkout"]').title, saved: localStorage.getItem('pos-sidebar-collapsed'),
+        resizer: getComputedStyle(document.querySelector('#sbResizer')).display, theme: getComputedStyle(document.querySelector('#themeSeg')).display,
+        toggle: getComputedStyle(document.querySelector('#sbToggle')).display, settings: getComputedStyle(document.querySelector('.sidebar-foot [data-view="settings"]')).display })`);
+      await run(`document.querySelector('#nav [data-view="products"]').click()`);
+      await wait(400);
+      const sbNav = await run('state.view');
+      await run(`document.querySelector('#nav [data-view="checkout"]').click()`);
+      await wait(400);
+      console.log('menu ciut:', JSON.stringify({ ...sbCol, klikMenu: sbNav }));
+      if (sbCol.w > 72 || sbCol.label !== 'none' || sbCol.tip !== 'Kasir / Pembayaran' || sbCol.saved !== '1' || sbCol.resizer !== 'none' || sbCol.theme !== 'none'
+        || sbCol.toggle === 'none' || sbCol.settings === 'none' || sbNav !== 'products') {
+        throw new Error('tombol ciutkan menu tidak sesuai');
+      }
+      await shot('01c-menu-ciut');
+      // Bertahan setelah aplikasi dimuat ulang; dilebarkan lagi kembali ke lebar sebelumnya
+      win.webContents.reload();
+      await new Promise((r) => win.webContents.once('did-finish-load', r));
+      await wait(1500);
+      const sbReload = await sbOf();
+      await run(`document.querySelector('#sbToggle').click()`);
+      await wait(300);
+      const sbBack = await sbOf();
+      await sbDbl(); // kembali ke ukuran awal untuk langkah berikutnya
+      const sbEnd = await sbOf();
+      console.log('menu setelah muat ulang:', JSON.stringify({ muatUlang: sbReload, dilebarkan: sbBack, akhir: sbEnd }));
+      if (!sbReload.col || sbReload.w > 72 || sbBack.col || sbBack.w !== 300 || sbEnd.w !== 248 || sbEnd.savedCol !== '0') throw new Error('pilihan lebar menu tidak bertahan / tidak kembali');
+
       await run(`if (document.querySelector('#osCash')) throw new Error('kolom modal awal laci masih ada'); document.querySelector('#osBtn').click();`);
       await wait(600);
       // Dropdown saran: salah ketik "minral" tetap menemukan Air Mineral
@@ -848,6 +897,20 @@ app.on('browser-window-created', (_e, win) => {
           console.log('batal pesanan:', JSON.stringify([c2.status, c2.cancel_deposit, c2.cancel_approved_by]), 'uang pesanan shift:', JSON.stringify(oSum));
           if (c2.status !== 'batal' || c2.cancel_deposit !== 'kembali' || oSum.deposit_in !== 28000 || oSum.deposit_used !== 18000 || oSum.refunded !== 10000) {
             throw new Error('pembatalan pesanan tidak sesuai');
+          }
+          // Tab daftar pesanan: Dibatalkan / Sudah diambil / Semua / Belum diambil
+          const tabRows = async (st) => {
+            await run(`document.querySelector('#orTabs [data-st="${st}"]').click()`);
+            await wait(700);
+            return run(`({ rows: [...document.querySelectorAll('#orBody tr[data-no]')].map((r) => r.dataset.no), active: document.querySelector('#orTabs .active').dataset.st })`);
+          };
+          const tabs = { batal: await tabRows('batal'), diambil: await tabRows('diambil'), semua: await tabRows('semua'), baru: await tabRows('baru') };
+          console.log('tab pesanan:', JSON.stringify(tabs));
+          if (!tabs.batal.rows.includes(ord2.order_no) || tabs.batal.rows.includes(ord.order_no) || tabs.batal.active !== 'batal'
+            || !tabs.diambil.rows.includes(ord.order_no) || tabs.diambil.rows.includes(ord2.order_no)
+            || !tabs.semua.rows.includes(ord.order_no) || !tabs.semua.rows.includes(ord2.order_no)
+            || tabs.baru.rows.includes(ord.order_no) || tabs.baru.rows.includes(ord2.order_no) || tabs.baru.active !== 'baru') {
+            throw new Error('tab daftar pesanan tidak berfungsi');
           }
           await run(`go('shift')`);
           await wait(1000);

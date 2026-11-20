@@ -68,6 +68,80 @@ const zoom = (() => {
   return { apply, step, get: () => cur, LEVELS };
 })();
 
+// Lebar menu samping: geser garis batas (klik dua kali = ukuran awal, ← / → saat garis difokus) atau
+// tombol "Ciutkan menu" (ikon saja). Pilihan per komputer, seperti tema & ukuran tampilan.
+const sidebarCtl = (() => {
+  const W_KEY = 'pos-sidebar-w';
+  const C_KEY = 'pos-sidebar-collapsed';
+  const DEF = 248;
+  const MIN = 180;
+  const MAX = 400;
+  const read = (k) => { try { return window.localStorage.getItem(k); } catch (_) { return null; } };
+  const write = (k, v) => { try { window.localStorage.setItem(k, v); } catch (_) { /* penyimpanan tidak tersedia */ } };
+  const clamp = (w) => Math.min(MAX, Math.max(MIN, Math.round(Number(w) || DEF)));
+  let width = clamp(read(W_KEY));
+  let collapsed = read(C_KEY) === '1';
+  const res = $('#sbResizer');
+  const toggle = $('#sbToggle');
+
+  function apply() {
+    document.documentElement.style.setProperty('--sb-w', `${width}px`);
+    document.body.classList.toggle('sb-collapsed', collapsed);
+    if (res) res.setAttribute('aria-valuenow', String(width));
+    if (toggle) {
+      toggle.innerHTML = collapsed ? '<span class="nav-ico">»</span><span>Lebarkan menu</span>' : '<span class="nav-ico">«</span><span>Ciutkan menu</span>';
+      toggle.title = collapsed ? 'Lebarkan menu' : 'Ciutkan menu jadi ikon saja';
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+    }
+    // Saat ciut hanya ikon yang tampil: nama menu jadi tooltip
+    $$('.sidebar .nav-btn').forEach((b) => {
+      const label = b.querySelector('span:nth-child(2)');
+      if (collapsed && label) b.title = label.textContent.trim();
+      else b.removeAttribute('title');
+    });
+  }
+  function setWidth(w, { save = true } = {}) {
+    width = clamp(w);
+    apply();
+    if (save) write(W_KEY, String(width));
+    return width;
+  }
+  function setCollapsed(c) {
+    collapsed = !!c;
+    write(C_KEY, collapsed ? '1' : '0');
+    apply();
+    return collapsed;
+  }
+
+  if (res) {
+    res.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      try { res.setPointerCapture(e.pointerId); } catch (_) { /* pointer sudah lepas */ }
+      document.body.classList.add('sb-resizing');
+    });
+    res.addEventListener('pointermove', (e) => {
+      if (document.body.classList.contains('sb-resizing')) setWidth(e.clientX, { save: false });
+    });
+    const end = (e) => {
+      if (!document.body.classList.contains('sb-resizing')) return;
+      try { res.releasePointerCapture(e.pointerId); } catch (_) { /* sudah dilepas */ }
+      document.body.classList.remove('sb-resizing');
+      write(W_KEY, String(width));
+    };
+    res.addEventListener('pointerup', end);
+    res.addEventListener('pointercancel', end);
+    res.addEventListener('dblclick', () => setWidth(DEF));
+    res.addEventListener('keydown', (e) => {
+      const d = { ArrowLeft: -16, ArrowRight: 16 }[e.key];
+      if (d) { e.preventDefault(); setWidth(width + d); }
+    });
+  }
+  if (toggle) toggle.addEventListener('click', () => setCollapsed(!collapsed));
+  apply();
+  return { setWidth, setCollapsed, get: () => ({ width, collapsed }), DEF, MIN, MAX };
+})();
+
 async function api(channel, args) {
   const r = await window.posBridge.call(channel, args);
   if (!r.ok) throw new Error(r.error);

@@ -163,6 +163,7 @@ Di kiri bawah sidebar:
 - **A− · 100% · A+**: ukuran tampilan. Seluruh aplikasi (huruf, tombol, tabel, modal) diperbesar atau diperkecil, pilihannya 80–200%. Klik angka persen untuk kembali ke 100%.
 - Pintasan keyboard: **Ctrl + =** (atau Ctrl + +) memperbesar, **Ctrl + −** memperkecil, **Ctrl + 0** kembali ke 100%.
 - Pilihan tersimpan **per komputer** dan langsung berlaku saat aplikasi dibuka, termasuk di layar login.
+- **Lebar menu samping:** geser garis batas antara menu dan halaman (180–400 px), atau fokus garis lalu ← / →. **Klik dua kali** garis = kembali ke lebar awal (248 px). Tombol **« Ciutkan menu** membuat menu jadi ikon saja (nama menu muncul saat kursor di atas ikon, angka merah tetap tampil); tombol **»** melebarkannya lagi (lebar & ciut juga tersimpan per komputer). Saat ciut, info akun, shift, koneksi, tema, ukuran, dan jam disembunyikan.
 - Bisa diatur sendiri oleh kasir.
 - Nota, label, dan laporan PDF tidak terpengaruh.
 - Pada layar kecil dengan ukuran besar, sidebar bisa di-scroll.
