@@ -35,6 +35,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 |---|---|---|
 | Ringkasan | semua | Omzet, transaksi, grafik harian, per toko, daftar yang perlu ditindaklanjuti |
 | Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari, pembatalan nota; unduh CSV |
+| Pembatalan Nota | semua | Riwayat pembatalan nota: ringkasan per toko (jumlah, nilai, % dari penjualan) dan rincian per nota (nota asal, alasan, peminta, penyetuju); unduh CSV |
 | Stok | semua | Cari stok per toko & zona, stok lambat |
 | Stock Opname | kantor | Review & persetujuan SO, selisih stok Trizone vs hitungan mother base |
 | Surat Jalan | kantor | Upload Excel Accurate di browser, unduh file import penerimaan Trizone per toko, simpan, status pencocokan |

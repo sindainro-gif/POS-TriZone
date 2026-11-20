@@ -145,6 +145,32 @@ function fileAccurate() {
     assert.strictEqual(struk, 3);
     ok('penjualan: per produk, naik/turun, ABC, per kasir, per hari, pembatalan (rincian & penyetuju); filter toko');
 
+    // Laporan riwayat pembatalan: per toko & per nota
+    await buka('pembatalan');
+    await page.selectOption('#btRentang', 'semua');
+    await page.waitForFunction(() => document.querySelectorAll('#btPerNota tbody tr').length === 3);
+    const perToko = await page.$$eval('#btPerToko tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+    assert.deepStrictEqual(perToko.map((r) => [r[0].slice(0, 3), r[1]]).sort(), [['MLG', '1'], ['TRP', '2']]);
+    assert.ok(perToko.every((r) => /%/.test(r[4]) && r[5] !== '-'), JSON.stringify(perToko));
+    assert.match(await page.textContent('#btRingkas'), /3 nota dibatalkan/);
+    await shot('02d-laporan-pembatalan');
+    const [csvToko] = await Promise.all([page.waitForEvent('download'), page.click('#btCsvToko')]);
+    assert.match(csvToko.suggestedFilename(), /^pembatalan_per_toko_/);
+    await page.click('#btPerToko tr.klik:has-text("TRP")');
+    await page.waitForFunction(() => document.querySelectorAll('#btPerNota tbody tr').length === 2);
+    assert.match(await page.textContent('#btJudulNota'), /TRP \(2\)/);
+    const [csvNota] = await Promise.all([page.waitForEvent('download'), page.click('#btCsvNota')]);
+    const fNota = path.join(OUT, csvNota.suggestedFilename());
+    await csvNota.saveAs(fNota);
+    const isiCsv = fs.readFileSync(fNota, 'utf8');
+    assert.match(isiCsv, /Nota asal;.*Diminta oleh;Disetujui oleh/);
+    assert.strictEqual(isiCsv.trim().split(/\r?\n/).length, 3);
+    await page.click('#btPerNota tr.klik');
+    await page.waitForSelector('.modal');
+    assert.match(await page.textContent('.modal'), /Disetujui oleh \(PIN\)/);
+    await page.click('.modal .tutup');
+    ok('pembatalan nota: riwayat per toko (jumlah, nilai, % batal) & per nota, filter toko, CSV, rincian');
+
     const menuKantor = await page.$$eval('.nav a[data-h]', (a) => a.map((x) => x.dataset.h));
     assert.ok(menuKantor.includes('stok') && menuKantor.includes('opname'), 'menu Stok dan Stock Opname terpisah');
     assert.strictEqual(menuKantor.indexOf('opname'), menuKantor.indexOf('stok') + 1);
@@ -368,7 +394,7 @@ function fileAccurate() {
     await page.waitForSelector('#lgEmail');
     await masuk('tropodo@contoh.local', 'toko123');
     const menu = await page.$$eval('.nav a', (x) => x.map((a) => a.dataset.h));
-    assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'stok', 'asisten']);
+    assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'pembatalan', 'stok', 'asisten']);
     await page.waitForSelector('#rkToko tbody tr');
     assert.deepStrictEqual(await page.$$eval('#rkToko tbody tr td:first-child b', (x) => x.map((e) => e.textContent)), ['TRP']);
     await page.goto(`${BASE}/#pembelian`);
