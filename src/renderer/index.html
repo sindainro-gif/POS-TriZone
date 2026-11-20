@@ -301,7 +301,7 @@
           <button class="btn primary" id="pdAdd">+ Tambah Barang</button>
         </div>
       </header>
-      <div id="pdLocked" class="alert warn hidden" style="margin-bottom:12px">Daftar barang <b>dikunci</b>. Barang baru, nama, barcode, harga, dan satuan tidak diubah di sini; tekan <b>Perbarui Daftar Barang</b> untuk mengambil yang terbaru (otomatis tiap jam). Batas minimum display toko tetap bisa diubah.</div>
+      <div id="pdLocked" class="alert warn hidden" style="margin-bottom:12px">Daftar barang <b>dikunci</b>. Barang baru, nama, barcode, harga, dan satuan tidak diubah di sini; tekan <b>Perbarui Daftar Barang</b> untuk mengambil yang terbaru (otomatis setiap buka shift). Batas minimum display toko tetap bisa diubah.</div>
       <div class="card">
         <div class="card-head">
           <div class="btn-row">
@@ -470,7 +470,7 @@
           <div class="btn-row"><button class="btn danger" id="stReset">Reset Program…</button></div>
           <h2 class="mt">Catatan</h2>
           <ul class="notes">
-            <li>Saat tutup shift, penjualan <b>langsung dikirim ke mother base</b> (hasilnya tidak ditampilkan ke pegawai). Bila internet putus, shift tetap tertutup dan datanya dikirim ulang otomatis tiap 5 menit. Statusnya terlihat di kartu <b>Mother Base</b> di bawah. Layar kerja pegawai tidak menyebut mother base.</li>
+            <li>Saat tutup shift, penjualan <b>langsung dikirim ke mother base</b> (hasilnya tidak ditampilkan ke pegawai). Bila internet putus, shift tetap tertutup dan datanya dikirim ulang otomatis. Data lain (shift berjalan, stok, penerimaan, mutasi, opname) dikirim saat aplikasi dibuka lalu <b>tiap 3 jam</b>; master barang diambil <b>setiap buka shift</b> atau lewat tombol. Statusnya terlihat di kartu <b>Mother Base</b> di bawah. Layar kerja pegawai tidak menyebut mother base.</li>
             <li>File laporan (Rekap PDF, CSV penjualan, CSV stok) disimpan di folder laporan komputer ini dalam bentuk <b>terenkripsi</b> selama <b>7 hari</b>, lalu dihapus otomatis. Tidak bisa dibuka langsung, hanya lewat <b>Lihat Laporan…</b> di atas. Kuncinya terikat ke akun Windows PC ini (file <code>laporan.key</code> di folder data).</li>
             <li>Database dicadangkan otomatis setiap hari (14 salinan terakhir).</li>
           </ul>

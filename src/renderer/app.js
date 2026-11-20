@@ -2801,7 +2801,7 @@ const mbCard = (() => {
       : (st.master_locked ? 'Belum pernah diambil' : '<span class="muted">Tidak dikunci</span>');
     const err = [st.last_error && `Kiriman: ${st.last_error}`, st.master_error && `Master barang: ${st.master_error}`].filter(Boolean).join('\n');
     $('#mbError').classList.toggle('hidden', !err);
-    $('#mbError').textContent = err ? `${err}\nDicoba lagi otomatis tiap 5 menit.` : '';
+    $('#mbError').textContent = err ? `${err}\nDicoba lagi otomatis tiap 3 jam, atau tekan Kirim Sekarang.` : '';
     $('#mbError').style.whiteSpace = 'pre-line';
     if (document.activeElement !== $('#mbUrl')) $('#mbUrl').value = st.url || '';
     if (document.activeElement !== $('#mbKode')) $('#mbKode').value = st.kode_toko || '';

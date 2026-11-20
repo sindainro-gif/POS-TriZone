@@ -759,7 +759,7 @@ async function detailSj(sj) {
 
 // ---------------------------------------------------------------- Master barang
 async function hBarang(el) {
-  el.innerHTML = `${head('Master Barang', 'Kode, barcode, harga jual, dan satuan yang dipakai semua toko. Toko dengan daftar barang terkunci mengambilnya otomatis tiap jam.',
+  el.innerHTML = `${head('Master Barang', 'Kode, barcode, harga jual, dan satuan yang dipakai semua toko. Toko dengan daftar barang terkunci mengambilnya otomatis setiap buka shift.',
     `<button class="btn" id="brImport">Import Excel…</button><button class="btn" id="brIsi">Isi dari toko…</button><button class="btn" id="brHarga">Catat harga beli…</button>${isOwner() ? '<button class="btn" id="brMarkup">Markup…</button>' : ''}<button class="btn primary" id="brTambah">+ Barang</button>`)}
     <div class="card"><div class="card-head"><div class="row"><input id="brCari" placeholder="Cari nama atau SKU" style="min-width:220px"></div>
     <span class="muted small" id="brJumlah"></span></div><div id="brIsiTabel"></div></div>`;
@@ -1063,7 +1063,7 @@ async function hToko(el) {
         <ol style="margin:0;padding-left:18px;display:grid;gap:6px">
           <li>Di PC Gudang toko, login Admin lalu buka <b>Pengaturan → Mother Base</b>.</li>
           <li>Isi alamat dan anon key di bawah, kode toko, dan <b>kunci toko</b> (dibuat owner di tabel atas).</li>
-          <li>Tekan <b>Simpan</b> lalu <b>Tes Koneksi</b>. Data terkirim otomatis tiap 5 menit dan setiap tutup shift.</li>
+          <li>Tekan <b>Simpan</b> lalu <b>Tes Koneksi</b>. Data terkirim otomatis saat aplikasi toko dibuka, tiap 3 jam, dan setiap tutup shift.</li>
         </ol>
         <label class="f" style="margin-top:12px">Alamat mother base<div class="row"><input readonly value="${esc(CFG.url)}" style="flex:1"><button class="btn sm" data-salin="${esc(CFG.url)}">Salin</button></div></label>
         <label class="f" style="margin-top:8px">Anon key<div class="row"><input readonly value="${esc(CFG.anonKey)}" style="flex:1"><button class="btn sm" data-salin="${esc(CFG.anonKey)}">Salin</button></div></label></div>

@@ -608,9 +608,16 @@ app.on('browser-window-created', (_e, win) => {
       console.log('ambil master barang (Daftar Barang):', pulled && pulled.name, pulled && pulled.unit_price, '· tampil di tabel:', /Barang Dari Kantor/.test(pdText));
       if (!pulled || pulled.unit_price !== 9900 || !/Barang Dari Kantor/.test(pdText)) throw new Error('Ambil Master Barang di Daftar Barang tidak memasukkan barang baru');
       await shot('09e-ambil-master-barang');
+      // Buka shift (daftar barang dikunci): harga terbaru dari kantor diambil otomatis di latar
+      svc.mbSaveConfig({ kunci_master: true });
+      fakeProduk = [{ ...fakeProduk[0], unit_price: 12500 }];
+      await run(`window.posBridge.call('shift:open', {})`);
+      for (let i = 0; i < 20 && svc.getProduct('MB-001').unit_price !== 12500; i++) await wait(250);
+      console.log('buka shift → harga dari kantor:', svc.getProduct('MB-001').unit_price);
+      if (svc.getProduct('MB-001').unit_price !== 12500) throw new Error('buka shift tidak mengambil daftar barang terbaru');
+      svc.mbSaveConfig({ kunci_master: false });
       fakeMb.close();
       svc.mbSaveConfig({ url: '' });
-      await run(`window.posBridge.call('shift:open', {})`);
       await run('refreshShift()');
       await wait(300);
 

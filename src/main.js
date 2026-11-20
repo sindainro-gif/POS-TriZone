@@ -282,7 +282,7 @@ async function closeShiftLocal({ notes } = {}) {
   pruneReportsNow();
 
   // Kirim ke mother base SEKARANG dan tunggu jawabannya (bukan hanya dijadwalkan). Gagal = shift tetap tertutup,
-  // datanya aman di antrean dan dicoba lagi otomatis tiap 5 menit.
+  // datanya aman di antrean dan dicoba lagi otomatis tiap 3 jam (atau Kirim Sekarang di Pengaturan).
   const motherbase = await sendShiftToMotherbase(uid);
 
   // Lokasi file laporan sengaja TIDAK dikirim ke layar (tersimpan di shift_history.report_dir)
@@ -317,6 +317,16 @@ async function sendShiftToMotherbase(uid) {
 
 // Ambil master barang dari mother base sekarang (tombol Perbarui Daftar Barang, semua peran, juga dari PC kasir).
 // Pesannya netral: pegawai tidak perlu tahu ada mother base. Detail error tersimpan di status untuk Admin.
+const MB_SEND_EVERY_MS = 3 * 60 * 60 * 1000; // kiriman berkala ke mother base: tiap 3 jam
+
+// Buka shift: ambil daftar barang & harga terbaru (yang berubah sejak terakhir) dari mother base di latar,
+// kasir tidak menunggu. Hanya bila daftar barang dikunci ke mother base (sama seperti dulu ambil berkala).
+function pullMasterOnShiftOpen() {
+  if (!mb || DEMO || !localSvc.mbConfig().ready || !localSvc.masterLocked()) return false;
+  mb.ambilMaster().catch((err) => console.error('[mother base] ambil master saat buka shift:', err.message));
+  return true;
+}
+
 async function pullMasterLocal() {
   if (!mb || DEMO) throw userError('Versi DEMO tidak memperbarui daftar barang.');
   if (!localSvc.mbConfig().ready) throw userError('Pembaruan daftar barang belum diatur. Hubungi Admin.');
@@ -346,6 +356,7 @@ const SERVER_MAIN = {
   'main.voidReceipt': (a) => localSvc.voidReceipt(a),
   'main.closeShift': closeShiftLocal,
   'main.pullMaster': pullMasterLocal,
+  'main.masterOnShiftOpen': pullMasterOnShiftOpen,
 };
 const REMOTE_BLOCKED = new Set([
   'archiveShift', 'pruneShiftHistory', 'checkout', 'shiftData', 'createOrder', 'completeOrder',
@@ -881,6 +892,8 @@ const handlers = {
     // Nama kasir di shift & nota = akun yang sedang login
     const shift = await svc.openShift({ ...a, cashier_name: session.name });
     if (isClient()) { offline.setShift(shift); maintainOffline({ forceRefresh: true }); }
+    // Daftar barang & harga terbaru diambil di PC Server (tanpa menunggu; PC Server versi lama = dilewati)
+    Promise.resolve().then(() => runMain('main.masterOnShiftOpen')).catch(() => {});
     return shift;
   },
   'shift:summary': () => svc.shiftSummary(),
@@ -1077,12 +1090,12 @@ async function startup() {
   };
   pruneHistory();
   setInterval(pruneHistory, 60 * 60 * 1000);
-  // Mother base: kirim data tiap 5 menit bila ada yang menunggu / berubah; master barang tiap jam.
-  // Semua berjalan di latar dan tidak menghentikan kasir.
-  const mbTick = (pullMaster) => mb.tick({ pullMaster }).catch((err) => console.error('[mother base]', err));
-  setTimeout(() => mbTick(true), 20 * 1000);
-  setInterval(() => mbTick(false), 5 * 60 * 1000);
-  setInterval(() => mbTick(true), 60 * 60 * 1000);
+  // Mother base: kirim data yang menunggu / berubah sekali setelah aplikasi dibuka, lalu tiap 3 jam
+  // (tutup shift mengirim langsung). Master barang TIDAK diambil berkala: hanya saat buka shift
+  // (pullMasterOnShiftOpen) atau tombol manual. Semua berjalan di latar dan tidak menghentikan kasir.
+  const mbTick = () => mb.tick({ pullMaster: false }).catch((err) => console.error('[mother base]', err));
+  setTimeout(mbTick, 20 * 1000);
+  setInterval(mbTick, MB_SEND_EVERY_MS);
   if (device.mode === 'server' && !DEMO) {
     if (!device.server_pair_key) device = saveDevice(DATA_DIR, { server_pair_key: newPairKey() });
     const port = Number(process.env.POS_SERVER_PORT || device.server_port) || DEFAULT_PORT;
