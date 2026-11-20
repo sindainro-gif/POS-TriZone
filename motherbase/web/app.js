@@ -903,7 +903,7 @@ function importExcel(selesai) {
 // ---------------------------------------------------------------- Pembelian
 async function hPembelian(el) {
   let tab = S.tabPembelian || 'po';
-  el.innerHTML = `${head('Pembelian', 'Usulan beli dihitung dari penjualan 9 toko, stok gudang, stok toko, dan PO yang belum datang. Owner menyetujui, admin memasukkan ke Accurate.')}
+  el.innerHTML = `${head('Pembelian', 'Usulan beli dihitung dari penjualan semua toko, stok gudang, stok toko, dan PO yang belum datang. Owner menyetujui, admin memasukkan ke Accurate.')}
     ${tabs('pbTab', [['po', 'Purchase order'], ['usulan', 'Usulan beli']], tab)}<div id="pbIsi"></div>`;
   pasangTabs(el, 'pbTab', (t) => { tab = t; S.tabPembelian = t; tampil(); });
   const isi = $('#pbIsi', el);

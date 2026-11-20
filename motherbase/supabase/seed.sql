@@ -10,18 +10,18 @@ insert into toko (kode, nama, kota, batas_hari_sj) values
   ('BKS','Bekasi',  'Bekasi', 7),
   ('CLD','Ciledug', 'Tangerang', 7),
   ('DPK','Depok',   'Depok', 7),
-  -- Toko ke-9: kode sementara sampai nama tokonya pasti.
-  ('XXX','Toko ke-9 (sementara)','-', 7)
+  ('SPJ','Sepanjang','Sidoarjo', 1),
+  ('PAM','Pamulang','Tangerang Selatan', 7)
 on conflict (kode) do nothing;
 
 -- Pelanggan di Accurate. "X Special" = toko yang sama dengan "X".
--- Utama, Sepanjang, dan Jago belum dipetakan; isi kode_toko-nya setelah diputuskan.
+-- Utama dan Jago belum dipetakan; isi kode_toko-nya setelah diputuskan.
 insert into pelanggan_accurate (nama, kode_toko) values
   ('Tropodo','TRP'), ('Tropodo Special','TRP'),
   ('Sidoarjo','SDA'), ('Sidoarjo Special','SDA'),
   ('Malang','MLG'), ('Malang Special','MLG'),
   ('Utama', null), ('Utama Special', null),
-  ('Sepanjang', null), ('Sepanjang Special', null),
+  ('Sepanjang','SPJ'), ('Sepanjang Special','SPJ'),
   ('Jago Plastik', null), ('Jago Special', null)
 on conflict (nama) do nothing;
 

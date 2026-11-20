@@ -79,6 +79,17 @@ function fileAccurate() {
     await page.waitForFunction(() => !document.querySelector('#isi > .kosong'));
     await tunggu(400);
   };
+  // Tunggu sampai satu baris di database berisi nilai yang diharapkan (notifikasi lama bisa masih tampil)
+  const tungguDb = async (sql, harap, ms = 10000) => {
+    const akhir = Date.now() + ms;
+    let isi;
+    while (Date.now() < akhir) {
+      isi = Object.values((await db(sql))[0] || {});
+      if (JSON.stringify(isi) === JSON.stringify(harap)) return;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    assert.deepStrictEqual(isi, harap);
+  };
   // Tunggu notifikasi yang cocok (notifikasi lama bisa masih tampil)
   const toastCocok = async (re) => {
     await page.waitForFunction((src) => [...document.querySelectorAll('.toast')].some((t) => new RegExp(src).test(t.textContent)), re.source, { timeout: 10000 })
@@ -107,12 +118,12 @@ function fileAccurate() {
     assert.match(perhatian, /stok opname menunggu review/);
     assert.match(perhatian, /usulan PO menunggu persetujuan Anda/);
     assert.match(perhatian, /3 nota dibatalkan dalam 7 hari terakhir/);
-    assert.strictEqual((await page.$$('#rkToko tbody tr')).length, 9);
+    assert.strictEqual((await page.$$('#rkToko tbody tr')).length, 10);
     await shot('01-ringkasan');
     await page.selectOption('#perPilih', '30');
     await page.waitForTimeout(600);
     await shot('01b-ringkasan-30-hari');
-    ok('ringkasan: omzet, grafik harian, perlu perhatian (SJ, SO, PO), 9 toko');
+    ok('ringkasan: omzet, grafik harian, perlu perhatian (SJ, SO, PO), 10 toko');
 
     await buka('penjualan');
     for (const t of ['produk', 'tren', 'abc', 'kasir', 'harian', 'batal']) {
@@ -271,16 +282,14 @@ function fileAccurate() {
     await page.selectOption('#fSatuan', 'Biji');
     assert.deepStrictEqual([await page.inputValue('#fRasio'), await page.$eval('#fRasio', (e) => e.disabled)], ['1', true]);
     await page.click('.modal-kaki .btn.primary');
-    await toastCocok(/disimpan/);
-    assert.deepStrictEqual(Object.values((await db("select satuan_masuk, rasio_isi from produk where sku = 'RTN-001'"))[0]), ['Biji', 1]);
+    await tungguDb("select satuan_masuk, rasio_isi from produk where sku = 'RTN-001'", ['Biji', 1]);
     await tunggu(400);
     await page.click('#brIsiTabel tr.klik:has-text("RTN-001")');
     await page.selectOption('#fSatuan', 'Coly');
     assert.strictEqual(await page.$eval('#fRasio', (e) => e.disabled), false);
     await page.fill('#fRasio', '2');
     await page.click('.modal-kaki .btn.primary');
-    await toastCocok(/disimpan/);
-    assert.deepStrictEqual(Object.values((await db("select satuan_masuk, rasio_isi from produk where sku = 'RTN-001'"))[0]), ['Coly', 2]);
+    await tungguDb("select satuan_masuk, rasio_isi from produk where sku = 'RTN-001'", ['Coly', 2]);
     await tunggu(400);
     await page.click('#brIsiTabel tr.klik:has-text("RTN-002")');
     await page.fill('#fHarga', '27500');
