@@ -185,6 +185,33 @@ function fakeMotherbase() {
     assert.ok(!/111111|pin_hash|pin_salt/.test(JSON.stringify(fm.calls[0].p)));
   });
 
+  await t('pesanan pelanggan ikut snapshot: baru, diambil, batal + barang; yang selesai > 60 hari tidak dikirim lagi', async () => {
+    const hari = localNow().slice(0, 10);
+    const o1 = svc.createOrder({ items: [{ sku: 'B-2', qty: 2 }], customer_name: 'Ibu Ani', customer_phone: '0812', pickup_date: hari, deposit: 1000, notes: 'warna merah' });
+    const o2 = svc.createOrder({ items: [{ sku: 'A-1', qty: 1 }], customer_name: 'Pak Joko', pickup_date: hari });
+    svc.completeOrder({ order_no: o2.order_no, zone: 'floor', cash_received: 1000, done_by: 'Budi' });
+    const o3 = svc.createOrder({ items: [{ sku: 'A-1', qty: 3 }], customer_name: 'Mbak Sri', pickup_date: hari, deposit: 500 });
+    svc.cancelOrder({ order_no: o3.order_no, reason: 'Tidak jadi', deposit_action: 'hangus', approver_pin: '111111', requested_by: 'Budi' });
+    fm.calls.length = 0;
+    await mb.kirim();
+    const orders = fm.calls[0].p.snapshot.orders;
+    assert.deepStrictEqual(orders.map((o) => [o.order_no, o.status]), [[o1.order_no, 'baru'], [o2.order_no, 'diambil'], [o3.order_no, 'batal']]);
+    assert.deepStrictEqual([orders[0].customer_name, orders[0].customer_phone, orders[0].deposit, orders[0].total, orders[0].notes], ['Ibu Ani', '0812', 1000, 5000, 'warna merah']);
+    assert.deepStrictEqual(orders[0].items, [{ sku: 'B-2', name: 'Barang B', qty: 2, unit_price: 2500, line_total: 5000 }]);
+    assert.ok(orders[1].receipt_no && orders[1].pickup_zone === 'floor' && orders[1].done_by === 'Budi');
+    assert.deepStrictEqual([orders[2].cancel_reason, orders[2].cancel_deposit, orders[2].cancel_approved_by], ['Tidak jadi', 'hangus', 'Bos']);
+    // Pesanan batal yang selesai lebih dari 60 hari lalu tidak dikirim lagi (mother base sudah menyimpannya)
+    db.run("UPDATE customer_orders SET created_at = '2020-01-01 10:00:00', done_at = '2020-01-02 10:00:00' WHERE order_no = ?", [o3.order_no]);
+    fm.calls.length = 0;
+    await mb.kirim();
+    assert.deepStrictEqual(fm.calls[0].p.snapshot.orders.map((o) => o.order_no), [o1.order_no, o2.order_no]);
+    // Pesanan belum diambil tetap dikirim walau sudah lama
+    db.run("UPDATE customer_orders SET created_at = '2020-01-01 10:00:00' WHERE order_no = ?", [o1.order_no]);
+    fm.calls.length = 0;
+    await mb.kirim();
+    assert.ok(fm.calls[0].p.snapshot.orders.some((o) => o.order_no === o1.order_no));
+  });
+
   await t('shift yang tidak dikonfirmasi mother base tetap di antrean', async () => {
     svc.archiveShift({ closed_at: '2026-11-17 21:00:00' });
     fm.rejectShifts = true;

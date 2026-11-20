@@ -1703,7 +1703,29 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         shift_uid: ensureShiftUid(), cashier_name: shift.cashier_name, shift_start: shift.shift_start, sales: salesLines(),
         pembatalan: voidLines(db.all('SELECT * FROM receipt_voids WHERE void_no IN (SELECT receipt_no FROM shift_sales) ORDER BY created_at')),
       } : null,
+      orders: ordersForMb(),
     };
+  }
+
+  // Pesanan pelanggan untuk mother base: semua yang belum diambil, ditambah yang dibuat / selesai dalam
+  // MB_ORDER_DAYS hari terakhir. Mother base menyimpan riwayatnya, jadi pesanan lama tidak perlu dikirim lagi.
+  const MB_ORDER_DAYS = 60;
+  function ordersForMb() {
+    const d = new Date(`${localNow().slice(0, 10)}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - MB_ORDER_DAYS);
+    const since = d.toISOString().slice(0, 10);
+    const pilih = "status = 'baru' OR COALESCE(done_at, created_at) >= ?";
+    const orders = db.all(
+      `SELECT id, order_no, customer_name, customer_phone, pickup_date, notes, total, deposit, status, created_at, created_by,
+              done_at, done_by, receipt_no, pickup_zone, cancel_reason, cancel_deposit, cancel_approved_by
+       FROM customer_orders WHERE ${pilih} ORDER BY id`, [since],
+    );
+    if (!orders.length) return [];
+    const items = groupBy(db.all(
+      `SELECT order_id, sku, name, qty, unit_price, line_total FROM customer_order_items
+       WHERE order_id IN (SELECT id FROM customer_orders WHERE ${pilih}) ORDER BY id`, [since],
+    ), 'order_id');
+    return orders.map(({ id, ...o }) => ({ ...o, items: (items.get(id) || []).map(({ order_id: _, ...i }) => i) }));
   }
 
   // Dokumen dengan id > penanda terakhir yang sudah diterima mother base

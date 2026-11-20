@@ -11,7 +11,7 @@ const { Client, Pool } = require('pg');
 const MB = path.join(__dirname, '..');
 const REPO = path.join(MB, '..');
 const { Database } = require(path.join(REPO, 'src/db'));
-const { createServices } = require(path.join(REPO, 'src/services'));
+const { createServices, localNow } = require(path.join(REPO, 'src/services'));
 const { createMotherbase } = require(path.join(REPO, 'src/motherbase'));
 const acc = require(path.join(MB, 'web/lib/accurate'));
 
@@ -77,7 +77,7 @@ async function buatDatabase(dbUrl) {
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
     'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql',
-    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;
@@ -133,7 +133,8 @@ async function buatDataDemo(dbUrl) {
   const tokoSvc = {};
   for (const t of TOKO) {
     const [{ k }] = await q('select public.buat_kunci_toko($1) as k', [t.kode]);
-    const svc = createServices(await Database.open(null));
+    const dbToko = await Database.open(null);
+    const svc = createServices(dbToko);
     svc.saveSettings({ store_name: `${t.nama} (contoh)` });
     svc.importRows(BARANG.map(([sku, barcode, nama, kategori, harga, satuan, rasio]) => ({
       Barcode: barcode, SKU: sku, Nama_Barang: nama, Merk: 'Contoh', Kategori: kategori, Harga_Jual: harga,
@@ -141,7 +142,7 @@ async function buatDataDemo(dbUrl) {
       Min_Alert_Toko: 5,
     })));
     svc.mbSaveConfig({ url: 'http://127.0.0.1:1', anon_key: 'dev', kode_toko: t.kode, kunci: k, kunci_master: true });
-    tokoSvc[t.kode] = { svc, mb: createMotherbase({ svc, appVersion: '1.8.0-contoh', fetchFn: anonFetch }) };
+    tokoSvc[t.kode] = { svc, db: dbToko, mb: createMotherbase({ svc, appVersion: '1.8.0-contoh', fetchFn: anonFetch }) };
   }
 
   // Riwayat penjualan 35 hari (dikirim seperti data tutup shift dari Trizone)
@@ -230,6 +231,22 @@ async function buatDataDemo(dbUrl) {
       svc.saveUser({ name: 'Bu Sari', role: 'admin', pin: '135790', active: true });
       svc.voidReceipt({ receipt_no: nota.receipt_no, reason: 'Salah ambil barang', items: [{ sku: 'PLJ-004', destination: 'floor' }],
         requested_by: 'Rina', approver_pin: '135790' });
+    }
+    // Pesanan pelanggan: TRP 2 belum diambil (1 lewat tanggal ambil) + 1 batal, MLG 1 sudah diambil
+    const hariToko = localNow().slice(0, 10);
+    const besok = new Date(`${hariToko}T00:00:00Z`);
+    besok.setUTCDate(besok.getUTCDate() + 1);
+    if (t.kode === 'TRP') {
+      svc.createOrder({ items: [{ sku: 'PLJ-001', qty: 2 }, { sku: 'RTN-003', qty: 1 }], customer_name: 'Ibu Ani', customer_phone: '0812-3456-7890',
+        pickup_date: besok.toISOString().slice(0, 10), deposit: 50000, notes: 'Diambil sore' });
+      const lewat = svc.createOrder({ items: [{ sku: 'RTN-001', qty: 1 }], customer_name: 'Pak Joko', customer_phone: '0857-1111-2222', pickup_date: hariToko, deposit: 100000 });
+      tokoSvc[t.kode].db.run("UPDATE customer_orders SET pickup_date = date(?, '-2 day') WHERE order_no = ?", [hariToko, lewat.order_no]);
+      const batalPs = svc.createOrder({ items: [{ sku: 'PLJ-002', qty: 5 }], customer_name: 'Mbak Sri', pickup_date: hariToko, deposit: 10000 });
+      svc.cancelOrder({ order_no: batalPs.order_no, reason: 'Tidak jadi beli', deposit_action: 'kembali', approver_pin: '135790', requested_by: 'Rina' });
+    }
+    if (t.kode === 'MLG') {
+      const ps = svc.createOrder({ items: [{ sku: 'PLJ-003', qty: 1 }], customer_name: 'Bu Dewi', pickup_date: hariToko, deposit: 20000 });
+      svc.completeOrder({ order_no: ps.order_no, zone: 'floor', cash_received: 50000, done_by: 'Rina' });
     }
     await tokoSvc[t.kode].mb.kirim();
   }

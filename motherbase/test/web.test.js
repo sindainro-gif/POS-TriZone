@@ -118,6 +118,7 @@ function fileAccurate() {
     assert.match(perhatian, /stok opname menunggu review/);
     assert.match(perhatian, /usulan PO menunggu persetujuan Anda/);
     assert.match(perhatian, /3 nota dibatalkan dalam 7 hari terakhir/);
+    assert.match(perhatian, /1 pesanan pelanggan lewat tanggal ambil/);
     assert.strictEqual((await page.$$('#rkToko tbody tr')).length, 10);
     await shot('01-ringkasan');
     await page.selectOption('#perPilih', '30');
@@ -181,6 +182,35 @@ function fileAccurate() {
     assert.match(await page.textContent('.modal'), /Disetujui oleh \(PIN\)/);
     await page.click('.modal .tutup');
     ok('pembatalan nota: riwayat per toko (jumlah, nilai, % batal) & per nota, filter toko, CSV, rincian');
+
+    // Pesanan pelanggan dari toko
+    await buka('pesanan');
+    await page.waitForFunction(() => document.querySelectorAll('#psIsi tbody tr').length === 2);
+    const belumDiambil = await page.$$eval('#psIsi tbody tr', (x) => x.map((tr) => tr.textContent));
+    assert.ok(belumDiambil.every((r) => /TRP/.test(r)) && belumDiambil.some((r) => /Pak Joko/.test(r) && /lewat/.test(r)), belumDiambil.join('|'));
+    assert.match(await page.textContent('#psRingkas'), /2 belum diambil, 1 lewat tanggal ambil · deposit tertahan Rp 150\.000/);
+    await shot('02e-pesanan-pelanggan');
+    await page.selectOption('#psStatus', '');
+    await page.waitForFunction(() => document.querySelectorAll('#psIsi tbody tr').length === 4);
+    await page.selectOption('#psToko', 'MLG');
+    await page.waitForFunction(() => document.querySelectorAll('#psIsi tbody tr').length === 1);
+    assert.match(await page.textContent('#psIsi'), /Bu Dewi[\s\S]*Diambil/);
+    await page.selectOption('#psToko', '');
+    await page.fill('#psCari', 'sri');
+    await page.waitForFunction(() => document.querySelectorAll('#psIsi tbody tr').length === 1);
+    await page.click('#psIsi tr.klik');
+    await page.waitForSelector('.modal');
+    const rincianPs = await page.textContent('.modal');
+    assert.match(rincianPs, /Tidak jadi beli/);
+    assert.match(rincianPs, /Dikembalikan ke pelanggan/);
+    assert.match(rincianPs, /Bu Sari/);
+    assert.match(rincianPs, /PLJ-002/);
+    await page.click('.modal .tutup');
+    const [csvPs] = await Promise.all([page.waitForEvent('download'), page.click('#psCsv')]);
+    assert.match(csvPs.suggestedFilename(), /^pesanan_semua_/);
+    await page.fill('#psCari', '');
+    await page.selectOption('#psStatus', 'baru');
+    ok('pesanan pelanggan: belum diambil (tanda lewat, deposit tertahan), semua status, filter toko & cari, rincian batal, CSV');
 
     const menuKantor = await page.$$eval('.nav a[data-h]', (a) => a.map((x) => x.dataset.h));
     assert.ok(menuKantor.includes('stok') && menuKantor.includes('opname'), 'menu Stok dan Stock Opname terpisah');
@@ -315,8 +345,7 @@ function fileAccurate() {
     await page.click('#brIsiTabel tr.klik:has-text("RTN-002")');
     await page.fill('#fHarga', '27500');
     await page.click('.modal-kaki .btn.primary');
-    await toastCocok(/disimpan/);
-    assert.strictEqual(Number((await db("select harga_jual_konsumen from produk where sku = 'RTN-002'"))[0].harga_jual_konsumen), 27500);
+    await tungguDb("select harga_jual_konsumen::int as h from produk where sku = 'RTN-002'", [27500]);
     await page.click('#brMarkup');
     await page.fill('#mkNilai', '7');
     await page.click('.modal-kaki .btn.primary');
@@ -424,7 +453,7 @@ function fileAccurate() {
     await page.waitForSelector('#lgEmail');
     await masuk('tropodo@contoh.local', 'toko123');
     const menu = await page.$$eval('.nav a', (x) => x.map((a) => a.dataset.h));
-    assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'pembatalan', 'stok', 'asisten']);
+    assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'pembatalan', 'pesanan', 'stok', 'asisten']);
     await page.waitForSelector('#rkToko tbody tr');
     assert.deepStrictEqual(await page.$$eval('#rkToko tbody tr td:first-child b', (x) => x.map((e) => e.textContent)), ['TRP']);
     await page.goto(`${BASE}/#pembelian`);

@@ -215,6 +215,7 @@ const HALAMAN = [
   { id: 'ringkasan', judul: 'Ringkasan', ikon: '◧', untuk: 'semua' },
   { id: 'penjualan', judul: 'Penjualan', ikon: '▤', untuk: 'semua' },
   { id: 'pembatalan', judul: 'Pembatalan Nota', ikon: '⊘', untuk: 'semua' },
+  { id: 'pesanan', judul: 'Pesanan Pelanggan', ikon: '⧉', untuk: 'semua' },
   { id: 'stok', judul: 'Stok', ikon: '▦', untuk: 'semua' },
   { id: 'opname', judul: 'Stock Opname', ikon: '▣', untuk: 'kantor' },
   { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
@@ -291,6 +292,10 @@ async function hRingkasan(el) {
     // Gagal (mis. migrasi pembatalan belum dijalankan) tidak menyembunyikan butir lain
     const batal = await rpc('laporan_pembatalan', { p_dari: geser(hariIni(), -6), p_sampai: hariIni(), p_batas: 2000 }).catch(() => []);
     if (batal.length) li.push(['info', `${batal.length} nota dibatalkan dalam 7 hari terakhir`, [...new Set(batal.map((b) => b.kode_toko))].join(', '), 'pembatalan']);
+    const pesananLewat = (await rpc('laporan_pesanan', { p_status: 'baru', p_batas: 5000 }).catch(() => [])).filter((r) => r.lewat);
+    if (pesananLewat.length) {
+      li.push(['warn', `${pesananLewat.length} pesanan pelanggan lewat tanggal ambil`, [...new Set(pesananLewat.map((r) => r.kode_toko))].join(', '), 'pesanan']);
+    }
     $('#rkPerhatian', el).innerHTML = li.length ? li.map(([k, t, s, hal, tab]) =>
       `<li><span class="pill ${k}">${k === 'bad' ? 'Penting' : k === 'warn' ? 'Cek' : 'Info'}</span><span>${esc(t)}${s ? ` <span class="muted small">${esc(s)}</span>` : ''}</span><a href="#${hal}" class="small"${tab ? ` data-tab="${tab}"` : ''}>Buka</a></li>`).join('')
       : '<li class="muted">Tidak ada yang perlu ditindaklanjuti.</li>';
@@ -520,6 +525,90 @@ async function hPembatalan(el) {
       { k: 'alasan', judul: 'Alasan' }, { k: 'diminta_oleh', judul: 'Diminta oleh' }, { k: 'disetujui_oleh', judul: 'Disetujui oleh' }],
     perNota.map((r) => ({ ...r, waktu: fmtWaktu(r.waktu), waktu_struk_asal: r.waktu_struk_asal ? fmtWaktu(r.waktu_struk_asal) : '' }))));
   await muat();
+}
+
+// ---------------------------------------------------------------- Pesanan pelanggan (dari Trizone)
+const STATUS_PESANAN = { baru: ['warn', 'Belum diambil'], diambil: ['ok', 'Diambil'], batal: ['', 'Batal'] };
+const ZONA_AMBIL = { floor: 'Display Toko', warehouse: 'Gudang Utama' };
+
+async function hPesanan(el) {
+  const f = S.filterPesanan || (S.filterPesanan = { status: 'baru', toko: '', cari: '' });
+  const STATUS = [['baru', 'Belum diambil'], ['diambil', 'Sudah diambil'], ['batal', 'Batal'], ['', 'Semua status']];
+  el.innerHTML = `${head('Pesanan Pelanggan', 'Pesanan pelanggan yang dicatat di Trizone: barang yang dipesan, deposit (uang muka), dan tanggal ambil. Ikut terkirim bersama stok toko. Klik pesanan untuk rincian barang.',
+    `<select id="psStatus" aria-label="Status">${STATUS.map(([v, l]) => `<option value="${v}" ${f.status === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+     ${pilihToko('psToko', f.toko)}<input id="psCari" placeholder="No. pesanan, nama, atau HP" style="min-width:200px" value="${esc(f.cari)}">`)}
+    <div class="card"><div class="card-head"><div><h2>Pesanan</h2><div class="muted small" id="psRingkas"></div></div><button class="btn sm" id="psCsv">Unduh CSV</button></div>
+      <div id="psIsi"><div class="kosong">Memuat…</div></div></div>`;
+  const kolom = [
+    { k: 'kode_toko', judul: 'Toko', fmt: (v) => `<b>${esc(v)}</b> <span class="muted">${esc(namaToko(v))}</span>` },
+    { k: 'no_pesanan', judul: 'No. pesanan', fmt: (v) => `<span class="mono">${esc(v)}</span>` },
+    { k: 'nama_pelanggan', judul: 'Pelanggan', fmt: (v, r) => `${esc(v)}${r.hp ? `<div class="muted small">${esc(r.hp)}</div>` : ''}` },
+    { k: 'tanggal_ambil', judul: 'Tanggal ambil', fmt: (v, r) => `${esc(fmtTgl(v))}${r.lewat ? ' <span class="pill bad">lewat</span>' : ''}` },
+    { k: 'jumlah_barang', judul: 'Barang', num: true, fmt: (v, r) => `${num(v)} jenis<div class="muted small">${num(r.qty)} Biji</div>` },
+    { k: 'total', judul: 'Total', num: true, fmt: rp },
+    { k: 'deposit', judul: 'Deposit', num: true, fmt: rp },
+    { k: 'sisa', judul: 'Sisa bayar', num: true, fmt: (v, r) => (r.status === 'baru' ? rp(v) : '<span class="muted">-</span>') },
+    { k: 'status', judul: 'Status', fmt: (v, r) => `${pill(STATUS_PESANAN, v)}${r.selesai_at ? `<div class="muted small">${esc(fmtWaktu(r.selesai_at))}</div>` : ''}` },
+    { k: 'dibuat_at', judul: 'Dibuat', fmt: (v, r) => `${esc(fmtWaktu(v))}${r.dibuat_oleh ? `<div class="muted small">${esc(r.dibuat_oleh)}</div>` : ''}` },
+  ];
+  let rows = [];
+  let t;
+  let urut = 0;
+  async function muat() {
+    clearTimeout(t);
+    const box = $('#psIsi', el);
+    if (!box) return; // halaman sudah ditinggalkan
+    const n = ++urut;
+    try {
+      const hasil = await rpc('laporan_pesanan', { p_status: f.status || null, p_kode_toko: f.toko || null, p_cari: f.cari || null, p_batas: 2000 });
+      if (n !== urut || !box.isConnected) return; // ada muat yang lebih baru, atau halaman sudah ganti
+      rows = hasil;
+      const baru = rows.filter((r) => r.status === 'baru');
+      const lewat = baru.filter((r) => r.lewat).length;
+      const dep = baru.reduce((a, r) => a + Number(r.deposit), 0);
+      $('#psRingkas', el).textContent = `${num(rows.length)} pesanan${baru.length
+        ? ` · ${num(baru.length)} belum diambil${lewat ? `, ${num(lewat)} lewat tanggal ambil` : ''} · deposit tertahan ${rp(dep)}` : ''}`;
+      box.innerHTML = tabel(kolom, rows, { klik: true, kosong: f.status === 'baru' ? 'Tidak ada pesanan yang belum diambil.' : 'Tidak ada pesanan.' });
+      onBaris(box, rows, detailPesanan);
+    } catch (e) { if (n === urut && box.isConnected) box.innerHTML = `<div class="kosong">${esc(pesanError(e))}</div>`; }
+  }
+  $('#psStatus', el).addEventListener('change', (e) => { f.status = e.target.value; muat(); });
+  $('#psToko', el).addEventListener('change', (e) => { f.toko = e.target.value; muat(); });
+  $('#psCari', el).addEventListener('input', (e) => { f.cari = e.target.value.trim(); clearTimeout(t); t = setTimeout(muat, 250); });
+  $('#psCsv', el).addEventListener('click', () => unduhCsv(`pesanan_${f.status || 'semua'}_${hariIni()}.csv`,
+    [{ k: 'kode_toko', judul: 'Toko' }, { k: 'no_pesanan', judul: 'No. pesanan' }, { k: 'nama_pelanggan', judul: 'Pelanggan' }, { k: 'hp', judul: 'HP' },
+      { k: 'tanggal_ambil', judul: 'Tanggal ambil' }, { k: 'status', judul: 'Status' }, { k: 'jumlah_barang', judul: 'Jenis barang' }, { k: 'qty', judul: 'Qty (Biji)' },
+      { k: 'total', judul: 'Total' }, { k: 'deposit', judul: 'Deposit' }, { k: 'sisa', judul: 'Sisa bayar' }, { k: 'catatan', judul: 'Catatan' },
+      { k: 'dibuat_at', judul: 'Dibuat' }, { k: 'dibuat_oleh', judul: 'Dibuat oleh' }, { k: 'selesai_at', judul: 'Diambil / batal' },
+      { k: 'no_nota', judul: 'Nota' }, { k: 'alasan_batal', judul: 'Alasan batal' }, { k: 'deposit_batal', judul: 'Deposit saat batal' },
+      { k: 'batal_disetujui_oleh', judul: 'Batal disetujui oleh' }],
+    rows.map((r) => ({ ...r, status: (STATUS_PESANAN[r.status] || [])[1] || r.status, dibuat_at: fmtWaktu(r.dibuat_at), selesai_at: r.selesai_at ? fmtWaktu(r.selesai_at) : '' }))));
+  await muat();
+}
+
+async function detailPesanan(p) {
+  const baris = await q(sb.from('pesanan_toko_baris').select('baris_ke,sku,nama,qty,harga,subtotal')
+    .eq('kode_toko', p.kode_toko).eq('no_pesanan', p.no_pesanan).order('baris_ke'));
+  const oleh = (w, s) => `${fmtWaktu(w)}${s ? ` oleh ${s}` : ''}`;
+  const info = [['Toko', `${p.kode_toko} · ${namaToko(p.kode_toko)}`], ['Pelanggan', `${p.nama_pelanggan}${p.hp ? ` (${p.hp})` : ''}`],
+    ['Tanggal ambil', `${fmtTgl(p.tanggal_ambil)}${p.lewat ? ' (sudah lewat)' : ''}`], ['Dibuat', oleh(p.dibuat_at, p.dibuat_oleh)],
+    ['Catatan', p.catatan || '-'], ['Total', rp(p.total)], ['Deposit (uang muka)', rp(p.deposit)]];
+  if (p.status === 'baru') info.push(['Sisa bayar saat diambil', rp(p.sisa)]);
+  if (p.status === 'diambil') info.push(['Diambil', oleh(p.selesai_at, p.selesai_oleh)], ['Nota penjualan', p.no_nota || '-'], ['Stok diambil dari', ZONA_AMBIL[p.zona_ambil] || p.zona_ambil || '-']);
+  if (p.status === 'batal') {
+    info.push(['Dibatalkan', oleh(p.selesai_at, p.selesai_oleh)], ['Alasan batal', p.alasan_batal || '-'],
+      ['Deposit saat batal', p.deposit_batal === 'kembali' ? 'Dikembalikan ke pelanggan' : p.deposit_batal === 'hangus' ? 'Hangus' : '-'],
+      ['Disetujui oleh (PIN)', p.batal_disetujui_oleh || '-']);
+  }
+  modal({
+    judul: `Pesanan ${p.no_pesanan}`, lebar: true,
+    isi: `<p style="margin-top:0">${pill(STATUS_PESANAN, p.status)}</p>
+      <table class="tbl" style="margin-bottom:12px"><tbody>${info.map(([k, v]) => `<tr><td class="muted" style="width:200px">${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</tbody></table>
+      ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+        { k: 'qty', judul: 'Qty (Biji)', num: true, fmt: (v) => num(v) }, { k: 'harga', judul: 'Harga', num: true, fmt: rp },
+        { k: 'subtotal', judul: 'Subtotal', num: true, fmt: rp }], baris, { kosong: 'Rincian barang belum masuk.' })}`,
+    aksi: [{ label: 'Tutup', kelas: 'primary' }],
+  });
 }
 
 // ---------------------------------------------------------------- Stok & stock opname
@@ -1267,7 +1356,7 @@ async function hAsisten(el) {
 }
 
 // ================================================================ Kerangka aplikasi
-const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, stok: hStok, opname: hOpname, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, pesanan: hPesanan, stok: hStok, opname: hOpname, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
 
 function tampilLogin(pesan = '') {
   $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>

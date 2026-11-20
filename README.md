@@ -60,7 +60,7 @@ Klik dua kali **`Jalankan DEMO.bat`**. Versi ini untuk latihan kasir dan mencoba
 
 PC Gudang / Mandiri mengirim data toko langsung ke **mother base** (database Supabase milik kantor) lewat internet. Kantor memakai aplikasi web mother base (penjualan, surat jalan Accurate, stok opname, master barang, pembelian, asisten AI). Kode dan cara pasang ada di folder [`motherbase/`](motherbase/README.md).
 
-- **Yang dikirim:** penjualan setiap tutup shift, penerimaan, mutasi, stok opname, transaksi mode darurat, daftar barang, dan stok 4 zona. Shift yang masih berjalan juga ikut, jadi omset hari ini sudah terlihat di kantor (sebaru kiriman terakhir).
+- **Yang dikirim:** penjualan setiap tutup shift, penerimaan, mutasi, stok opname, transaksi mode darurat, daftar barang, stok 4 zona, dan pesanan pelanggan (semua yang belum diambil, plus yang diambil / batal dalam 60 hari terakhir). Shift yang masih berjalan juga ikut, jadi omset hari ini sudah terlihat di kantor (sebaru kiriman terakhir).
 - **Jadwal kiriman:** sekali ±20 detik setelah aplikasi dibuka, lalu **tiap 3 jam** (hanya bila ada yang menunggu / berubah). **Tutup shift** langsung mengirim saat itu juga. Admin bisa menekan **Kirim Sekarang** kapan saja.
 - **Master barang** (barang & harga dari mother base) **tidak diambil berkala**: hanya **setiap buka shift** (di latar, kasir tidak menunggu, termasuk shift yang dibuka dari PC Kasir) bila daftar barang dikunci, atau manual lewat **Perbarui Daftar Barang** / **Ambil Master Barang**.
 - **Tanpa internet:** toko tetap jalan. Penjualan shift masuk antrean di `pos.db` dalam transaksi yang sama dengan tutup shift, dan dokumen ditandai terkirim hanya setelah mother base membalas. Pengiriman dicoba lagi otomatis tiap 3 jam (atau Kirim Sekarang); kiriman ulang tidak membuat data dobel.
@@ -140,6 +140,7 @@ Di layar Kasir, kursor selalu kembali ke kolom **scan barcode**. Kolom **Jumlah*
 - Menu **Pesanan Pelanggan** memiliki tab **Belum diambil**, Sudah diambil, Dibatalkan, dan Semua, plus kotak cari no. pesanan / nama / HP.
   - Tanggal ambil hari ini diberi tanda kuning, yang sudah lewat merah.
   - Angka merah di menu = jumlah pesanan yang waktunya diambil (hari ini / lewat).
+  - Pesanan ikut terkirim ke mother base (menu **Pesanan Pelanggan** di aplikasi kantor), termasuk nama dan No. HP pelanggan.
   - **Detail** menampilkan isi pesanan dan tombol **Cetak Bukti** (cetak ulang).
 - **Ambil:** pilih stok sumber, **Display Toko** atau **Gudang Utama**. Jumlah stok tiap barang di kedua zona ditampilkan. Kasir mengisi uang diterima untuk **sisa bayar** (total − deposit).
   - Dari Gudang Utama, stok dicatat sebagai mutasi `MT-…` "Pesanan PSN-… diambil pelanggan" ke Display Toko, lalu terjual.

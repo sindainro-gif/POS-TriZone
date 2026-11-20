@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -219,6 +219,34 @@ function fileAccurate() {
   assert.strictEqual(q("select max((jumlah->>'pembatalan')::int) from kiriman_log where kode_toko = 'TRP'"), '1');
   ok('batal nota: rincian (nota asal, alasan, peminta, Admin penyetuju) masuk mother base; BTL- bukan transaksi, tampil sebagai pembatalan');
 
+  // Pesanan pelanggan: dibuat, diambil, dibatalkan di Trizone → ikut snapshot → tersimpan di mother base
+  T.openShift({ cashier_name: 'Dewi' });
+  const besok = new Date(Date.now() + 31 * 3600e3).toISOString().slice(0, 10);
+  const ps1 = T.createOrder({ items: [{ sku: 'UJ-KESET', qty: 2 }, { sku: 'UJ-EMBER', qty: 1 }], customer_name: 'Ibu Ani', customer_phone: '081234', pickup_date: besok, deposit: 10000, notes: 'warna biru' });
+  const ps2 = T.createOrder({ items: [{ sku: 'UJ-KESET', qty: 1 }], customer_name: 'Pak Joko', pickup_date: besok });
+  const ambil = T.completeOrder({ order_no: ps2.order_no, zone: 'floor', cash_received: 50000, done_by: 'Dewi' });
+  const ps3 = T.createOrder({ items: [{ sku: 'UJ-EMBER', qty: 2 }], customer_name: 'Mbak Sri', pickup_date: besok, deposit: 5000 });
+  T.cancelOrder({ order_no: ps3.order_no, reason: 'Tidak jadi beli', deposit_action: 'kembali', approver_pin: '246810', requested_by: 'Dewi' });
+  await mb.kirim();
+  const pesanan = () => JSON.parse(q(`select json_agg(x order by x.no_pesanan) from public.laporan_pesanan(null, 'TRP') x`));
+  let ps = pesanan();
+  assert.deepStrictEqual(ps.map((p) => [p.no_pesanan, p.status]), [[ps1.order_no, 'baru'], [ps2.order_no, 'diambil'], [ps3.order_no, 'batal']]);
+  assert.deepStrictEqual([ps[0].nama_pelanggan, ps[0].hp, ps[0].catatan, ps[0].deposit, ps[0].sisa, ps[0].jumlah_barang, ps[0].lewat, ps[0].tanggal_ambil],
+    ['Ibu Ani', '081234', 'warna biru', 10000, ps1.total - 10000, 2, false, besok]);
+  assert.deepStrictEqual([ps[1].no_nota, ps[1].zona_ambil, ps[1].selesai_oleh, ps[1].sisa], [ambil.receipt.receipt_no, 'floor', 'Dewi', 0]);
+  assert.deepStrictEqual([ps[2].alasan_batal, ps[2].deposit_batal, ps[2].batal_disetujui_oleh], ['Tidak jadi beli', 'kembali', 'Bu Admin']);
+  assert.strictEqual(q(`select string_agg(sku || 'x' || qty::int, ',' order by baris_ke) from pesanan_toko_baris where no_pesanan = '${ps1.order_no}'`), 'UJ-KESETx2,UJ-EMBERx1');
+  // Kiriman ulang (force) tidak dobel; pesanan yang diambil belakangan ikut berubah
+  T.completeOrder({ order_no: ps1.order_no, zone: 'floor', cash_received: ps1.total, done_by: 'Dewi' });
+  await mb.kirim({ force: true });
+  ps = pesanan();
+  assert.deepStrictEqual(ps.map((p) => p.status), ['diambil', 'diambil', 'batal']);
+  assert.strictEqual(q(`select count(*) from pesanan_toko_baris where no_pesanan = '${ps1.order_no}'`), '2');
+  assert.strictEqual(q("select count(*) from public.laporan_pesanan('baru', 'TRP')"), '0');
+  T.archiveShift({ notes: 'tutup uji pesanan' });
+  await mb.kirim();
+  ok('pesanan pelanggan: baru / diambil / batal dengan deposit, nota, alasan & penyetuju, dan barangnya masuk mother base; kiriman ulang tidak dobel');
+
   // Surat jalan Accurate
   const imp = JSON.parse(q(`select public.import_surat_jalan(${lit(acc.payloadMotherBase(hasil, 'uji.xlsx'))})`));
   assert.strictEqual(imp.do_baru, 4);
@@ -273,7 +301,10 @@ function fileAccurate() {
   assert.throws(() => q("set role anon; select public.buat_kunci_toko('TRP')"), /permission denied/);
   q(`insert into principal (nama) values ('P'); insert into po (no_po, principal_id) values ('PO-1', 1)`);
   assert.throws(() => sebagai('00000000-0000-0000-0000-00000000000b', "update po set status='DISETUJUI'"), /Hanya owner/);
-  ok('anon hanya bisa memanggil RPC toko; pemilik toko lain tidak melihat data Tropodo; kunci tidak terbaca; hanya owner menyetujui PO');
+  assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000a', 'select count(*) from pesanan_toko'), '0');
+  assert.notStrictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from pesanan_toko'), '0');
+  assert.strictEqual(q('set role anon; select count(*) from pesanan_toko'), '0');
+  ok('anon hanya bisa memanggil RPC toko; pemilik toko lain tidak melihat data Tropodo (termasuk pesanan); kunci tidak terbaca; hanya owner menyetujui PO');
 
   // Import master barang dari Excel: dibaca seperti di browser, diperiksa & disimpan oleh import_produk
   const IB = require('../web/lib/import-barang');
