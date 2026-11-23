@@ -77,7 +77,7 @@ async function buatDatabase(dbUrl) {
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
     'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql',
-    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/migrations/20261120000009_minta_update.sql', 'supabase/migrations/20261122000010_opname_kantor.sql', 'supabase/migrations/20261123000011_riwayat_stok.sql', 'supabase/migrations/20261123000012_dokumen_batal.sql', 'supabase/migrations/20261123000013_kata_sandi.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/migrations/20261120000009_minta_update.sql', 'supabase/migrations/20261122000010_opname_kantor.sql', 'supabase/migrations/20261123000011_riwayat_stok.sql', 'supabase/migrations/20261123000012_dokumen_batal.sql', 'supabase/migrations/20261123000013_kata_sandi.sql', 'supabase/migrations/20261123000014_laporan_mutasi.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;

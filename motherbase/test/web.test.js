@@ -343,6 +343,38 @@ function fileAccurate() {
     await page.waitForFunction(() => /update terakhir toko/.test(document.querySelector('#okStokPer').textContent));
     ok('opname dari kantor: tarik stok, template per kategori (stok Coly & isi), upload (kode salah ditahan), kirim, toko menerapkan dengan patokan, review SO otomatis, kirim ulang ditolak, stok per jam yang dipilih');
 
+    // Laporan → Mutasi Item (lihat & unduh Excel)
+    await buka('laporan');
+    await page.selectOption('#lmToko', 'TRP');
+    await page.fill('#lmDari', '2000-01-01');
+    await page.click('#lmLihat');
+    await page.waitForSelector('#lmRingkas');
+    const barisMutasi = await page.$$eval('#lmIsi tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+    const emberMutasi = barisMutasi.find((r) => r[0] === 'PLJ-001');
+    const pEmber = trp.svc.getProduct('PLJ-001');
+    assert.strictEqual(emberMutasi[6], String(pEmber.floor_stock + pEmber.warehouse_stock + pEmber.damaged_stock + pEmber.shopee_stock), emberMutasi.join('|'));
+    assert.strictEqual(barisMutasi[barisMutasi.length - 1][1], 'Total');
+    await shot('03f-laporan-mutasi-item');
+    const [xlsMutasi] = await Promise.all([page.waitForEvent('download'), page.click('#lmUnduh')]);
+    assert.match(xlsMutasi.suggestedFilename(), /^Mutasi_Item_TRP_2000-01-01_\d{4}-\d\d-\d\d\.xlsx$/);
+    const bukuMutasi = XLSX.readFile(await xlsMutasi.path());
+    assert.deepStrictEqual(bukuMutasi.SheetNames, ['TRP']);
+    const aoaMutasi = XLSX.utils.sheet_to_json(bukuMutasi.Sheets.TRP, { header: 1, defval: '' });
+    assert.strictEqual(aoaMutasi[0][0], 'Laporan Mutasi Item');
+    assert.deepStrictEqual(aoaMutasi[6], ['Kode Item', 'Nama Item', 'Satuan', 'Awal', 'Masuk', 'Keluar', 'Akhir']);
+    const isiMutasi = aoaMutasi.slice(7, -1);
+    const totalMutasi = aoaMutasi[aoaMutasi.length - 1];
+    assert.strictEqual(totalMutasi[0], 'Total');
+    assert.strictEqual(isiMutasi.length, barisMutasi.length - 1);
+    assert.strictEqual(totalMutasi[6], isiMutasi.reduce((a, r) => a + r[6], 0));
+    assert.ok(isiMutasi.every((r) => r[3] + r[4] - r[5] === r[6]), 'Awal + Masuk − Keluar = Akhir');
+    await page.selectOption('#lmToko', '');
+    const [xlsSemua] = await Promise.all([page.waitForEvent('download'), page.click('#lmUnduh')]);
+    assert.match(xlsSemua.suggestedFilename(), /^Mutasi_Item_Semua_/);
+    const sheetSemua = XLSX.readFile(await xlsSemua.path()).SheetNames;
+    assert.ok(sheetSemua.includes('TRP') && sheetSemua.includes('MLG') && sheetSemua.length > 2, sheetSemua.join(','));
+    ok('laporan: menu Laporan, Mutasi Item per toko (akhir = stok Trizone, total), unduh Excel satu toko & semua toko (sheet per toko)');
+
     await buka('stok');
     assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat', 'dok']);
     await page.click('#stTab [data-t="cari"]');
@@ -664,7 +696,7 @@ function fileAccurate() {
     await page.waitForSelector('#lgEmail');
     await masuk('tropodo@contoh.local', 'toko123');
     const menu = await page.$$eval('.nav a', (x) => x.map((a) => a.dataset.h));
-    assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'pembatalan', 'pesanan', 'stok', 'asisten']);
+    assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'pembatalan', 'pesanan', 'stok', 'laporan', 'asisten']);
     await page.waitForSelector('#rkToko tbody tr');
     assert.deepStrictEqual(await page.$$eval('#rkToko tbody tr td:first-child b', (x) => x.map((e) => e.textContent)), ['TRP']);
     await page.goto(`${BASE}/#pembelian`);

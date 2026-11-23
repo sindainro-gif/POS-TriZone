@@ -220,6 +220,7 @@ const HALAMAN = [
   { id: 'pesanan', judul: 'Pesanan Pelanggan', ikon: '⧉', untuk: 'semua' },
   { id: 'stok', judul: 'Stok', ikon: '▦', untuk: 'semua' },
   { id: 'opname', judul: 'Stock Opname', ikon: '▣', untuk: 'kantor' },
+  { id: 'laporan', judul: 'Laporan', ikon: '⇩', untuk: 'semua' },
   { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
   { id: 'pembelian', judul: 'Pembelian', ikon: '⊕', untuk: 'kantor' },
   { id: 'barang', judul: 'Master Barang', ikon: '☰', untuk: 'kantor' },
@@ -1075,6 +1076,67 @@ async function halamanStok(el, jenis) {
   await tampil();
 }
 
+// ---------------------------------------------------------------- Laporan (unduh Excel)
+const GUDANG_LAPORAN = [['', 'Semua zona'], ['floor', 'Display Toko'], ['warehouse', 'Gudang Utama'], ['damaged', 'Gudang BS'], ['shopee', 'Gudang Shopee']];
+const KOLOM_MUTASI = [['kode', 'Kode Item'], ['nama', 'Nama Item'], ['satuan', 'Satuan'], ['awal', 'Awal'], ['masuk', 'Masuk'], ['keluar', 'Keluar'], ['akhir', 'Akhir']];
+
+async function hLaporan(el) {
+  const f = S.laporanMutasi || (S.laporanMutasi = { toko: S.toko.length === 1 ? S.toko[0].kode : '', zona: '', dari: `${hariIni().slice(0, 8)}01`, sampai: hariIni() });
+  el.innerHTML = `${head('Laporan', 'Pilih laporan, atur toko & periode, lalu unduh dalam Excel.')}
+    <div class="card"><div class="card-head"><div><h2>Mutasi Item</h2>
+      <div class="muted small">Stok awal, masuk, keluar, dan akhir tiap barang (Biji) dalam periode, seperti laporan mutasi item Accurate.
+      Masuk / keluar: penerimaan, mutasi antar gudang (zona) dan Shopee terjual, penjualan &amp; pembatalan nota, selisih stok opname;
+      mutasi antar zona yang sama-sama dipilih tidak dihitung. Stok akhir dihitung dari kiriman terakhir toko.</div></div></div>
+      <div class="row" style="flex-wrap:wrap">${pilihToko('lmToko', f.toko)}
+        <select id="lmZona" aria-label="Gudang">${GUDANG_LAPORAN.map(([v, l]) => `<option value="${v}" ${v === f.zona ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <label class="row small" style="gap:6px">Dari<input type="date" id="lmDari" value="${esc(f.dari)}"></label>
+        <label class="row small" style="gap:6px">Sampai<input type="date" id="lmSampai" value="${esc(f.sampai)}"></label>
+        <button class="btn sm" id="lmLihat">Lihat</button><button class="btn sm primary" id="lmUnduh">Unduh Excel</button></div>
+      <div id="lmIsi" style="margin-top:12px"></div></div>`;
+  const isi = $('#lmIsi', el);
+  const labelGudang = () => (GUDANG_LAPORAN.find(([v]) => v === f.zona) || GUDANG_LAPORAN[0])[1];
+  function baca() {
+    Object.assign(f, { toko: $('#lmToko', el).value, zona: $('#lmZona', el).value, dari: $('#lmDari', el).value, sampai: $('#lmSampai', el).value });
+    if (!f.dari || !f.sampai || f.sampai < f.dari) throw new Error('Periode tidak valid: tanggal Dari harus sebelum atau sama dengan Sampai.');
+  }
+  const ambil = (kode) => rpc('laporan_mutasi_item', { p_kode_toko: kode, p_dari: f.dari, p_sampai: f.sampai, p_zona: f.zona || null });
+  const jumlah = (rows) => Object.fromEntries(['awal', 'masuk', 'keluar', 'akhir'].map((k) => [k, rows.reduce((a, r) => a + Number(r[k]), 0)]));
+
+  $('#lmLihat', el).addEventListener('click', (e) => sibuk(e.currentTarget, async () => {
+    baca();
+    if (!f.toko) { isi.innerHTML = '<div class="kosong">Pilih satu toko untuk melihat di layar. Unduh Excel dengan Semua toko = satu sheet per toko.</div>'; return; }
+    isi.innerHTML = '<div class="kosong">Memuat…</div>';
+    const r = await ambil(f.toko);
+    const t = jumlah(r.baris);
+    isi.innerHTML = `<div class="muted small" id="lmRingkas" style="margin-bottom:8px">${esc(f.toko)} · ${esc(namaToko(f.toko))} · ${esc(labelGudang())} ·
+        ${esc(fmtTgl(f.dari))} s/d ${esc(fmtTgl(f.sampai))} · ${num(r.baris.length)} barang · stok per kiriman toko ${esc(r.stok_per ? fmtWaktu(r.stok_per) : '-')}</div>
+      ${tabel(KOLOM_MUTASI.map(([k, judul]) => ({ k, judul, num: ['awal', 'masuk', 'keluar', 'akhir'].includes(k),
+        fmt: ['awal', 'masuk', 'keluar', 'akhir'].includes(k) ? (v) => num(v) : k === 'kode' ? (v) => `<span class="mono">${esc(v)}</span>` : undefined })),
+      [...r.baris, { kode: '', nama: 'Total', satuan: '', ...t }], { kosong: 'Tidak ada mutasi atau stok pada periode ini.' })}`;
+  }));
+
+  $('#lmUnduh', el).addEventListener('click', (e) => sibuk(e.currentTarget, async () => {
+    baca();
+    const kodes = f.toko ? [f.toko] : S.toko.filter((t) => t.aktif).map((t) => t.kode);
+    const wb = XLSX.utils.book_new();
+    for (const kode of kodes) {
+      const r = await ambil(kode);
+      if (!r.baris.length && !f.toko) continue;
+      const t = jumlah(r.baris);
+      const aoa = [['Laporan Mutasi Item'], ['Toko', `${kode} · ${namaToko(kode)}`], ['Gudang', labelGudang()],
+        ['Periode', `${fmtTgl(f.dari)} s/d ${fmtTgl(f.sampai)}`], ['Stok per', r.stok_per ? `kiriman toko ${fmtWaktu(r.stok_per)}` : '-'], [],
+        KOLOM_MUTASI.map(([, judul]) => judul),
+        ...r.baris.map((b) => [b.kode, b.nama, b.satuan, Number(b.awal), Number(b.masuk), Number(b.keluar), Number(b.akhir)]),
+        ['Total', '', '', t.awal, t.masuk, t.keluar, t.akhir]];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 14 }, { wch: 40 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }];
+      XLSX.utils.book_append_sheet(wb, ws, kode);
+    }
+    if (!wb.SheetNames.length) { toast('Tidak ada data mutasi untuk periode ini.', 'bad'); return; }
+    XLSX.writeFile(wb, `Mutasi_Item_${f.toko || 'Semua'}_${f.dari}_${f.sampai}.xlsx`);
+  }));
+}
+
 // ---------------------------------------------------------------- Surat jalan (Accurate)
 async function hKiriman(el) {
   el.innerHTML = `${head('Surat Jalan', 'Upload laporan Accurate <b>Rincian Pengiriman Pesanan</b>, kirim file import penerimaan ke toko, lalu pantau pencocokannya.')}
@@ -1782,7 +1844,7 @@ async function hAsisten(el) {
 }
 
 // ================================================================ Kerangka aplikasi
-const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, pesanan: hPesanan, stok: hStok, opname: hOpname, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, pesanan: hPesanan, stok: hStok, opname: hOpname, laporan: hLaporan, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
 
 function tampilLogin(pesan = '') {
   $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
