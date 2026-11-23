@@ -1314,7 +1314,8 @@ views.receiving = (() => {
     e.preventDefault();
     next();
   });
-  enterTo('#rcRef', () => $('#rcNotes').focus());
+  enterTo('#rcRef', () => $('#rcDate').focus());
+  enterTo('#rcDate', () => $('#rcNotes').focus());
   enterTo('#rcNotes', () => $('#rcPicker').focus());
   enterTo('#rcQty', () => $('#rcUnit').focus());
   enterTo('#rcUnit', () => $('#rcDest').focus());
@@ -1346,7 +1347,7 @@ views.receiving = (() => {
 
   function reset() {
     items.length = 0;
-    ['#rcRef', '#rcNotes', '#rcPicker'].forEach((s) => { $(s).value = ''; });
+    ['#rcRef', '#rcDate', '#rcNotes', '#rcPicker'].forEach((s) => { $(s).value = ''; });
     picked = null;
     $('#rcPicked').textContent = '';
     render();
@@ -1358,13 +1359,16 @@ views.receiving = (() => {
 
   $('#rcSave').addEventListener('click', async () => {
     if (!$('#rcRef').value.trim()) { toast('No. Surat Jalan / Nota wajib diisi.', 'err'); $('#rcRef').focus(); return; }
+    const rcDate = $('#rcDate').value;
+    if (!rcDate) { sound('err'); toast('Tanggal terima barang wajib diisi.', 'err'); $('#rcDate').focus(); return; }
+    if (rcDate > ymd()) { sound('err'); toast('Tanggal terima tidak boleh setelah hari ini.', 'err'); $('#rcDate').focus(); return; }
     if (!items.length) { toast('Tambahkan minimal satu barang.', 'err'); return; }
     const total = items.reduce((s, i) => s + pieces(i), 0);
     const ok = await confirmDialog('Simpan Penerimaan', `Simpan penerimaan <b>${esc($('#rcRef').value)}</b> berisi ${items.length} baris (${num(total)} Biji)? Stok akan langsung bertambah.`, { okLabel: 'Simpan' });
     if (!ok) return;
     try {
       const r = await api('receptions:create', {
-        reference_no: $('#rcRef').value, notes: $('#rcNotes').value,
+        reference_no: $('#rcRef').value, notes: $('#rcNotes').value, received_date: rcDate,
         items: items.map((i) => ({ sku: i.product.sku, qty: i.qty, pack_type: i.pack_type, destination: i.destination })),
       });
       toast(`Penerimaan ${r.reference_no} tersimpan (${num(r.total_items_count)} Biji).`, 'ok');

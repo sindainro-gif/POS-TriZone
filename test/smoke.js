@@ -386,6 +386,7 @@ app.on('browser-window-created', (_e, win) => {
       const flow = [];
       await run(`document.querySelector('#rcRef').value = 'SJ-ENTER'`);
       flow.push(await enterOn('#rcRef'));
+      flow.push(await enterOn('#rcDate'));
       flow.push(await enterOn('#rcNotes'));
       await run(`document.querySelector('#rcPicker').value = ${JSON.stringify(svc.getProduct('SBN-005').barcode)}`);
       await enterOn('#rcPicker');
@@ -399,13 +400,29 @@ app.on('browser-window-created', (_e, win) => {
       flow.push(await enterOn('#rcDest'));
       const enterItems = await run(`document.querySelector('#rcItems').innerText`);
       console.log('Enter di form penerimaan:', flow.join(' → '), '·', enterItems.replace(/\s+/g, ' '));
-      if (flow.join(',') !== 'rcNotes,rcPicker,rcQty,rcUnit,rcDest,rcPicker' || !/Sabun Mandi 85g/.test(enterItems) || !/Display Toko/.test(enterItems) || !/\b3\b/.test(enterItems)) {
+      if (flow.join(',') !== 'rcDate,rcNotes,rcPicker,rcQty,rcUnit,rcDest,rcPicker' || !/Sabun Mandi 85g/.test(enterItems) || !/Display Toko/.test(enterItems) || !/\b3\b/.test(enterItems)) {
         throw new Error('Enter di form Penerimaan tidak berpindah kolom / tidak menambah barang');
       }
       await shot('05b-penerimaan-enter');
+      // Tanggal Terima wajib: tanpa tanggal ditolak; dengan tanggal kemarin → tersimpan bertanggal kemarin
+      await run(`document.querySelector('#rcSave').click()`);
+      await wait(400);
+      const noDate = await run(`({ toast: [...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | '), focus: document.activeElement.id, modal: document.querySelectorAll('#modalRoot .modal').length })`);
+      if (!/Tanggal terima barang wajib/.test(noDate.toast) || noDate.focus !== 'rcDate' || noDate.modal) throw new Error('penerimaan tanpa tanggal seharusnya ditolak');
+      const kemarin = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+      await run(`document.querySelector('#rcDate').value = '${kemarin}'`);
+      await run(`document.querySelector('#rcSave').click()`);
+      await wait(400);
+      await run(`document.querySelector('#modalRoot .modal-foot .btn.primary').click()`); // konfirmasi Simpan
+      await wait(900);
+      await run(`(() => { const b = [...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((x) => x.textContent === 'Batal'); if (b) b.click(); })()`); // tidak cetak barcode
+      await wait(300);
+      const rcEnter = svc.listReceptions({ q: 'SJ-ENTER' })[0];
+      console.log('penerimaan bertanggal:', rcEnter && rcEnter.received_at, rcEnter && rcEnter.entered_at);
+      if (!rcEnter || !rcEnter.received_at.startsWith(kemarin) || !rcEnter.entered_at) throw new Error('tanggal terima tidak tersimpan');
       await run(`(() => { document.querySelector('#rcDest').value = 'warehouse'; document.querySelector('#rcUnit').value = 'Dus'; document.querySelector('#rcReset').click(); })()`);
       await wait(400);
-      await run(`document.querySelector('#modalRoot .modal-foot .btn.danger').click()`); // konfirmasi Ya, Batalkan
+      await run(`(() => { const b = document.querySelector('#modalRoot .modal-foot .btn.danger'); if (b) b.click(); })()`); // konfirmasi Ya, Batalkan (bila form masih berisi)
       if (await run(`document.querySelector('#modalRoot').children.length + document.querySelectorAll('#rcItems [data-i]').length`)) throw new Error('form penerimaan tidak kosong setelah Batal');
       await wait(300);
 

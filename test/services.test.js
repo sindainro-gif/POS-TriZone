@@ -212,8 +212,14 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     d2.tx(() => d2.run("UPDATE stock_transfer_docs SET created_at = '2020-01-01 10:00:00' WHERE id = ?", [old.id]));
     throwsMsg(() => s.cancelTransferDoc({ id: old.id, ...req() }), /7 hari terakhir/);
     const oldRc = s.createReception({ reference_no: 'SJ-LAMA', items: [{ sku: 'BT-A', qty: 1, destination: 'floor' }] });
-    d2.tx(() => d2.run("UPDATE stock_receptions SET received_at = '2020-01-01 10:00:00' WHERE id = ?", [oldRc.id]));
+    d2.tx(() => d2.run("UPDATE stock_receptions SET received_at = '2020-01-01 10:00:00', entered_at = '2020-01-01 10:00:00' WHERE id = ?", [oldRc.id]));
     throwsMsg(() => s.cancelReception({ id: oldRc.id, ...req() }), /7 hari terakhir/);
+    // Tanggal terima mundur: received_at = tanggal itu (jam saat dicatat); batas 7 hari dihitung dari waktu dicatat
+    const back = s.createReception({ reference_no: 'SJ-MUNDUR', received_date: '2026-01-05', items: [{ sku: 'BT-A', qty: 1, destination: 'floor' }] });
+    assert.ok(back.received_at.startsWith('2026-01-05 ') && back.entered_at.slice(0, 10) === localNow().slice(0, 10));
+    assert.ok(!back.cancel_block);
+    throwsMsg(() => s.createReception({ reference_no: 'SJ-NANTI', received_date: '2999-01-01', items: [{ sku: 'BT-A', qty: 1, destination: 'floor' }] }), /setelah hari ini/);
+    throwsMsg(() => s.createReception({ reference_no: 'SJ-SALAH', received_date: '05-01-2026', items: [{ sku: 'BT-A', qty: 1, destination: 'floor' }] }), /Tanggal terima tidak valid/);
     // Dokumen otomatis (pesanan / batal nota) tidak bisa dibatalkan di sini
     const auto = s.createTransferDoc({ from_zone: 'floor', to_zone: 'damaged', reason: 'Pesanan PSN-20261123-0001 diambil pelanggan', items: [{ sku: 'BT-A', qty: 1 }] });
     throwsMsg(() => s.cancelTransferDoc({ id: auto.id, ...req() }), /pesanan diambil/);

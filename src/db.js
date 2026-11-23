@@ -328,7 +328,9 @@ const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfe
   ['stock_transfers', 'pack_type', "TEXT DEFAULT 'Biji'"], ['stock_transfers', 'pack_qty', 'INTEGER'],
   // Batal dokumen mutasi / penerimaan (PIN Admin / PIN Pembatalan): dokumen tetap ada, stok dikembalikan
   ...['stock_transfer_docs', 'stock_receptions'].flatMap((t) => [[t, 'cancelled_at', 'DATETIME'], [t, 'cancel_reason', 'TEXT'],
-    [t, 'cancelled_by', 'TEXT'], [t, 'cancel_approved_by', 'TEXT']])];
+    [t, 'cancelled_by', 'TEXT'], [t, 'cancel_approved_by', 'TEXT']]),
+  // Penerimaan: received_at = tanggal barang diterima (diisi di form), entered_at = waktu dicatat di aplikasi
+  ['stock_receptions', 'entered_at', 'DATETIME']];
 
 // Tabel lama punya CHECK zona tanpa Gudang Shopee. SQLite tidak bisa mengubah CHECK,
 // jadi tabelnya dibangun ulang dari definisi lamanya (kolom tambahan ikut) dengan daftar zona baru.

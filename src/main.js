@@ -1036,7 +1036,10 @@ const handlers = {
   'transfers:cancel': (a = {}) => withPinDelay(() => svc.cancelTransferDoc({ ...a, requested_by: session.name })),
   'receptions:cancel': (a = {}) => withPinDelay(() => svc.cancelReception({ ...a, requested_by: session.name })),
 
-  'receptions:create': (a) => svc.createReception(a),
+  'receptions:create': (a = {}) => {
+    if (!String(a.received_date || '').trim()) throw userError('Tanggal terima barang wajib diisi.');
+    return svc.createReception(a);
+  },
   'receptions:list': (a) => svc.listReceptions(a),
   'receptions:get': (a) => svc.getReception(a),
 

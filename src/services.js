@@ -1077,7 +1077,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   function receptionCancelBlock(r) {
     if (!r) return 'Dokumen penerimaan tidak ditemukan.';
     if (r.cancelled_at) return 'Penerimaan ini sudah dibatalkan.';
-    if (String(r.received_at || '') < cancelCutoff()) return `Hanya penerimaan ${CANCEL_DAYS} hari terakhir yang bisa dibatalkan.`;
+    if (String(r.entered_at || r.received_at || '') < cancelCutoff()) return `Hanya penerimaan ${CANCEL_DAYS} hari terakhir yang bisa dibatalkan.`;
     return null;
   }
   function cancelArgs(reason, approver_pin, requested_by) {
@@ -1307,8 +1307,19 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   // ---------------------------------------------------------------- Penerimaan
-  function createReception({ reference_no, supplier_name, notes, items = [] } = {}) {
+  // received_date (YYYY-MM-DD, opsional): tanggal barang diterima; jamnya = jam saat dicatat. Kosong = sekarang.
+  function receivedAt(received_date) {
+    const now = localNow();
+    const d = String(received_date || '').trim();
+    if (!d) return now;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(new Date(`${d}T00:00:00Z`).getTime())) fail('Tanggal terima tidak valid.');
+    if (d > now.slice(0, 10)) fail('Tanggal terima tidak boleh setelah hari ini.');
+    return `${d} ${now.slice(11)}`;
+  }
+
+  function createReception({ reference_no, supplier_name, notes, items = [], received_date } = {}) {
     const ref = toStr(reference_no, 'No. Surat Jalan / Nota', { required: true, max: 60 });
+    const at = receivedAt(received_date);
     if (db.get('SELECT 1 FROM stock_receptions WHERE reference_no = ?', [ref])) fail(`No. Surat Jalan "${ref}" sudah pernah dicatat.`);
     if (!Array.isArray(items) || !items.length) fail('Tambahkan minimal satu barang.');
     const lines = items.map((it, idx) => {
@@ -1321,8 +1332,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     });
     const total = lines.reduce((s, l) => s + l.pieces, 0);
     const id = db.tx(() => {
-      db.run('INSERT INTO stock_receptions(reference_no, supplier_name, notes, received_at, total_items_count) VALUES(?, ?, ?, ?, ?)', [
-        ref, toStr(supplier_name, 'Nama supplier', { max: 100 }), toStr(notes, 'Catatan', { max: 500 }), localNow(), total,
+      db.run('INSERT INTO stock_receptions(reference_no, supplier_name, notes, received_at, total_items_count, entered_at) VALUES(?, ?, ?, ?, ?, ?)', [
+        ref, toStr(supplier_name, 'Nama supplier', { max: 100 }), toStr(notes, 'Catatan', { max: 500 }), at, total, localNow(),
       ]);
       const rid = db.lastId();
       for (const l of lines) {
