@@ -578,6 +578,78 @@ function fileAccurate() {
     await toastCocok(/disimpan/);
     ok('pengguna: owner mengubah nama pengguna');
 
+    // Tambah pengguna dengan kata sandi sementara → login pertama wajib membuat kata sandi sendiri
+    const loginSebagai = async (email, sandi) => {
+      await page.fill('#lgEmail', email);
+      await page.fill('#lgPass', sandi);
+      await page.click('#lgBtn');
+    };
+    const keluar = async () => { await page.click('#btnKeluar'); await page.waitForSelector('#lgEmail'); };
+    await page.click('#pgTambah');
+    assert.match(await page.inputValue('#uSandi'), /^[a-z2-9]{10}$/);
+    await page.fill('#uEmail', 'Gudang.Baru@contoh.local');
+    await page.fill('#uNama', 'Gudang Baru');
+    await page.selectOption('#uPeran', 'gudang');
+    await page.fill('#uSandi', 'sementara123');
+    await page.click('.modal-kaki .btn.primary');
+    await page.waitForSelector('#infoLogin');
+    const info = await page.textContent('#infoLogin');
+    assert.match(info, /Email: gudang\.baru@contoh\.local/);
+    assert.match(info, /Kata sandi sementara: sementara123/);
+    await shot('09c-pengguna-baru');
+    await page.click('.modal-kaki .btn.primary');
+    await page.waitForFunction(() => /gudang\.baru@contoh\.local[\s\S]*Belum ganti sandi/.test(document.querySelector('#pgDaftar').textContent));
+    await page.click('#pgTambah');
+    await page.fill('#uEmail', 'gudang.baru@contoh.local');
+    await page.fill('#uNama', 'Dobel');
+    await page.click('.modal-kaki .btn.primary');
+    await toastCocok(/sudah terdaftar/);
+    await page.click('.modal .tutup');
+    assert.strictEqual((await db("select count(*)::int n from auth.users where email = 'gudang.baru@contoh.local'"))[0].n, 1);
+
+    await keluar();
+    await loginSebagai('gudang.baru@contoh.local', 'sementara123');
+    await page.waitForSelector('#sbForm');
+    await shot('09d-buat-kata-sandi');
+    await page.fill('#sbBaru1', 'rahasia-baru-1');
+    await page.fill('#sbBaru2', 'beda-sekali');
+    await page.click('#sbBtn');
+    await page.waitForFunction(() => /tidak sama/.test(document.querySelector('#sbErr').textContent));
+    await page.fill('#sbBaru2', 'rahasia-baru-1');
+    await page.click('#sbBtn');
+    await page.waitForSelector('#isi .page-head');
+    assert.ok((await page.$$eval('.nav a', (x) => x.map((a) => a.dataset.h))).includes('stok'));
+    await keluar();
+    await loginSebagai('gudang.baru@contoh.local', 'sementara123');
+    await page.waitForFunction(() => /salah/.test(document.querySelector('#lgErr').textContent));
+    await masuk('gudang.baru@contoh.local', 'rahasia-baru-1');
+    await page.click('#btnSandi');
+    await page.fill('#gsBaru1', 'rahasia-baru-2');
+    await page.fill('#gsBaru2', 'rahasia-baru-2');
+    await page.click('.modal-kaki .btn.primary');
+    await toastCocok(/Kata sandi diganti/);
+    await keluar();
+    await masuk('gudang.baru@contoh.local', 'rahasia-baru-2');
+    await keluar();
+
+    // Owner mereset kata sandi yang lupa → wajib membuat kata sandi lagi
+    await masuk('owner@contoh.local', 'owner123');
+    await buka('pengguna');
+    await page.click('#pgDaftar tr.klik:has-text("gudang.baru@contoh.local")');
+    await page.click('.modal-kaki button:has-text("Reset kata sandi")');
+    await page.fill('#rsSandi', 'reset12345');
+    await page.click('.modal-kaki .btn.danger');
+    await page.waitForSelector('#infoLogin');
+    assert.match(await page.textContent('#infoLogin'), /Kata sandi sementara: reset12345/);
+    await page.click('.modal-kaki .btn.primary');
+    await keluar();
+    await loginSebagai('gudang.baru@contoh.local', 'reset12345');
+    await page.waitForSelector('#sbForm');
+    await page.click('#sbKeluar');
+    await page.waitForSelector('#lgEmail');
+    await masuk('owner@contoh.local', 'owner123');
+    ok('pengguna: owner menambah pengguna dengan kata sandi sementara (sekali tampil), email dobel ditolak, login pertama wajib membuat kata sandi, ganti kata sandi, reset oleh owner');
+
     await page.setViewportSize({ width: 390, height: 844 });
     await buka('ringkasan').catch(async () => { await page.click('#btnMenu'); await buka('ringkasan'); });
     await tunggu(500);
@@ -602,7 +674,7 @@ function fileAccurate() {
     ok('pemilik toko: menu terbatas, hanya data TRP, halaman kantor tidak bisa dibuka');
 
     // Login dengan kata sandi salah memang dibalas 400 (disengaja di awal uji)
-    const nyata = kesalahan.filter((k) => !/favicon/.test(k) && !/invalid_credentials/.test(k) && !/status of 400/.test(k) && !/sudah diopname kantor/.test(k));
+    const nyata = kesalahan.filter((k) => !/favicon/.test(k) && !/invalid_credentials/.test(k) && !/status of 400/.test(k) && !/sudah diopname kantor/.test(k) && !/sudah terdaftar|status of 409/.test(k));
     assert.deepStrictEqual(nyata, [], `error di konsol browser:\n${nyata.join('\n')}`);
     ok('tidak ada error JavaScript di konsol browser');
     console.log(`\n${lulus} uji browser lulus · tangkapan layar: ${OUT}`);

@@ -44,7 +44,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 | Master Barang | kantor | Barcode, harga jual, satuan masuk (Coly / Biji) & isi 1 Coly; harga beli / pricelist; markup (owner); import Excel dengan pratinjau |
 | Toko | kantor | Koneksi tiap toko, buat / ganti kunci toko (owner), pemetaan pelanggan Accurate |
 | Asisten AI | semua | Tanya jawab data dengan Claude; percakapan tersimpan per pengguna |
-| Pengguna | owner | Peran: owner, admin kantor, gudang, purchasing, pemilik toko (hanya tokonya) |
+| Pengguna | owner | Tambah pengguna (email, nama, peran, kata sandi sementara — ditampilkan sekali), ubah peran / nonaktifkan, reset kata sandi. Login pertama & setelah reset wajib membuat kata sandi sendiri; semua pengguna bisa **Kata sandi** (ganti) di menu samping. Peran: owner, admin kantor, gudang, purchasing, pemilik toko (hanya tokonya) |
 
 Hak akses dijaga di database (Row Level Security), bukan hanya di menu: pemilik toko hanya melihat
 data tokonya, juga saat bertanya ke asisten AI.
@@ -73,14 +73,14 @@ base sudah bersih; nota `BTL-` tidak dihitung sebagai transaksi dan tampil sebag
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
    `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`,
    `migrations/20261119000004_satuan_masuk.sql`, `migrations/20261119000005_tanpa_principal.sql`,
-   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261120000007_filter_stok.sql`, `migrations/20261120000008_pesanan_toko.sql`, `migrations/20261120000009_minta_update.sql`, `migrations/20261122000010_opname_kantor.sql`, `migrations/20261123000011_riwayat_stok.sql`, `migrations/20261123000012_dokumen_batal.sql`, lalu `seed.sql`
+   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261120000007_filter_stok.sql`, `migrations/20261120000008_pesanan_toko.sql`, `migrations/20261120000009_minta_update.sql`, `migrations/20261122000010_opname_kantor.sql`, `migrations/20261123000011_riwayat_stok.sql`, `migrations/20261123000012_dokumen_batal.sql`, `migrations/20261123000013_kata_sandi.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`
    Nanti bisa diubah owner di Master Barang → Markup.
 4. **Owner pertama:** Authentication → Users → Add user (email + kata sandi), lalu di SQL Editor:
    `select jadikan_owner('email@owner', 'Nama Owner');`
-   Pengguna lain: buat akunnya di Authentication → Add user, lalu atur perannya di menu **Pengguna**.
+   Pengguna lain: menu **Pengguna → Tambah pengguna** di homebase (perlu Edge Function `pengguna`, lihat langkah 2).
 5. Authentication → Providers → Email: matikan **Allow new users to sign up** supaya hanya akun
    yang dibuat owner yang bisa login.
 
@@ -98,6 +98,7 @@ supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 
 ```bash
 supabase functions deploy asisten
+supabase functions deploy pengguna   # Tambah pengguna & reset kata sandi (memakai service role otomatis)
 ```
 
 Opsional: secret `ASISTEN_ALLOWED_ORIGIN=https://alamat-aplikasi-anda` untuk membatasi asal
@@ -112,7 +113,9 @@ permintaan.
    layar login. Semua data ada di Supabase dan dilindungi login + Row Level Security (kantor melihat semua
    toko, pemilik toko hanya tokonya). Isi `config.js` (alamat project & anon key) memang publik.
    - Matikan pendaftaran umum: Supabase → Authentication → Sign In / Providers → **Allow new users to sign up**
-     = off. Akun baru dibuat owner: Authentication → **Add user**, lalu atur nama & peran di menu **Pengguna**.
+     = off. Akun baru dibuat owner di menu **Pengguna → Tambah pengguna** (email, nama, peran / toko, kata sandi
+     sementara). Yang perlu diminta dari orangnya hanya email, nama lengkap, dan peran / tokonya; kata sandi
+     sementara diberikan owner secara pribadi dan wajib diganti saat login pertama.
      Orang yang keluar: nonaktifkan di menu Pengguna.
    - `web/_headers` & `web/robots.txt`: tidak diindeks mesin pencari, tidak bisa disematkan di situs lain.
    - Netlify: **Visitor access → Team login** cukup untuk deploy non-production; production dibiarkan terbuka
@@ -201,6 +204,7 @@ Trizone memanggil RPC dengan anon key + kode toko + kunci toko. Kunci disimpan s
 
 ```bash
 cd motherbase && node test/asisten.test.js
+node test/pengguna.test.js
 ```
 
 Dengan PostgreSQL lokal (database yang disebut dibuat ulang):

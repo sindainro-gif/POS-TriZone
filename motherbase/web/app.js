@@ -1531,33 +1531,135 @@ async function hToko(el) {
 }
 
 // ---------------------------------------------------------------- Pengguna
+// ---------------------------------------------------------------- Kata sandi & pengguna
+// Kata sandi sementara: 10 huruf/angka yang tidak mirip satu sama lain (tanpa l, 1, o, 0)
+function acakSandi() {
+  const abjad = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const n = new Uint32Array(10);
+  crypto.getRandomValues(n);
+  return [...n].map((x) => abjad[x % abjad.length]).join('');
+}
+// Edge Function dengan pesan galat yang jelas
+async function panggilFungsi(nama, body) {
+  const { data, error } = await sb.functions.invoke(nama, { body });
+  if (error) {
+    let msg = error.message;
+    try { const j = await error.context.json(); msg = j.error || msg; } catch (_) { /* bukan JSON */ }
+    throw new Error(msg);
+  }
+  return data;
+}
+const formSandiHtml = (id) => `<label class="f">Kata sandi baru<input id="${id}1" type="password" autocomplete="new-password" minlength="8" required></label>
+  <label class="f">Ulangi kata sandi baru<input id="${id}2" type="password" autocomplete="new-password" minlength="8" required></label>
+  <p class="muted small" style="margin:0">Minimal 8 karakter. Jangan pakai kata sandi sementara dari owner.</p>`;
+async function simpanSandiBaru(a, b) {
+  if (a.length < 8) throw new Error('Kata sandi minimal 8 karakter.');
+  if (a !== b) throw new Error('Kedua kata sandi tidak sama.');
+  const { error } = await sb.auth.updateUser({ password: a });
+  if (error) throw new Error(/same|different/i.test(error.message) ? 'Kata sandi baru harus berbeda dari yang lama.' : pesanError(error));
+  await rpc('selesai_ganti_sandi');
+  if (S.profil) S.profil.wajib_ganti_sandi = false;
+}
+// Login pertama (atau setelah owner mereset): wajib membuat kata sandi sendiri sebelum masuk
+function tampilSandiAwal() {
+  $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
+    <h1>Buat kata sandi</h1><p class="muted" style="margin-top:0">Halo ${esc(S.profil.nama)}. Anda masuk dengan kata sandi sementara dari owner. Buat kata sandi Anda sendiri untuk melanjutkan.</p>
+    <form class="form" id="sbForm">${formSandiHtml('sbBaru')}
+      <div class="alert bad hidden" id="sbErr"></div>
+      <div class="row"><button class="btn primary" id="sbBtn">Simpan &amp; masuk</button><button class="btn" type="button" id="sbKeluar">Keluar</button></div></form></div></div>`;
+  $('#sbForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('#sbBtn');
+    btn.disabled = true;
+    try {
+      await simpanSandiBaru($('#sbBaru1').value, $('#sbBaru2').value);
+      toast('Kata sandi disimpan.');
+      masuk();
+    } catch (err) { $('#sbErr').textContent = err.message; $('#sbErr').classList.remove('hidden'); btn.disabled = false; }
+  });
+  $('#sbKeluar').addEventListener('click', async () => { await sb.auth.signOut(); S.profil = null; tampilLogin(); });
+  $('#sbBaru1').focus();
+}
+function gantiSandi() {
+  modal({
+    judul: 'Ganti kata sandi',
+    isi: `<form class="form" onsubmit="return false">${formSandiHtml('gsBaru')}</form>`,
+    aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+      await simpanSandiBaru($('#gsBaru1', m).value, $('#gsBaru2', m).value);
+      tutup(); toast('Kata sandi diganti.');
+    } }],
+  });
+}
+// Info login untuk diberikan owner secara pribadi (WhatsApp / langsung), ditampilkan sekali
+function infoLogin(judul, email, sandi) {
+  const teks = `Mother Base\nAlamat: ${location.origin}\nEmail: ${email}\nKata sandi sementara: ${sandi}\n(Saat login pertama Anda diminta membuat kata sandi sendiri.)`;
+  modal({
+    judul,
+    isi: `<div class="alert warn" style="margin-bottom:12px">Kata sandi sementara hanya ditampilkan <b>sekali</b>. Berikan secara pribadi (mis. WhatsApp), bukan di grup.</div>
+      <div class="kunci-box" id="infoLogin" style="white-space:pre-wrap">${esc(teks)}</div>`,
+    aksi: [{ label: 'Salin', onClick: () => salin(teks) }, { label: 'Selesai', kelas: 'primary' }],
+  });
+}
+
 async function hPengguna(el) {
-  el.innerHTML = `${head('Pengguna', 'Akun login dibuat di Supabase (Authentication → Users → Add user). Setelah itu atur nama dan perannya di sini.', '<button class="btn primary" id="pgTambah">+ Atur pengguna</button>')}
+  el.innerHTML = `${head('Pengguna', 'Tambah pengguna di sini: email, nama, peran, dan kata sandi sementara. Pengguna wajib membuat kata sandi sendiri saat login pertama. Tidak ada email yang dikirim.', '<button class="btn primary" id="pgTambah">+ Tambah pengguna</button>')}
     <div class="card" id="pgDaftar"></div>`;
   async function muat() {
     const rows = await rpc('daftar_pengguna');
     const box = $('#pgDaftar', el);
     box.innerHTML = tabel([{ k: 'nama', judul: 'Nama', fmt: (v) => `<b>${esc(v)}</b>` }, { k: 'email', judul: 'Email' }, { k: 'peran', judul: 'Peran', fmt: (v) => esc(LABEL_PERAN[v] || v) },
-      { k: 'kode_toko', judul: 'Toko', fmt: (v) => esc(v || '-') }, { k: 'aktif', judul: 'Status', fmt: (v) => `<span class="pill ${v ? 'ok' : ''}">${v ? 'Aktif' : 'Nonaktif'}</span>` }],
+      { k: 'kode_toko', judul: 'Toko', fmt: (v) => esc(v || '-') },
+      { k: 'aktif', judul: 'Status', fmt: (v, r) => `<span class="pill ${v ? 'ok' : ''}">${v ? 'Aktif' : 'Nonaktif'}</span>${r.wajib_ganti_sandi ? ' <span class="pill warn">Belum ganti sandi</span>' : ''}` }],
     rows, { klik: true });
     onBaris(box, rows, form);
   }
   function form(u) {
+    const baru = !u;
     u = u || { aktif: true, peran: 'admin_kantor' };
+    const aksi = [{ label: 'Batal' }];
+    if (!baru && u.id !== S.profil.id) aksi.push({ label: 'Reset kata sandi', onClick: ({ tutup }) => { tutup(); resetSandi(u); } });
+    aksi.push({ label: baru ? 'Tambah' : 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+      const pr = $('#uPeran', m).value;
+      const data = { email: $('#uEmail', m).value.trim(), nama: $('#uNama', m).value.trim(), peran: pr, kode_toko: pr === 'pemilik_toko' ? $('#uToko', m).value : null };
+      if (baru) {
+        const sandi = $('#uSandi', m).value.trim();
+        const r = await panggilFungsi('pengguna', { aksi: 'buat', ...data, sandi });
+        tutup(); muat();
+        infoLogin(`Pengguna ${data.nama} ditambahkan`, r.email, sandi);
+        return;
+      }
+      await rpc('atur_pengguna', { p_email: data.email, p_nama: data.nama, p_peran: pr, p_kode_toko: data.kode_toko, p_aktif: $('#uAktif', m).value === '1' });
+      tutup(); toast('Pengguna disimpan.'); muat();
+    } });
     modal({
-      judul: u.email ? `Ubah ${u.email}` : 'Atur pengguna',
-      isi: `<form class="form" onsubmit="return false"><label class="f">Email akun<input id="uEmail" type="email" value="${esc(u.email || '')}" ${u.email ? 'readonly' : ''}></label>
+      judul: baru ? 'Tambah pengguna' : `Ubah ${u.email}`,
+      isi: `<form class="form" onsubmit="return false"><label class="f">Email (untuk login)<input id="uEmail" type="email" value="${esc(u.email || '')}" ${baru ? '' : 'readonly'}></label>
         <label class="f">Nama<input id="uNama" value="${esc(u.nama || '')}"></label>
         <div class="grid g2"><label class="f">Peran<select id="uPeran">${Object.entries(LABEL_PERAN).map(([k, l]) => `<option value="${k}" ${k === u.peran ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
         <label class="f" id="uTokoL">Toko${pilihToko('uToko', u.kode_toko || '', '')}</label></div>
-        <label class="f">Status<select id="uAktif"><option value="1" ${u.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${u.aktif ? '' : 'selected'}>Nonaktif</option></select></label>
+        ${baru ? `<label class="f">Kata sandi sementara<div class="row"><input id="uSandi" value="${acakSandi()}" minlength="8" style="flex:1" autocomplete="off"><button class="btn sm" type="button" id="uAcak">Acak</button></div></label>`
+    : `<label class="f">Status<select id="uAktif"><option value="1" ${u.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${u.aktif ? '' : 'selected'}>Nonaktif</option></select></label>`}
         <p class="muted small" style="margin:0">Owner: semua menu, menyetujui PO, membuat kunci toko. Admin / gudang / purchasing: semua menu kantor. Pemilik toko: hanya data tokonya.</p></form>`,
-      onBuka: (m) => { const ubah = () => $('#uTokoL', m).classList.toggle('hidden', $('#uPeran', m).value !== 'pemilik_toko'); $('#uPeran', m).addEventListener('change', ubah); ubah(); },
-      aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
-        const pr = $('#uPeran', m).value;
-        await rpc('atur_pengguna', { p_email: $('#uEmail', m).value.trim(), p_nama: $('#uNama', m).value.trim(), p_peran: pr,
-          p_kode_toko: pr === 'pemilik_toko' ? $('#uToko', m).value : null, p_aktif: $('#uAktif', m).value === '1' });
-        tutup(); toast('Pengguna disimpan.'); muat();
+      onBuka: (m) => {
+        const ubah = () => $('#uTokoL', m).classList.toggle('hidden', $('#uPeran', m).value !== 'pemilik_toko');
+        $('#uPeran', m).addEventListener('change', ubah);
+        ubah();
+        if (baru) $('#uAcak', m).addEventListener('click', () => { $('#uSandi', m).value = acakSandi(); });
+      },
+      aksi,
+    });
+  }
+  function resetSandi(u) {
+    modal({
+      judul: `Reset kata sandi ${u.nama}`,
+      isi: `<p style="margin-top:0">${esc(u.email)} akan masuk dengan kata sandi sementara ini, lalu wajib membuat kata sandi sendiri. Kata sandi lamanya tidak berlaku lagi.</p>
+        <label class="f">Kata sandi sementara<div class="row"><input id="rsSandi" value="${acakSandi()}" minlength="8" style="flex:1" autocomplete="off"><button class="btn sm" type="button" id="rsAcak">Acak</button></div></label>`,
+      onBuka: (m) => $('#rsAcak', m).addEventListener('click', () => { $('#rsSandi', m).value = acakSandi(); }),
+      aksi: [{ label: 'Batal' }, { label: 'Reset', kelas: 'danger', onClick: async ({ tutup, el: m }) => {
+        const sandi = $('#rsSandi', m).value.trim();
+        await panggilFungsi('pengguna', { aksi: 'reset_sandi', email: u.email, sandi });
+        tutup(); muat();
+        infoLogin(`Kata sandi ${u.nama} direset`, u.email, sandi);
       } }],
     });
   }
@@ -1709,6 +1811,7 @@ async function masuk() {
     await sb.auth.signOut();
     return tampilLogin('Akun ini belum didaftarkan owner di mother base, atau sudah dinonaktifkan.');
   }
+  if (S.profil.wajib_ganti_sandi) return tampilSandiAwal();
   S.toko = await rpc('status_koneksi_toko').catch(() => []);
   tampilApp();
   route();
@@ -1720,11 +1823,12 @@ function tampilApp() {
     <aside class="side" id="side"><div class="brand"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
       <nav class="nav" aria-label="Menu">${HALAMAN.filter(boleh).map((h) => `<a href="#${h.id}" data-h="${h.id}"><span class="ikon" aria-hidden="true">${h.ikon}</span>${esc(h.judul)}</a>`).join('')}</nav>
       <div class="side-foot"><div><div class="akun-nama">${esc(p.nama)}</div><div class="muted small">${esc(LABEL_PERAN[p.peran] || p.peran)}${p.kode_toko ? ` · ${esc(p.kode_toko)}` : ''}</div></div>
-        <div class="row"><button class="btn sm" id="btnTema">Tema</button><button class="btn sm" id="btnKeluar">Keluar</button></div>
+        <div class="row"><button class="btn sm" id="btnTema">Tema</button><button class="btn sm" id="btnSandi">Kata sandi</button><button class="btn sm" id="btnKeluar">Keluar</button></div>
         ${CFG.mode === 'dev' ? '<div class="pill warn" title="Server dev lokal, bukan Supabase">Server dev</div>' : ''}</div></aside>
     <div style="min-width:0"><div class="topbar"><button class="btn sm" id="btnMenu" aria-label="Buka menu">☰</button><b>Mother Base</b></div>
       <main class="main" id="isi"></main></div></div>`;
   $('#btnKeluar').addEventListener('click', async () => { await sb.auth.signOut(); S.profil = null; location.hash = ''; tampilLogin(); });
+  $('#btnSandi').addEventListener('click', gantiSandi);
   $('#btnTema').addEventListener('click', () => {
     const urut = ['', 'light', 'dark'];
     const kini = document.documentElement.dataset.theme || '';

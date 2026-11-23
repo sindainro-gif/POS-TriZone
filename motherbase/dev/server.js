@@ -7,6 +7,7 @@
 //   /rest/v1/rpc/<fungsi>      panggil fungsi SQL dengan argumen bernama
 //   /auth/v1/token, /user, /logout   login email + kata sandi (bcrypt di auth.users), JWT HS256
 //   /functions/v1/asisten      Edge Function asisten AI (functions/asisten/asisten.js)
+//   /functions/v1/pengguna     Edge Function pengguna (functions/pengguna/pengguna.mjs)
 //   /                          aplikasi web (web/), config.js dibuat otomatis
 //
 // Setiap permintaan dijalankan dalam satu transaksi dengan peran anon / authenticated dan klaim JWT,
@@ -251,6 +252,15 @@ function createServer({ pool, jwtSecret, anonKey, anthropicFactory, log = () => 
       refreshTokens.delete(body.refresh_token);
       return send(res, 200, session(u));
     }
+    if (p === '/user' && req.method === 'PUT') {
+      if (claims.role !== 'authenticated') return send(res, 401, { code: 'no_authorization', msg: 'Not logged in' });
+      if (body.password !== undefined) {
+        if (String(body.password).length < 6) return send(res, 422, { code: 'weak_password', msg: 'Password should be at least 6 characters.' });
+        await pool.query("update auth.users set encrypted_password = crypt($2, gen_salt('bf')) where id = $1", [claims.sub, String(body.password)]);
+      }
+      const r = await pool.query('select id, email, created_at from auth.users where id = $1', [claims.sub]);
+      return send(res, 200, userJson(r.rows[0]));
+    }
     if (p === '/user') {
       if (claims.role !== 'authenticated') return send(res, 401, { code: 'no_authorization', msg: 'Not logged in' });
       const r = await pool.query('select id, email, created_at from auth.users where id = $1', [claims.sub]);
@@ -263,6 +273,7 @@ function createServer({ pool, jwtSecret, anonKey, anthropicFactory, log = () => 
   // ---------------------------------------------------------------- Edge Function asisten
   async function functions(req, res, url, body, claims, token) {
     const name = url.pathname.replace('/functions/v1/', '');
+    if (name === 'pengguna') return fungsiPengguna(res, body, token);
     if (name !== 'asisten') return send(res, 404, { error: 'Fungsi tidak ada' });
     const { jalankanAsisten, dbDariSupabase } = await import(path.join(ROOT, 'supabase/functions/asisten/asisten.mjs'));
     const { createClient } = require('@supabase/supabase-js');
@@ -274,6 +285,32 @@ function createServer({ pool, jwtSecret, anonKey, anthropicFactory, log = () => 
     } catch (err) {
       const status = err.status === 401 ? 401 : err.status === 429 ? 429 : err.status >= 500 ? 502 : 400;
       return send(res, status, { error: err.message });
+    }
+  }
+
+  // Edge Function pengguna: admin Supabase Auth ditiru langsung di tabel auth.users
+  async function fungsiPengguna(res, body, token) {
+    const { kelolaPengguna } = await import(path.join(ROOT, 'supabase/functions/pengguna/pengguna.mjs'));
+    const { createClient } = require('@supabase/supabase-js');
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const sb = createClient(base, anonKey, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false, autoRefreshToken: false } });
+    const db = { rpc: async (fn, args) => { const { data, error } = await sb.rpc(fn, args || {}); if (error) throw new Error(error.message); return data; } };
+    const admin = {
+      createUser: async ({ email, password }) => {
+        try {
+          return (await pool.query("insert into auth.users (email, encrypted_password) values ($1, crypt($2, gen_salt('bf'))) returning id", [email, password])).rows[0].id;
+        } catch (e) {
+          if (e.code === '23505') throw new Error('A user with this email address has already been registered');
+          throw e;
+        }
+      },
+      updateUserById: async (id, { password }) => { await pool.query("update auth.users set encrypted_password = crypt($2, gen_salt('bf')) where id = $1", [id, password]); },
+      deleteUser: async (id) => { await pool.query('delete from auth.users where id = $1', [id]); },
+    };
+    try {
+      return send(res, 200, await kelolaPengguna({ admin, db, permintaan: body }));
+    } catch (err) {
+      return send(res, err.status || 500, { error: err.message });
     }
   }
 

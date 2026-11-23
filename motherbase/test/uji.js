@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -600,6 +600,24 @@ function fileAccurate() {
       [T.getProduct(sku).floor_stock, T.getProduct(sku).warehouse_stock], sku);
   }
   ok('riwayat stok 7 hari: hanya barang yang berubah dicatat, stok per jam dipilih (Coly & isi), sebelum riwayat kosong, hak akses, SO toko sesudahnya menolak stok lama, pembersihan > 7 hari');
+
+  // ---------------------------------------------------------------- Pengguna: kata sandi sementara, wajib ganti
+  const BARU = '00000000-0000-0000-0000-00000000000f';
+  q(`insert into auth.users (id, email) values ('${BARU}', 'baru@uji.local')`);
+  sebagai(OWNER, "select public.atur_pengguna('baru@uji.local', 'Gudang Baru', 'gudang', null, true)");
+  assert.strictEqual(JSON.parse(sebagai(BARU, 'select public.saya()')).wajib_ganti_sandi, false);
+  assert.throws(() => sebagai(ADMIN, "select public.wajibkan_ganti_sandi('baru@uji.local')"), /Hanya owner/);
+  assert.throws(() => sebagai(OWNER, "select public.wajibkan_ganti_sandi('tidak@ada.local')"), /tidak ditemukan/);
+  sebagai(OWNER, "select public.wajibkan_ganti_sandi('BARU@uji.local')");
+  assert.strictEqual(JSON.parse(sebagai(BARU, 'select public.saya()')).wajib_ganti_sandi, true);
+  assert.strictEqual(sebagai(OWNER, "select wajib_ganti_sandi from public.daftar_pengguna() where email = 'baru@uji.local'"), 't');
+  assert.strictEqual(sebagai(ADMIN, 'select count(*) from public.daftar_pengguna()'), '0'); // hanya owner
+  sebagai(BARU, 'select public.selesai_ganti_sandi()');
+  assert.strictEqual(JSON.parse(sebagai(BARU, 'select public.saya()')).wajib_ganti_sandi, false);
+  q(`update auth.users set email = 'owner@uji.local' where id = '${OWNER}'`);
+  assert.throws(() => sebagai(OWNER, "select public.wajibkan_ganti_sandi('owner@uji.local')"), /akun sendiri/);
+  assert.throws(() => q("set role anon; select public.selesai_ganti_sandi()"), /permission denied/);
+  ok('pengguna: wajib ganti sandi hanya diatur owner (bukan untuk diri sendiri), tampil di saya() & daftar, selesai oleh pengguna sendiri');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });
