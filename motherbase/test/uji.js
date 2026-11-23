@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -626,8 +626,8 @@ function fileAccurate() {
   const KOLOM_ZONA = { floor: 'floor_stock', warehouse: 'warehouse_stock', damaged: 'damaged_stock', shopee: 'shopee_stock' };
   const awalImport = { 'UJ-KESET': 5, 'UJ-KURSI': 2, 'UJ-EMBER': 4, 'UJ-BARU': 0 }; // Stok_Awal_Toko saat import (Display Toko)
   const angkaMutasi = (r, sku) => {
-    const b = r.baris.find((x) => x.kode === sku) || { awal: 0, masuk: 0, keluar: 0, akhir: 0 };
-    return { awal: Number(b.awal), masuk: Number(b.masuk), keluar: Number(b.keluar), akhir: Number(b.akhir) };
+    const b = r.baris.find((x) => x.kode === sku) || { awal: 0, masuk: 0, penjualan: 0, keluar: 0, akhir: 0 };
+    return { awal: Number(b.awal), masuk: Number(b.masuk), penjualan: Number(b.penjualan), keluar: Number(b.keluar), akhir: Number(b.akhir) };
   };
   // Sejak awal riwayat: Awal = stok import, Akhir = stok Trizone (semua alur di atas: penerimaan, jual, batal nota,
   // mutasi, opname toko & kantor, pesanan, batal mutasi / penerimaan)
@@ -639,7 +639,13 @@ function fileAccurate() {
       const awal = !zona || zona === 'floor' ? awalImport[sku] : 0;
       const m = angkaMutasi(r, sku);
       assert.deepStrictEqual([m.awal, m.akhir], [awal, akhir], `${sku} ${zona || 'semua zona'}`);
-      assert.strictEqual(m.awal + m.masuk - m.keluar, m.akhir);
+      assert.strictEqual(m.awal + m.masuk - m.penjualan - m.keluar, m.akhir);
+      // Penjualan = jual di kasir dikurangi pembatalan (+ Shopee terjual); hanya di Display Toko / Shopee
+      const jualKasir = Number(q(`select coalesce(sum(qty), 0) from penjualan where kode_toko = 'TRP' and sku = '${sku}'`));
+      const jualShopee = Number(q(`select coalesce(sum(b.qty), 0) from mutasi_toko m join mutasi_toko_baris b using (kode_toko, no_dok)
+                                   where m.kode_toko = 'TRP' and b.sku = '${sku}' and m.ke = 'shopee_sold' and m.dibatalkan_at is null`));
+      const jualHarap = !zona ? jualKasir + jualShopee : zona === 'floor' ? jualKasir : zona === 'shopee' ? jualShopee : 0;
+      assert.strictEqual(m.penjualan, jualHarap, `penjualan ${sku} ${zona || 'semua zona'}`);
     }
   }
   // Mutasi antar zona: tidak dihitung di semua zona, tercatat keluar / masuk di zona masing-masing
@@ -652,18 +658,19 @@ function fileAccurate() {
   tidur(1100);
   await mb.kirim({ force: true });
   const sesudahSemua = angkaMutasi(mutasiItem(ADMIN, kemarinDb, hariDb, null), 'UJ-KESET');
-  assert.deepStrictEqual([sesudahSemua.masuk, sesudahSemua.keluar, sesudahSemua.akhir], [sebelumSemua.masuk, sebelumSemua.keluar, sebelumSemua.akhir]);
+  assert.deepStrictEqual([sesudahSemua.masuk, sesudahSemua.penjualan, sesudahSemua.keluar, sesudahSemua.akhir],
+    [sebelumSemua.masuk, sebelumSemua.penjualan, sebelumSemua.keluar, sebelumSemua.akhir]);
   assert.strictEqual(angkaMutasi(mutasiItem(ADMIN, kemarinDb, hariDb, 'floor'), 'UJ-KESET').keluar, sebelumFloor.keluar + 1);
   assert.strictEqual(angkaMutasi(mutasiItem(ADMIN, kemarinDb, hariDb, 'warehouse'), 'UJ-KESET').masuk, sebelumGudang.masuk + 1);
   // Periode lampau (sebelum ada gerak): Awal = Akhir, tanpa masuk / keluar
   const lampau = angkaMutasi(mutasiItem(ADMIN, '2001-01-01', '2001-01-31', null), 'UJ-KESET');
-  assert.deepStrictEqual([lampau.awal, lampau.masuk, lampau.keluar, lampau.akhir], [5, 0, 0, 5]);
+  assert.deepStrictEqual([lampau.awal, lampau.masuk, lampau.penjualan, lampau.keluar, lampau.akhir], [5, 0, 0, 0, 5]);
   assert.strictEqual(mutasiItem(PMLG, '2000-01-01', '2100-12-31', null).baris.length, 0);
   assert.strictEqual(mutasiItem(PTRP, '2000-01-01', '2100-12-31', null).baris.length > 0, true);
   assert.throws(() => mutasiItem(ADMIN, '2026-11-10', '2026-11-01', null), /Periode tidak valid/);
   assert.throws(() => mutasiItem(ADMIN, '2026-11-01', '2026-11-10', 'kasir'), /tidak dikenal/);
   assert.throws(() => q("set role anon; select public.laporan_mutasi_item('TRP', '2026-11-01', '2026-11-10', null)"), /permission denied/);
-  ok('laporan mutasi item: Awal = stok import & Akhir = stok Trizone per zona dan semua zona, mutasi antar zona tidak dihitung di semua zona, hak akses');
+  ok('laporan mutasi item: Awal = stok import & Akhir = stok Trizone per zona dan semua zona, penjualan (kasir − batal + Shopee) terpisah dari barang keluar, mutasi antar zona tidak dihitung di semua zona, hak akses');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });

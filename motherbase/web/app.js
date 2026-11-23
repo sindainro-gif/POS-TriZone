@@ -1078,15 +1078,16 @@ async function halamanStok(el, jenis) {
 
 // ---------------------------------------------------------------- Laporan (unduh Excel)
 const GUDANG_LAPORAN = [['', 'Semua zona'], ['floor', 'Display Toko'], ['warehouse', 'Gudang Utama'], ['damaged', 'Gudang BS'], ['shopee', 'Gudang Shopee']];
-const KOLOM_MUTASI = [['kode', 'Kode Item'], ['nama', 'Nama Item'], ['satuan', 'Satuan'], ['awal', 'Awal'], ['masuk', 'Masuk'], ['keluar', 'Keluar'], ['akhir', 'Akhir']];
+const KOLOM_MUTASI = [['kode', 'Kode Item'], ['nama', 'Nama Item'], ['satuan', 'Satuan'], ['awal', 'Awal'], ['masuk', 'Masuk'], ['penjualan', 'Penjualan'], ['keluar', 'Barang Keluar'], ['akhir', 'Akhir']];
+const ANGKA_MUTASI = ['awal', 'masuk', 'penjualan', 'keluar', 'akhir'];
 
 async function hLaporan(el) {
   const f = S.laporanMutasi || (S.laporanMutasi = { toko: S.toko.length === 1 ? S.toko[0].kode : '', zona: '', dari: `${hariIni().slice(0, 8)}01`, sampai: hariIni() });
   el.innerHTML = `${head('Laporan', 'Pilih laporan, atur toko & periode, lalu unduh dalam Excel.')}
     <div class="card"><div class="card-head"><div><h2>Mutasi Item</h2>
-      <div class="muted small">Stok awal, masuk, keluar, dan akhir tiap barang (Biji) dalam periode, seperti laporan mutasi item Accurate.
-      Masuk / keluar: penerimaan, mutasi antar gudang (zona) dan Shopee terjual, penjualan &amp; pembatalan nota, selisih stok opname;
-      mutasi antar zona yang sama-sama dipilih tidak dihitung. Stok akhir dihitung dari kiriman terakhir toko.</div></div></div>
+      <div class="muted small">Stok awal, masuk, penjualan, barang keluar, dan akhir tiap barang (Biji) dalam periode, seperti laporan mutasi item Accurate.
+      <b>Penjualan</b>: jual di kasir (dikurangi pembatalan nota) + terjual di Shopee. <b>Masuk</b> / <b>Barang Keluar</b>: penerimaan, mutasi antar gudang (zona),
+      selisih stok opname, batal penerimaan / mutasi; mutasi antar zona yang sama-sama dipilih tidak dihitung. Stok akhir dihitung dari kiriman terakhir toko.</div></div></div>
       <div class="row" style="flex-wrap:wrap">${pilihToko('lmToko', f.toko)}
         <select id="lmZona" aria-label="Gudang">${GUDANG_LAPORAN.map(([v, l]) => `<option value="${v}" ${v === f.zona ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
         <label class="row small" style="gap:6px">Dari<input type="date" id="lmDari" value="${esc(f.dari)}"></label>
@@ -1100,7 +1101,7 @@ async function hLaporan(el) {
     if (!f.dari || !f.sampai || f.sampai < f.dari) throw new Error('Periode tidak valid: tanggal Dari harus sebelum atau sama dengan Sampai.');
   }
   const ambil = (kode) => rpc('laporan_mutasi_item', { p_kode_toko: kode, p_dari: f.dari, p_sampai: f.sampai, p_zona: f.zona || null });
-  const jumlah = (rows) => Object.fromEntries(['awal', 'masuk', 'keluar', 'akhir'].map((k) => [k, rows.reduce((a, r) => a + Number(r[k]), 0)]));
+  const jumlah = (rows) => Object.fromEntries(ANGKA_MUTASI.map((k) => [k, rows.reduce((a, r) => a + Number(r[k]), 0)]));
 
   $('#lmLihat', el).addEventListener('click', (e) => sibuk(e.currentTarget, async () => {
     baca();
@@ -1110,8 +1111,8 @@ async function hLaporan(el) {
     const t = jumlah(r.baris);
     isi.innerHTML = `<div class="muted small" id="lmRingkas" style="margin-bottom:8px">${esc(f.toko)} · ${esc(namaToko(f.toko))} · ${esc(labelGudang())} ·
         ${esc(fmtTgl(f.dari))} s/d ${esc(fmtTgl(f.sampai))} · ${num(r.baris.length)} barang · stok per kiriman toko ${esc(r.stok_per ? fmtWaktu(r.stok_per) : '-')}</div>
-      ${tabel(KOLOM_MUTASI.map(([k, judul]) => ({ k, judul, num: ['awal', 'masuk', 'keluar', 'akhir'].includes(k),
-        fmt: ['awal', 'masuk', 'keluar', 'akhir'].includes(k) ? (v) => num(v) : k === 'kode' ? (v) => `<span class="mono">${esc(v)}</span>` : undefined })),
+      ${tabel(KOLOM_MUTASI.map(([k, judul]) => ({ k, judul, num: ANGKA_MUTASI.includes(k),
+        fmt: ANGKA_MUTASI.includes(k) ? (v) => num(v) : k === 'kode' ? (v) => `<span class="mono">${esc(v)}</span>` : undefined })),
       [...r.baris, { kode: '', nama: 'Total', satuan: '', ...t }], { kosong: 'Tidak ada mutasi atau stok pada periode ini.' })}`;
   }));
 
@@ -1126,10 +1127,10 @@ async function hLaporan(el) {
       const aoa = [['Laporan Mutasi Item'], ['Toko', `${kode} · ${namaToko(kode)}`], ['Gudang', labelGudang()],
         ['Periode', `${fmtTgl(f.dari)} s/d ${fmtTgl(f.sampai)}`], ['Stok per', r.stok_per ? `kiriman toko ${fmtWaktu(r.stok_per)}` : '-'], [],
         KOLOM_MUTASI.map(([, judul]) => judul),
-        ...r.baris.map((b) => [b.kode, b.nama, b.satuan, Number(b.awal), Number(b.masuk), Number(b.keluar), Number(b.akhir)]),
-        ['Total', '', '', t.awal, t.masuk, t.keluar, t.akhir]];
+        ...r.baris.map((b) => [b.kode, b.nama, b.satuan, ...ANGKA_MUTASI.map((k) => Number(b[k]))]),
+        ['Total', '', '', ...ANGKA_MUTASI.map((k) => t[k])]];
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 14 }, { wch: 40 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }];
+      ws['!cols'] = [{ wch: 14 }, { wch: 40 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 14 }, { wch: 10 }];
       XLSX.utils.book_append_sheet(wb, ws, kode);
     }
     if (!wb.SheetNames.length) { toast('Tidak ada data mutasi untuk periode ini.', 'bad'); return; }

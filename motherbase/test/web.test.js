@@ -352,7 +352,7 @@ function fileAccurate() {
     const barisMutasi = await page.$$eval('#lmIsi tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
     const emberMutasi = barisMutasi.find((r) => r[0] === 'PLJ-001');
     const pEmber = trp.svc.getProduct('PLJ-001');
-    assert.strictEqual(emberMutasi[6], String(pEmber.floor_stock + pEmber.warehouse_stock + pEmber.damaged_stock + pEmber.shopee_stock), emberMutasi.join('|'));
+    assert.strictEqual(emberMutasi[7], String(pEmber.floor_stock + pEmber.warehouse_stock + pEmber.damaged_stock + pEmber.shopee_stock), emberMutasi.join('|'));
     assert.strictEqual(barisMutasi[barisMutasi.length - 1][1], 'Total');
     await shot('03f-laporan-mutasi-item');
     const [xlsMutasi] = await Promise.all([page.waitForEvent('download'), page.click('#lmUnduh')]);
@@ -361,13 +361,14 @@ function fileAccurate() {
     assert.deepStrictEqual(bukuMutasi.SheetNames, ['TRP']);
     const aoaMutasi = XLSX.utils.sheet_to_json(bukuMutasi.Sheets.TRP, { header: 1, defval: '' });
     assert.strictEqual(aoaMutasi[0][0], 'Laporan Mutasi Item');
-    assert.deepStrictEqual(aoaMutasi[6], ['Kode Item', 'Nama Item', 'Satuan', 'Awal', 'Masuk', 'Keluar', 'Akhir']);
+    assert.deepStrictEqual(aoaMutasi[6], ['Kode Item', 'Nama Item', 'Satuan', 'Awal', 'Masuk', 'Penjualan', 'Barang Keluar', 'Akhir']);
     const isiMutasi = aoaMutasi.slice(7, -1);
     const totalMutasi = aoaMutasi[aoaMutasi.length - 1];
     assert.strictEqual(totalMutasi[0], 'Total');
     assert.strictEqual(isiMutasi.length, barisMutasi.length - 1);
-    assert.strictEqual(totalMutasi[6], isiMutasi.reduce((a, r) => a + r[6], 0));
-    assert.ok(isiMutasi.every((r) => r[3] + r[4] - r[5] === r[6]), 'Awal + Masuk − Keluar = Akhir');
+    assert.strictEqual(totalMutasi[7], isiMutasi.reduce((a, r) => a + r[7], 0));
+    assert.ok(isiMutasi.every((r) => r[3] + r[4] - r[5] - r[6] === r[7]), 'Awal + Masuk − Penjualan − Barang Keluar = Akhir');
+    assert.ok(isiMutasi.some((r) => r[5] > 0), 'ada penjualan');
     await page.selectOption('#lmToko', '');
     const [xlsSemua] = await Promise.all([page.waitForEvent('download'), page.click('#lmUnduh')]);
     assert.match(xlsSemua.suggestedFilename(), /^Mutasi_Item_Semua_/);
