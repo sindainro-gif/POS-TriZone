@@ -2,7 +2,7 @@
  * Dipakai aplikasi web (window.MbOpnameKantor) dan uji Node (require). Butuh SheetJS (XLSX).
  *
  * Kolom template (kolom stok & Fisik sama dengan template opname Trizone):
- *   Kode, Nama_Barang, Satuan_Masuk, Isi_Coly, lalu per zona (Display Toko, Gudang Utama, Gudang BS, Gudang Shopee):
+ *   Kode, Nama_Barang, Kategori, Satuan_Masuk, Isi_Coly, lalu per zona (Display Toko, Gudang Utama, Gudang BS, Gudang Shopee):
  *   <zona> (stok, Biji), <zona> (Coly) (teks bantu hitung, mis. "2 Coly 3 Biji"), Fisik <zona> (diisi, Biji);
  *   lalu Tanggal_Stok, Toko.
  * Kolom stok = patokan (stok toko per Tanggal_Stok: kiriman terakhir, atau kiriman pada jam yang dipilih). Isi kolom Fisik zona yang dihitung;
@@ -21,7 +21,7 @@
     { id: 'damaged', label: 'Gudang BS', stok: 'bs' },
     { id: 'shopee', label: 'Gudang Shopee', stok: 'shopee' },
   ];
-  const HEADER = ['Kode', 'Nama_Barang', 'Satuan_Masuk', 'Isi_Coly',
+  const HEADER = ['Kode', 'Nama_Barang', 'Kategori', 'Satuan_Masuk', 'Isi_Coly',
     ...ZONA.flatMap((z) => [z.label, `${z.label} (Coly)`, `Fisik ${z.label}`]), 'Tanggal_Stok', 'Toko'];
   const norm = (k) => String(k ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const p2 = (n) => String(n).padStart(2, '0');
@@ -69,12 +69,12 @@
     return n < 0 ? `-${t}` : t;
   }
 
-  // Baris template dari stok toko: [{ sku, nama, satuan_masuk, isi, display, gudang, bs, shopee }], stokPer = waktu stok (ISO)
+  // Baris template dari stok toko: [{ sku, nama, kategori, satuan_masuk, isi, display, gudang, bs, shopee }], stokPer = waktu stok (ISO)
   function barisTemplate(stok, stokPer, kodeToko) {
     const tgl = teksWib(stokPer);
     return stok.map((r) => {
       const isi = r.satuan_masuk === 'Biji' ? 1 : Math.max(Number(r.isi) || 1, 1);
-      const o = { Kode: String(r.sku), Nama_Barang: r.nama || '', Satuan_Masuk: r.satuan_masuk || (isi > 1 ? 'Coly' : 'Biji'), Isi_Coly: isi };
+      const o = { Kode: String(r.sku), Nama_Barang: r.nama || '', Kategori: r.kategori || '', Satuan_Masuk: r.satuan_masuk || (isi > 1 ? 'Coly' : 'Biji'), Isi_Coly: isi };
       for (const z of ZONA) {
         o[z.label] = Number(r[z.stok]) || 0;
         o[`${z.label} (Coly)`] = teksColy(o[z.label], isi);
@@ -89,7 +89,7 @@
   function workbook(rows) {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(rows, { header: HEADER });
-    ws['!cols'] = HEADER.map((h) => ({ wch: h === 'Nama_Barang' ? 34 : h === 'Tanggal_Stok' ? 20 : /\(Coly\)$/.test(h) ? 18 : Math.max(h.length + 2, 10) }));
+    ws['!cols'] = HEADER.map((h) => ({ wch: h === 'Nama_Barang' ? 34 : h === 'Kategori' ? 16 : h === 'Tanggal_Stok' ? 20 : /\(Coly\)$/.test(h) ? 18 : Math.max(h.length + 2, 10) }));
     XLSX.utils.book_append_sheet(wb, ws, 'Opname');
     return wb;
   }

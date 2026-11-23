@@ -253,7 +253,7 @@ function fileAccurate() {
     const [tpl] = await Promise.all([page.waitForEvent('download'), page.click('#okUnduh')]);
     assert.match(tpl.suggestedFilename(), /^Opname_TRP_\d{12}_Plastik\.xlsx$/);
     const isiTpl = XLSX.utils.sheet_to_json(XLSX.readFile(await tpl.path()).Sheets.Opname, { defval: '' });
-    assert.deepStrictEqual(Object.keys(isiTpl[0]), ['Kode', 'Nama_Barang', 'Satuan_Masuk', 'Isi_Coly', 'Display Toko', 'Display Toko (Coly)', 'Fisik Display Toko',
+    assert.deepStrictEqual(Object.keys(isiTpl[0]), ['Kode', 'Nama_Barang', 'Kategori', 'Satuan_Masuk', 'Isi_Coly', 'Display Toko', 'Display Toko (Coly)', 'Fisik Display Toko',
       'Gudang Utama', 'Gudang Utama (Coly)', 'Fisik Gudang Utama', 'Gudang BS', 'Gudang BS (Coly)', 'Fisik Gudang BS',
       'Gudang Shopee', 'Gudang Shopee (Coly)', 'Fisik Gudang Shopee', 'Tanggal_Stok', 'Toko']);
     assert.ok(isiTpl.every((r) => /^PLJ-/.test(r.Kode) && r.Toko === 'TRP' && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(r.Tanggal_Stok)), 'hanya kategori Plastik');
@@ -262,7 +262,7 @@ function fileAccurate() {
     const gayung = isiTpl.find((r) => r.Kode === 'PLJ-002');
     assert.strictEqual(ember['Display Toko'], pTrp('PLJ-001').floor_stock);
     const { teksColy } = require('../web/lib/opname-kantor');
-    assert.deepStrictEqual([ember.Satuan_Masuk, ember.Isi_Coly], ['Coly', 6]);
+    assert.deepStrictEqual([ember.Kategori, ember.Satuan_Masuk, ember.Isi_Coly], ['Plastik', 'Coly', 6]);
     assert.strictEqual(ember['Display Toko (Coly)'], teksColy(ember['Display Toko'], 6));
     assert.strictEqual(gayung['Gudang Utama (Coly)'], teksColy(gayung['Gudang Utama'], 24));
     const tulisHasil = (rows, nama) => {
@@ -322,25 +322,25 @@ function fileAccurate() {
     await toastCocok(/sudah diopname kantor setelah stok di file/);
 
     // Stok per jam yang dipilih (riwayat 7 hari): mis. lupa unduh saat menghitung pagi tadi
-    const lama = (await db(`insert into toko_snapshot_waktu values ('TRP', now() - interval '2 days') returning
+    const lama = (await db(`insert into toko_snapshot_waktu values ('TRP', date_trunc('second', now() - interval '2 days')) returning
       to_char(per_waktu at time zone 'Asia/Jakarta', 'YYYY-MM-DD"T"HH24:MI:SS') as jam, to_char(per_waktu at time zone 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI:SS') as teks`))[0];
     await db(`insert into stok_toko_riwayat values ('TRP', 'PLJ-001', (select min(per_waktu) from toko_snapshot_waktu where kode_toko = 'TRP'), 99, 5, 0, 0)`);
-    await page.fill('#okWaktu', lama.jam);
-    await page.$eval('#okWaktu', (e) => e.dispatchEvent(new Event('change')));
-    await page.waitForFunction(() => /terdekat sebelum jam yang dipilih/.test(document.querySelector('#okStokPer').textContent));
+    await page.click('#stTab [data-t="kantor"]'); // muat ulang pilihan Stok per
+    await page.waitForFunction(() => document.querySelectorAll('#okWaktu option').length >= 2);
+    const pilihanWaktu = await page.$$eval('#okWaktu option', (o) => o.map((x) => ({ v: x.value, t: x.textContent })));
+    assert.match(pilihanWaktu[0].t, /^Stok terbaru \(update /);
+    const opsiLama = pilihanWaktu[pilihanWaktu.length - 1];
+    assert.match(opsiLama.t, /update terakhir \d\d\.\d\d$/);
+    await page.selectOption('#okWaktu', opsiLama.v);
+    await page.waitForFunction(() => /stok akhir hari itu/.test(document.querySelector('#okStokPer').textContent));
+    await page.selectOption('#okKategori', 'Plastik');
     const [tplLama] = await Promise.all([page.waitForEvent('download'), page.click('#okUnduh')]);
     const isiLama = XLSX.utils.sheet_to_json(XLSX.readFile(await tplLama.path()).Sheets.Opname, { defval: '' });
     const emberLama = isiLama.find((r) => r.Kode === 'PLJ-001');
     assert.deepStrictEqual([emberLama['Display Toko'], emberLama['Display Toko (Coly)'], emberLama['Gudang Utama'], emberLama.Tanggal_Stok], [99, '16 Coly 3 Biji', 5, lama.teks]);
     await shot('03e-opname-kantor-stok-lama');
-    await page.fill('#okWaktu', '2000-01-01T08:00');
-    await page.$eval('#okWaktu', (e) => e.dispatchEvent(new Event('change')));
-    await page.waitForFunction(() => /Tidak ada stok pada jam itu/.test(document.querySelector('#okStokPer').textContent));
-    await page.click('#okUnduh');
-    await toastCocok(/Tidak ada stok pada jam itu/);
-    await page.click('#okTerbaru');
-    await page.waitForFunction(() => /kiriman toko terakhir/.test(document.querySelector('#okStokPer').textContent));
-    assert.strictEqual(await page.inputValue('#okWaktu'), '');
+    await page.selectOption('#okWaktu', '');
+    await page.waitForFunction(() => /update terakhir toko/.test(document.querySelector('#okStokPer').textContent));
     ok('opname dari kantor: tarik stok, template per kategori (stok Coly & isi), upload (kode salah ditahan), kirim, toko menerapkan dengan patokan, review SO otomatis, kirim ulang ditolak, stok per jam yang dipilih');
 
     await buka('stok');

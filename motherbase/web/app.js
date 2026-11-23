@@ -706,9 +706,7 @@ async function halamanStok(el, jenis) {
         </ol>
         <div class="row" style="flex-wrap:wrap">${pilihToko('okToko', f.toko, '')}
           ${tombolTarik('okTarik', 'Tarik stok terbaru')}
-          <label class="row small" style="gap:6px" title="Stok kiriman toko terakhir sebelum jam ini (riwayat 7 hari). Kosong = terbaru.">Stok per
-            <input type="datetime-local" step="1" id="okWaktu" value="${esc(f.waktu)}" aria-label="Stok per tanggal dan jam"></label>
-          <button class="btn sm" id="okTerbaru" title="Pakai stok kiriman terakhir">Terbaru</button>
+          <select id="okWaktu" aria-label="Stok per" title="Stok terbaru, atau stok update terakhir tiap hari (riwayat 7 hari)"><option value="">Stok terbaru</option></select>
           <select id="okKategori" aria-label="Kategori"><option value="">Semua kategori</option></select>
           <select id="okMerk" aria-label="Merk"><option value="">Semua merk</option></select>
           <button class="btn sm" id="okUnduh">Unduh template</button>
@@ -780,7 +778,22 @@ async function halamanStok(el, jenis) {
 
     // ---- buat opname
     let data = null; // { kode, produk: Map(sku → { sku, nama, merk, kategori, harga_jual, satuan_masuk, isi, display, gudang, bs, shopee }), per }
-    // Stok per jam yang dipilih (kosong = terbaru): snapshot terakhir sebelum jam itu, dari riwayat stok 7 hari
+    // Pilihan "Stok per": terbaru, atau update terakhir tiap hari (dari riwayat stok 7 hari)
+    const hariWib = (t) => new Date(t).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' });
+    const jamWib = (t) => new Date(t).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' });
+    async function muatPilihanWaktu() {
+      const kode = f.toko;
+      const sel = $('#okWaktu', isi);
+      const waktu = kode ? await q(sb.from('toko_snapshot_waktu').select('per_waktu').eq('kode_toko', kode).order('per_waktu', { ascending: false }).limit(1000)) : [];
+      if (kode !== f.toko || !sel.isConnected) return;
+      const perHari = new Map(); // tanggal WIB → update terakhir hari itu (daftar sudah urut terbaru dulu)
+      for (const w of waktu) { const h = MbOpnameKantor.teksWib(w.per_waktu).slice(0, 10); if (!perHari.has(h)) perHari.set(h, w.per_waktu); }
+      const hari = [...perHari.values()].slice(waktu.length ? 1 : 0); // update terakhir hari ini = Stok terbaru
+      sel.innerHTML = `<option value="">Stok terbaru${waktu.length ? ` (update ${esc(hariWib(waktu[0].per_waktu))} ${esc(jamWib(waktu[0].per_waktu))})` : ''}</option>${hari
+        .map((t) => `<option value="${esc(t)}">${esc(hariWib(t))} · update terakhir ${esc(jamWib(t))}</option>`).join('')}`;
+      if (!hari.includes(f.waktu)) f.waktu = '';
+      sel.value = f.waktu;
+    }
     async function muatStok() {
       const kode = f.toko;
       const waktu = f.waktu;
@@ -788,38 +801,33 @@ async function halamanStok(el, jenis) {
       data = null;
       infoEl.textContent = kode ? 'Memuat stok…' : 'Pilih toko.';
       if (!kode) return;
-      // Jam yang dipilih (WIB) termasuk menit / detik itu: "07:45" = kiriman sampai 07:45:59
-      const r = await rpc('stok_toko_per', { p_kode_toko: kode, p_waktu: waktu ? `${waktu.length === 16 ? `${waktu}:59` : waktu}.999+07:00` : null });
-      if (kode !== f.toko || waktu !== f.waktu || !infoEl.isConnected) return; // toko / jam diganti, atau tab ditinggalkan
+      const r = await rpc('stok_toko_per', { p_kode_toko: kode, p_waktu: waktu || null });
+      if (kode !== f.toko || waktu !== f.waktu || !infoEl.isConnected) return; // toko / pilihan diganti, atau tab ditinggalkan
       const produk = r.baris || [];
       const per = r.per_waktu;
       data = { kode, produk: new Map(produk.map((p) => [p.sku, p])), per };
       const opsi = (k) => [...new Set(produk.map((p) => p[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id'));
       $('#okKategori', isi).innerHTML = `<option value="">Semua kategori</option>${opsi('kategori').map((v) => `<option ${v === f.kategori ? 'selected' : ''}>${esc(v)}</option>`).join('')}`;
       $('#okMerk', isi).innerHTML = `<option value="">Semua merk</option>${opsi('merk').map((v) => `<option ${v === f.merk ? 'selected' : ''}>${esc(v)}</option>`).join('')}`;
-      const sejak = r.paling_awal ? ` Riwayat stok ${esc(kode)} tersedia sejak ${esc(fmtWaktu(r.paling_awal))} (disimpan 7 hari).` : '';
       if (!per) {
-        infoEl.innerHTML = waktu && r.paling_awal
-          ? `<span class="pill warn">Tidak ada stok pada jam itu</span>${sejak}`
-          : 'Belum ada data stok dari toko ini. Tekan Tarik stok terbaru, atau pastikan Trizone toko sudah tersambung.';
+        infoEl.textContent = 'Belum ada data stok dari toko ini. Tekan Tarik stok terbaru, atau pastikan Trizone toko sudah tersambung.';
         return;
       }
       infoEl.innerHTML = waktu
-        ? `Stok di template: kiriman toko <b>${esc(fmtWaktu(per))}</b> (terdekat sebelum jam yang dipilih), ${num(produk.length)} barang. Pastikan fisik dihitung sekitar jam itu.${sejak}`
-        : `Stok di template: kiriman toko terakhir <b>${esc(fmtWaktu(per))}</b> (${esc(relatif(per))}), ${num(produk.length)} barang. Tarik stok terbaru dulu bila sudah lama.${sejak}`;
+        ? `Stok di template: update terakhir <b>${esc(hariWib(per))} pukul ${esc(jamWib(per))}</b> (stok akhir hari itu), ${num(produk.length)} barang. Pakai bila fisik dihitung setelah tutup hari itu atau sebelum buka besoknya.`
+        : `Stok di template: update terakhir toko <b>${esc(fmtWaktu(per))}</b> (${esc(relatif(per))}), ${num(produk.length)} barang. Tarik stok terbaru dulu bila sudah lama.`;
     }
-    const pakaiWaktu = (v) => { f.waktu = v; $('#okWaktu', isi).value = v; return muatStok(); };
-    $('#okToko', isi).addEventListener('change', (e) => { f.toko = e.target.value; f.kategori = ''; f.merk = ''; $('#okPratinjau', isi).innerHTML = ''; muatStok(); });
+    const pakaiWaktu = async (v) => { f.waktu = v; await muatPilihanWaktu(); return muatStok(); };
+    $('#okToko', isi).addEventListener('change', (e) => { f.toko = e.target.value; f.kategori = ''; f.merk = ''; $('#okPratinjau', isi).innerHTML = ''; pakaiWaktu(''); });
     $('#okKategori', isi).addEventListener('change', (e) => { f.kategori = e.target.value; });
     $('#okMerk', isi).addEventListener('change', (e) => { f.merk = e.target.value; });
-    $('#okWaktu', isi).addEventListener('change', (e) => pakaiWaktu(e.target.value));
-    $('#okTerbaru', isi).addEventListener('click', () => pakaiWaktu(''));
+    $('#okWaktu', isi).addEventListener('change', (e) => { f.waktu = e.target.value; muatStok(); });
     $('#okTarik', isi).addEventListener('click', (e) => {
       if (!f.toko) return toast('Pilih toko dulu.', 'bad');
       return tarikData(f.toko, async () => { await pakaiWaktu(''); await muatDaftar(); }, e.currentTarget);
     });
     $('#okUnduh', isi).addEventListener('click', () => {
-      if (!data || !data.per) return toast(f.waktu ? 'Tidak ada stok pada jam itu. Pilih jam lain atau Terbaru.' : 'Belum ada data stok dari toko ini. Tarik stok terbaru dulu.', 'bad');
+      if (!data || !data.per) return toast('Belum ada data stok dari toko ini. Tarik stok terbaru dulu.', 'bad');
       const pilih = [...data.produk.values()].filter((p) => (!f.kategori || p.kategori === f.kategori) && (!f.merk || p.merk === f.merk))
         .sort((a, b) => String(a.nama).localeCompare(String(b.nama), 'id'));
       if (!pilih.length) return toast('Tidak ada barang untuk filter ini.', 'bad');
@@ -889,7 +897,7 @@ async function halamanStok(el, jenis) {
       });
     }
 
-    await Promise.all([muatStok(), muatDaftar()]);
+    await Promise.all([pakaiWaktu(f.waktu), muatDaftar()]);
     return undefined;
   }
 
