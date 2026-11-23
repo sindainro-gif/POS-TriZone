@@ -1,0 +1,10 @@
+# Header keamanan untuk Netlify (homebase hanya untuk pengguna yang punya akun)
+/*
+  X-Robots-Tag: noindex, nofollow
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+/config.js
+  Cache-Control: no-cache

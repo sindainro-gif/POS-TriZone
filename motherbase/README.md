@@ -108,6 +108,17 @@ permintaan.
 1. Isi `web/config.js` dengan alamat project dan anon key (Project Settings → API).
 2. Upload isi folder `web/` ke hosting statis, mis. Netlify, Cloudflare Pages, atau Vercel
    (tanpa perintah build; folder publikasi = `motherbase/web`). Bisa dibuka dari PC dan HP.
+3. **Akses & privasi.** Alamat web boleh dibuka siapa saja; tanpa akun yang terdaftar yang terlihat hanya
+   layar login. Semua data ada di Supabase dan dilindungi login + Row Level Security (kantor melihat semua
+   toko, pemilik toko hanya tokonya). Isi `config.js` (alamat project & anon key) memang publik.
+   - Matikan pendaftaran umum: Supabase → Authentication → Sign In / Providers → **Allow new users to sign up**
+     = off. Akun baru dibuat owner: Authentication → **Add user**, lalu atur nama & peran di menu **Pengguna**.
+     Orang yang keluar: nonaktifkan di menu Pengguna.
+   - `web/_headers` & `web/robots.txt`: tidak diindeks mesin pencari, tidak bisa disematkan di situs lain.
+   - Netlify: **Visitor access → Team login** cukup untuk deploy non-production; production dibiarkan terbuka
+     agar staf & pemilik toko (tanpa akun Netlify) bisa login.
+   - Bila layar login pun ingin disembunyikan: Netlify Password protection (paket berbayar) atau Cloudflare
+     Access di depan domain sendiri.
 
 ### 4. Toko
 
