@@ -17,6 +17,7 @@ const crypto = require('crypto');
 const { seedDemo, DEMO_ACCOUNTS } = require('./demo');
 const { createDraftStore } = require('./drafts');
 const { createMotherbase } = require('./motherbase');
+const { openDrawer } = require('./drawer');
 const reportCrypt = require('./reportcrypt');
 // Versi POS dari package.json (sama di aplikasi terpasang, saat dijalankan dari folder, dan saat uji otomatis)
 const APP_VERSION = require('../package.json').version;
@@ -774,6 +775,7 @@ const ACCESS = {
   'orders:list': ALL, 'orders:get': ALL, 'orders:due': ALL,
   'orders:create': KASIR, 'orders:complete': KASIR, 'orders:cancel': KASIR, 'orders:print': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'receipt:void': KASIR,
+  'drawer:open': KASIR, // buka laci kasir (tanpa transaksi, tidak dicatat)
 };
 
 function checkAccess(channel) {
@@ -952,6 +954,17 @@ const handlers = {
     }
   },
   'receipt:test': () => printReceipt({ ...SAMPLE_RECEIPT, created_at: localNow() }),
+  // Buka laci lewat printer nota KOMPUTER INI (PC Kasir tidak lewat PC Server, jadi tetap jalan saat MODE DARURAT).
+  // Printer nota kosong = printer default Windows. Mode uji (POS_PRINT_TO_PDF): perintahnya ditulis ke file.
+  'drawer:open': async () => {
+    const testDir = process.env.POS_PRINT_TO_PDF || '';
+    let printerName = (await getSettings()).printer_name;
+    if (!printerName && !testDir) {
+      const def = (await win.webContents.getPrintersAsync()).find((p) => p.isDefault);
+      printerName = def ? def.name : '';
+    }
+    return openDrawer({ printerName, dataDir: DATA_DIR, testDir });
+  },
   // Pratinjau nota di Pengaturan: tampilan sama dengan hasil cetak (font, ukuran huruf, geser)
   'receipt:preview': async ({ settings }) => {
     const s = { ...(await getSettings()), ...(settings || {}) };

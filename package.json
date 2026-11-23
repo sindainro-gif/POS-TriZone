@@ -1,12 +1,12 @@
 {
   "name": "pos-trizone",
   "productName": "POS Tri-Zone",
-  "version": "1.22.0",
+  "version": "1.22.1",
   "description": "POS Desktop Offline dengan inventaris per zona (Toko, Gudang Utama, Gudang BS/Retur, Gudang Shopee) yang mengirim data ke mother base (pusat data kantor)",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/services.test.js && node test/receipt.test.js && node test/labels.test.js && node test/db.test.js && node test/remote.test.js && node test/offline.test.js && node test/auth.test.js && node test/search.test.js && node test/demo.test.js && node test/drafts.test.js && node test/motherbase.test.js && node test/terbilang.test.js && node test/reportcrypt.test.js && node test/void.test.js && node test/orders.test.js && node test/pdftable.test.js",
+    "test": "node test/services.test.js && node test/receipt.test.js && node test/labels.test.js && node test/db.test.js && node test/remote.test.js && node test/offline.test.js && node test/auth.test.js && node test/search.test.js && node test/demo.test.js && node test/drafts.test.js && node test/motherbase.test.js && node test/terbilang.test.js && node test/reportcrypt.test.js && node test/void.test.js && node test/orders.test.js && node test/drawer.test.js && node test/pdftable.test.js",
     "smoke": "electron test/smoke.js",
     "smoke:lan": "electron test/smoke-lan.js",
     "smoke:demo": "electron test/smoke-demo.js",

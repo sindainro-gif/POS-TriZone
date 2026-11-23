@@ -207,6 +207,22 @@ app.on('browser-window-created', (_e, win) => {
       const counts = await run(`({ qty: document.querySelector('#coQty').textContent, kinds: document.querySelector('#coKinds').textContent, text: document.querySelector('.co-counts').innerText.replace(/\\s+/g, ' ') })`);
       console.log('jumlah di kasir:', JSON.stringify(counts));
       if (counts.qty !== '23' || counts.kinds !== '2' || !/Jumlah Barang 23 Biji/.test(counts.text) || !/Jenis Barang 2 jenis/.test(counts.text)) throw new Error('jumlah barang / jenis barang di kasir tidak sesuai');
+      // Buka laci (tombol & F2): perintah ESC/POS ke printer nota (mode uji = file Laci_*.bin); tekan berulang < 1 detik diabaikan
+      const laciFiles = () => fs.readdirSync(out).filter((f) => /^Laci_.*\.bin$/.test(f)).sort();
+      const laci0 = laciFiles().length;
+      await run(`document.querySelector('#drawerBtn').click()`);
+      await wait(500);
+      const laciToast = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
+      await wait(700);
+      await run(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true })); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));`);
+      await wait(500);
+      const laci = laciFiles();
+      const laciState = await run(`({ focus: document.activeElement.id, cash: document.querySelector('#cashInput').value, cart: document.querySelectorAll('#cartBody tr').length })`);
+      console.log('buka laci:', laci.length - laci0, 'kali ·', JSON.stringify(laciState));
+      if (laci.length - laci0 !== 2 || !/Laci dibuka/.test(laciToast) || !fs.readFileSync(path.join(out, laci[laci.length - 1])).equals(require('../src/drawer').KICK)
+        || laciState.focus !== 'scanInput' || laciState.cash !== '200.000' || laciState.cart !== 2) {
+        throw new Error('tombol / F2 buka laci tidak bekerja');
+      }
       const alertText = await run(`document.querySelector('#stockAlert').className + ' | ' + document.querySelector('#stockAlert').innerText`);
       console.log('peringatan stok:', alertText);
       // Keripik: display toko 4, di keranjang 11 → tetap masuk keranjang dengan peringatan kuning
@@ -775,6 +791,9 @@ app.on('browser-window-created', (_e, win) => {
         const repL = await run(`window.posBridge.call('reports:list')`);
         const repO = await run(`window.posBridge.call('reports:open', { folder: 'Shift_x', file: 'a.enc' })`);
         if (repL.ok || repO.ok || !/Akses ditolak/.test(repL.error) || !/Akses ditolak/.test(repO.error)) throw new Error(`laporan bisa dibuka oleh ${name}`);
+        // Buka laci: Kasir & Admin saja
+        const drw = await run(`window.posBridge.call('drawer:open')`);
+        if ((name === 'Budi') !== (!drw.ok && /Akses ditolak/.test(drw.error))) throw new Error(`akses buka laci untuk ${name} salah: ${JSON.stringify(drw)}`);
         // Pesanan: semua peran boleh melihat; membuat / mengambil / membatalkan hanya Kasir & Admin
         const orList = await run(`window.posBridge.call('orders:list', {})`);
         const orMake = await run(`window.posBridge.call('orders:create', { items: [{ sku: 'MNM-001', qty: 1 }], customer_name: 'X', pickup_date: '2099-01-01' })`);

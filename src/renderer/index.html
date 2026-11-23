@@ -67,7 +67,7 @@
                 <button class="btn ghost" id="voiceCfg" type="button" title="Pengaturan suara kasir">⚙</button>
               </div>
             </div>
-            <div class="hint"><b>Enter</b> di kolom scan kosong = pindah ke Jumlah, Enter lagi = kembali ke scan · F2 fokus scan · F12 uang diterima, F12 lagi = uang pas (Enter = bayar) · F8 kosongkan · F9 bayar</div>
+            <div class="hint"><b>Enter</b> di kolom scan kosong = pindah ke Jumlah, Enter lagi = kembali ke scan · F2 buka laci · F12 uang diterima, F12 lagi = uang pas (Enter = bayar) · F8 kosongkan · F9 bayar</div>
           </div>
           <div id="stockAlert" class="alert danger hidden"></div>
           <div class="card cart-card">
@@ -103,7 +103,10 @@
             <button class="btn ghost" id="draftHoldBtn" title="Simpan keranjang ini, layani pelanggan lain dulu">Tahan (Draft)</button>
             <button class="btn ghost" id="draftListBtn">Daftar Draft</button>
           </div>
-          <button class="btn ghost" id="orderBtn" title="Barang dipesan / belum dibawa: stok belum dipotong, pelanggan membayar deposit">Jadikan Pesanan</button>
+          <div class="draft-row">
+            <button class="btn ghost" id="orderBtn" title="Barang dipesan / belum dibawa: stok belum dipotong, pelanggan membayar deposit">Jadikan Pesanan</button>
+            <button class="btn ghost" id="drawerBtn" title="Buka laci uang tanpa transaksi (lewat printer nota)">Buka Laci <kbd>F2</kbd></button>
+          </div>
           <button class="btn ghost" id="clearBtn">Kosongkan Keranjang <kbd>F8</kbd></button>
         </div>
       </div>
@@ -599,6 +602,7 @@
             <div class="btn-row">
               <button class="btn primary" id="stSave2">Simpan Pengaturan</button>
               <button class="btn ghost" id="stTestPrint">Cetak Tes</button>
+              <button class="btn ghost" id="stTestDrawer" title="Kirim perintah buka laci ke printer nota (laci harus tersambung ke printer nota)">Tes Buka Laci</button>
             </div>
           </div>
           <div>

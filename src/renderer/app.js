@@ -828,6 +828,24 @@ views.checkout = (() => {
 
   $('#orderBtn').addEventListener('click', makeOrder);
 
+  // ---- Buka laci kasir tanpa transaksi (lewat printer nota komputer ini). Bebas, tidak dicatat.
+  // Tekan berulang dalam 1 detik diabaikan (mencegah perintah dobel ke printer).
+  let drawerAt = 0;
+  async function openDrawer() {
+    if (Date.now() - drawerAt < 1000) return;
+    drawerAt = Date.now();
+    try {
+      await api('drawer:open');
+      toast('Laci dibuka.', 'ok', 1500);
+    } catch (e) {
+      sound('err');
+      toast(e.message, 'err', 7000);
+    } finally {
+      focusScan();
+    }
+  }
+  $('#drawerBtn').addEventListener('click', openDrawer);
+
   function focusScan() {
     if (state.view === 'checkout' && state.shift && !$('#modalRoot').children.length) scan.focus();
   }
@@ -885,7 +903,7 @@ views.checkout = (() => {
   }
 
   return {
-    show, focusScan, focusCash, pay, clearCart, connectionChanged,
+    show, focusScan, focusCash, pay, clearCart, connectionChanged, openDrawer,
     hasItems: () => cart.length > 0,
   };
 })();
@@ -3226,6 +3244,13 @@ views.settings = (() => {
       toast('Nota tes dikirim ke printer.', 'ok');
     } catch (e) { toast(e.message, 'err', 8000); }
   });
+  $('#stTestDrawer').addEventListener('click', async () => {
+    try {
+      await save(true); // printer nota yang baru dipilih langsung dipakai
+      await api('drawer:open');
+      toast('Perintah buka laci dikirim ke printer nota.', 'ok');
+    } catch (e) { toast(e.message, 'err', 8000); }
+  });
   // Laporan tutup shift terenkripsi: Admin membukanya satu per satu (didekripsi ke folder sementara)
   const REPORT_KIND = [[/^Rekap_/, 'Rekap PDF'], [/^Penjualan_/, 'Penjualan CSV'], [/^Snapshot_Stok_/, 'Stok CSV']];
   const reportLabel = (f) => (REPORT_KIND.find(([re]) => re.test(f)) || [null, f.replace(/\.enc$/, '')])[1];
@@ -3333,7 +3358,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (state.view === 'checkout' && canView('checkout')) {
-    if (e.key === 'F2') { e.preventDefault(); views.checkout.focusScan(); }
+    if (e.key === 'F2') { e.preventDefault(); views.checkout.openDrawer(); }
     if (e.key === 'F8') { e.preventDefault(); views.checkout.clearCart(); }
     if (e.key === 'F9') { e.preventDefault(); views.checkout.pay(); }
   }
