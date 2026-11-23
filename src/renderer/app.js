@@ -2557,11 +2557,12 @@ views.shift = (() => {
   $('#shSendMb').addEventListener('click', async () => {
     const btn = $('#shSendMb');
     btn.disabled = true;
-    btn.textContent = 'Mengirim…';
+    btn.textContent = 'Memuat…';
     try {
       await api('mb:sendSales');
-      toast('Data penjualan dan stok terkirim ke kantor.', 'ok', 6000);
-    } catch (e) { toast(e.message, 'err', 8000); } finally { btn.disabled = false; btn.textContent = 'Kirim Data ke Kantor'; }
+      toast('Data diperbarui.', 'ok', 3000);
+      show();
+    } catch (e) { toast(e.message, 'err', 8000); } finally { btn.disabled = false; btn.textContent = 'Refresh'; }
   });
 
   // Isi satu struk shift berjalan + tombol cetak ulang / batalkan. ref = { receipt_no }, row = baris di daftar transaksi
