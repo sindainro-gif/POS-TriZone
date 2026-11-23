@@ -1045,12 +1045,96 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   function getTransferDoc({ id } = {}) {
     const d = db.get('SELECT * FROM stock_transfer_docs WHERE id = ?', [id]);
     if (!d) fail('Dokumen mutasi tidak ditemukan.');
+    d.cancel_block = transferCancelBlock(d);
     d.items = db.all(
       `SELECT t.sku, t.qty, COALESCE(t.pack_type, 'Biji') AS pack_type, COALESCE(t.pack_qty, t.qty) AS pack_qty, p.name, p.barcode FROM stock_transfers t
        LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = ? ORDER BY t.id`,
       [id],
     );
     return d;
+  }
+
+  // ---------------------------------------------------------------- Batal mutasi / penerimaan
+  // Disetujui PIN Admin / PIN Pembatalan. Dokumen TIDAK dihapus: ditandai batal (alasan, penyetuju) dan stok
+  // dikembalikan seperti sebelum dokumen dibuat — boleh menjadi minus bila barangnya sudah terpakai.
+  // Hanya dokumen CANCEL_DAYS hari terakhir; dokumen otomatis (pesanan / batal nota / mutasi lama) tidak bisa.
+  const CANCEL_DAYS = 7;
+  function cancelCutoff() {
+    const d = new Date(`${localNow().slice(0, 10)}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - (CANCEL_DAYS - 1));
+    return `${d.toISOString().slice(0, 10)} 00:00:00`;
+  }
+  // Alasan dokumen ini tidak bisa dibatalkan (null = bisa). Dipakai layar untuk menampilkan tombol Batalkan.
+  function transferCancelBlock(d) {
+    if (!d) return 'Dokumen mutasi tidak ditemukan.';
+    if (d.cancelled_at) return 'Mutasi ini sudah dibatalkan.';
+    if (/^MT-LAMA-/.test(d.doc_no)) return 'Mutasi dari versi lama tidak bisa dibatalkan.';
+    if (/^Pesanan PSN-/.test(d.reason || '')) return 'Mutasi ini dibuat otomatis saat pesanan diambil, tidak bisa dibatalkan di sini.';
+    if (/batal nota/i.test(d.reason || '')) return 'Mutasi ini dibuat otomatis oleh Batal Nota, tidak bisa dibatalkan di sini.';
+    if (String(d.created_at || '') < cancelCutoff()) return `Hanya mutasi ${CANCEL_DAYS} hari terakhir yang bisa dibatalkan.`;
+    return null;
+  }
+  function receptionCancelBlock(r) {
+    if (!r) return 'Dokumen penerimaan tidak ditemukan.';
+    if (r.cancelled_at) return 'Penerimaan ini sudah dibatalkan.';
+    if (String(r.received_at || '') < cancelCutoff()) return `Hanya penerimaan ${CANCEL_DAYS} hari terakhir yang bisa dibatalkan.`;
+    return null;
+  }
+  function cancelArgs(reason, approver_pin, requested_by) {
+    const why = toStr(reason, 'Alasan pembatalan', { required: true, max: 200 });
+    if (why.length < 3) fail('Alasan pembatalan minimal 3 huruf.');
+    return { why, approved_by: approverAdmin(approver_pin), by: toStr(requested_by, 'Diminta oleh', { max: 80 }) };
+  }
+
+  function cancelTransferDoc({ id, reason, approver_pin, requested_by } = {}) {
+    const d = db.get('SELECT * FROM stock_transfer_docs WHERE id = ?', [Number(id) || 0]);
+    const block = transferCancelBlock(d);
+    if (block) fail(block);
+    const { why, approved_by, by } = cancelArgs(reason, approver_pin, requested_by);
+    db.tx(() => {
+      for (const l of db.all('SELECT sku, qty FROM stock_transfers WHERE doc_id = ?', [d.id])) {
+        db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [l.sku]);
+        // Kebalikan mutasi: zona asal +qty, zona tujuan −qty (zona luar seperti Supplier / Pelanggan tidak punya stok)
+        if (ZONE_COL[d.from_zone]) {
+          db.run(`UPDATE inventory SET ${ZONE_COL[d.from_zone]} = ${ZONE_COL[d.from_zone]} + ? WHERE sku = ?`, [l.qty, l.sku]);
+          if (d.from_zone === 'floor') clearSoldOut(l.sku);
+        }
+        if (ZONE_COL[d.to_zone]) db.run(`UPDATE inventory SET ${ZONE_COL[d.to_zone]} = ${ZONE_COL[d.to_zone]} - ? WHERE sku = ?`, [l.qty, l.sku]);
+      }
+      db.run('UPDATE stock_transfer_docs SET cancelled_at = ?, cancel_reason = ?, cancelled_by = ?, cancel_approved_by = ? WHERE id = ?',
+        [localNow(), why, by, approved_by, d.id]);
+    });
+    return getTransferDoc({ id: d.id });
+  }
+
+  function cancelReception({ id, reason, approver_pin, requested_by } = {}) {
+    const r = db.get('SELECT * FROM stock_receptions WHERE id = ?', [Number(id) || 0]);
+    const block = receptionCancelBlock(r);
+    if (block) fail(block);
+    const { why, approved_by, by } = cancelArgs(reason, approver_pin, requested_by);
+    db.tx(() => {
+      for (const l of db.all('SELECT sku, quantity_received, destination FROM stock_reception_items WHERE reception_id = ?', [r.id])) {
+        const col = ZONE_COL[l.destination];
+        db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [l.sku]);
+        if (col) db.run(`UPDATE inventory SET ${col} = ${col} - ? WHERE sku = ?`, [l.quantity_received, l.sku]);
+      }
+      db.run('UPDATE stock_receptions SET cancelled_at = ?, cancel_reason = ?, cancelled_by = ?, cancel_approved_by = ? WHERE id = ?',
+        [localNow(), why, by, approved_by, r.id]);
+    });
+    return getReception({ id: r.id });
+  }
+
+  // Untuk kantor: mutasi & penerimaan yang dibatalkan dalam 60 hari terakhir (ikut snapshot)
+  function cancelledDocsForMb() {
+    const d = new Date(`${localNow().slice(0, 10)}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 60);
+    const since = `${d.toISOString().slice(0, 10)} 00:00:00`;
+    return [
+      ...db.all(`SELECT 'mutasi' AS jenis, doc_no AS no_dokumen, created_at AS dibuat_at, cancelled_at, cancel_reason, cancelled_by, cancel_approved_by
+                 FROM stock_transfer_docs WHERE cancelled_at >= ? ORDER BY id`, [since]),
+      ...db.all(`SELECT 'penerimaan' AS jenis, reference_no AS no_dokumen, received_at AS dibuat_at, cancelled_at, cancel_reason, cancelled_by, cancel_approved_by
+                 FROM stock_receptions WHERE cancelled_at >= ? ORDER BY id`, [since]),
+    ];
   }
 
   function listTransfers({ limit = 200, q = '' } = {}) {
@@ -1413,6 +1497,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   function getReception({ id } = {}) {
     const r = db.get('SELECT * FROM stock_receptions WHERE id = ?', [id]);
     if (!r) fail('Dokumen penerimaan tidak ditemukan.');
+    r.cancel_block = receptionCancelBlock(r);
     r.items = db.all(
       `SELECT i.*, p.name, p.barcode, p.pack_unit, p.pack_ratio FROM stock_reception_items i
        LEFT JOIN products p ON p.sku = i.sku WHERE i.reception_id = ? ORDER BY i.id`,
@@ -1704,6 +1789,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         pembatalan: voidLines(db.all('SELECT * FROM receipt_voids WHERE void_no IN (SELECT receipt_no FROM shift_sales) ORDER BY created_at')),
       } : null,
       orders: ordersForMb(),
+      dokumen_batal: cancelledDocsForMb(),
     };
   }
 
@@ -1943,8 +2029,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     createOrder, getOrder, listOrders, ordersDue, completeOrder, cancelOrder,
     archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,
-    createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc,
-    createReception, listReceptions, getReception, importReceptions,
+    createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc, cancelTransferDoc,
+    createReception, listReceptions, getReception, importReceptions, cancelReception,
     createOpname, listOpnames, getOpname, opnameSheet, planOpnameImport, importOpname,
     createReceptionDraft, listReceptionDrafts, countReceptionDrafts, processReceptionDraft, deleteReceptionDraft,
   };

@@ -193,6 +193,16 @@ function autoDrawer() {
     .catch((err) => console.error('[laci otomatis]', err.message));
 }
 
+// PIN persetujuan salah → jeda sebentar (memperlambat tebak-tebakan PIN)
+async function withPinDelay(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (/PIN Admin \/ PIN Pembatalan salah/.test(err.message)) await new Promise((r) => setTimeout(r, 800));
+    throw err;
+  }
+}
+
 async function printReceipt(receipt, { reprint = false } = {}) {
   const s = await getSettings();
   const page = receiptPage(buildReceiptRows(receipt, s, { reprint }), s.paper_width, { offsetMm: s.receipt_offset, fontScale: s.receipt_font_scale });
@@ -800,6 +810,7 @@ const ACCESS = {
   'products:import': GUDANG,
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
+  'transfers:cancel': GUDANG, 'receptions:cancel': GUDANG, // batal dokumen dengan PIN Admin / PIN Pembatalan
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
   // Stok opname manual (form scan) hanya Admin; Gudang hanya lewat template Excel (unduh → isi Fisik → import)
   'opname:list': GUDANG, 'opname:get': GUDANG, 'opname:template': GUDANG, 'opname:importFile': GUDANG, 'opname:import': GUDANG,
@@ -1022,6 +1033,8 @@ const handlers = {
   'transfers:create': (a) => svc.createTransferDoc(a),
   'transfers:list': (a) => svc.listTransferDocs(a),
   'transfers:get': (a) => svc.getTransferDoc(a),
+  'transfers:cancel': (a = {}) => withPinDelay(() => svc.cancelTransferDoc({ ...a, requested_by: session.name })),
+  'receptions:cancel': (a = {}) => withPinDelay(() => svc.cancelReception({ ...a, requested_by: session.name })),
 
   'receptions:create': (a) => svc.createReception(a),
   'receptions:list': (a) => svc.listReceptions(a),

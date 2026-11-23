@@ -315,6 +315,28 @@ app.on('browser-window-created', (_e, win) => {
       console.log('detail mutasi coly:', colyDetail);
       if (!/2 Coly \(isi 24\) = 48 Biji/.test(colyDetail)) throw new Error('detail mutasi tidak menampilkan Coly');
       await shot('04c-mutasi-coly-detail');
+      // Batalkan mutasi Coly: PIN salah ditolak; PIN Admin → stok kembali, lencana Dibatalkan di riwayat
+      await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Batalkan Mutasi').click()`);
+      await wait(400);
+      await run(`(() => { const m = document.querySelector('#modalRoot'); m.querySelector('#dcReason').value = 'Salah input jumlah'; m.querySelector('#dcPin').value = '000000';
+        m.querySelector('.modal-foot .btn.danger').click(); })()`);
+      await wait(1500);
+      if (svc.getProduct('MNM-001').warehouse_stock !== whMnm - 48) throw new Error('PIN salah seharusnya tidak membatalkan mutasi');
+      await shot('04d-batal-mutasi');
+      await run(`(() => { const m = document.querySelector('#modalRoot'); m.querySelector('#dcPin').value = '111111'; m.querySelector('.modal-foot .btn.danger').click(); })()`);
+      await wait(1200);
+      const trCancel = await run(`({ row: document.querySelector('#trHistory tr').innerText.replace(/\\s+/g, ' '), cls: document.querySelector('#trHistory tr').className, modal: document.querySelectorAll('#modalRoot .modal').length })`);
+      console.log('batal mutasi:', JSON.stringify(trCancel), svc.getProduct('MNM-001').warehouse_stock, svc.getProduct('MNM-001').floor_stock);
+      if (!/Dibatalkan/.test(trCancel.row) || trCancel.cls !== 'cancelled' || trCancel.modal !== 0
+        || svc.getProduct('MNM-001').warehouse_stock !== whMnm || svc.getProduct('MNM-001').floor_stock !== flMnm) {
+        throw new Error('batal mutasi dari layar tidak sesuai');
+      }
+      await run(`document.querySelector('#trHistory [data-id]').click()`);
+      await wait(400);
+      const trCancelDetail = await run(`({ info: document.querySelector('#modalRoot .alert.danger') ? document.querySelector('#modalRoot .alert.danger').innerText : '',
+        btn: [...document.querySelectorAll('#modalRoot .modal-foot .btn')].map((b) => b.textContent).join(',') })`);
+      if (!/Dibatalkan/.test(trCancelDetail.info) || !/Salah input jumlah/.test(trCancelDetail.info) || /Batalkan Mutasi/.test(trCancelDetail.btn)) throw new Error('detail mutasi batal tidak sesuai');
+      await shot('04e-mutasi-dibatalkan');
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
       await wait(200);
       const f12View = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true })); return state.view + '/' + document.activeElement.id; })()`);
@@ -831,6 +853,16 @@ app.on('browser-window-created', (_e, win) => {
         const repL = await run(`window.posBridge.call('reports:list')`);
         const repO = await run(`window.posBridge.call('reports:open', { folder: 'Shift_x', file: 'a.enc' })`);
         if (repL.ok || repO.ok || !/Akses ditolak/.test(repL.error) || !/Akses ditolak/.test(repO.error)) throw new Error(`laporan bisa dibuka oleh ${name}`);
+        // Batal penerimaan / mutasi: Admin & Gudang (Kasir ditolak); Gudang membatalkan dengan PIN Pembatalan
+        const rcDeny = await run(`window.posBridge.call('receptions:cancel', { id: 1, reason: 'uji akses', approver_pin: '000000' })`);
+        if ((name === 'Rina') !== (!rcDeny.ok && /Akses ditolak/.test(rcDeny.error))) throw new Error(`akses batal penerimaan untuk ${name} salah: ${JSON.stringify(rcDeny)}`);
+        if (name === 'Budi') {
+          const rcB = svc.createReception({ reference_no: 'SJ-BUDI-BATAL', items: [{ sku: 'SBN-005', qty: 4, pack_type: 'Biji', destination: 'warehouse' }] });
+          const whB = svc.getProduct('SBN-005').warehouse_stock;
+          const cB = await run(`window.posBridge.call('receptions:cancel', { id: ${rcB.id}, reason: 'Salah surat jalan', approver_pin: '765432' })`);
+          console.log('batal penerimaan (Gudang):', JSON.stringify(cB.ok ? [cB.data.cancelled_by, cB.data.cancel_approved_by] : cB.error));
+          if (!cB.ok || cB.data.cancelled_by !== 'Budi' || svc.getProduct('SBN-005').warehouse_stock !== whB - 4) throw new Error('Gudang tidak bisa membatalkan penerimaan dengan PIN Pembatalan');
+        }
         // Buka laci: Kasir & Admin saja
         const drw = await run(`window.posBridge.call('drawer:open')`);
         if ((name === 'Budi') !== (!drw.ok && /Akses ditolak/.test(drw.error))) throw new Error(`akses buka laci untuk ${name} salah: ${JSON.stringify(drw)}`);

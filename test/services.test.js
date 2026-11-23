@@ -170,6 +170,58 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     throwsMsg(() => svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [] }), /minimal satu barang/);
   });
 
+  await t('batal mutasi & penerimaan: PIN Admin / Pembatalan, stok dikembalikan (boleh minus), 7 hari, dokumen otomatis ditolak', async () => {
+    const d2 = await Database.open(null);
+    const s = createServices(d2, { encrypt: (x) => `enc:${x}`, decrypt: (x) => (String(x).startsWith('enc:') ? String(x).slice(4) : '') });
+    s.importRows([{ Barcode: '7880000000011', SKU: 'BT-A', Nama_Barang: 'Batal Uji', Harga_Jual: 1000, Rasio_Isi_Dus: 24, Stok_Awal_Gudang: 100, Stok_Awal_BS: 5 }]);
+    s.saveUser({ name: 'Bos', role: 'admin', pin: '111111', active: true });
+    s.saveUser({ name: 'Rina', role: 'kasir', pin: '222222', active: true });
+    s.saveUser({ name: 'Budi', role: 'gudang', pin: '333333', active: true });
+    s.setVoidPin({ pin: '765432' });
+    const st = () => { const p = s.getProduct('BT-A'); return [p.floor_stock, p.warehouse_stock, p.damaged_stock]; };
+    const req = (extra) => ({ reason: 'Salah input', approver_pin: '765432', requested_by: 'Budi', ...extra });
+    // Mutasi gudang → toko 30, lalu 10 terjual: batal → gudang kembali 100, toko −10 (boleh minus)
+    const mt = s.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'BT-A', qty: 30 }] });
+    s.openShift({ cashier_name: 'Rina' });
+    s.checkout({ items: [{ sku: 'BT-A', qty: 40 }], payment_method: 'Tunai', cash_received: 40000 });
+    assert.deepStrictEqual(st(), [-10, 70, 5]);
+    throwsMsg(() => s.cancelTransferDoc({ id: mt.id, ...req({ approver_pin: '222222' }) }), /PIN Admin \/ PIN Pembatalan salah/);
+    throwsMsg(() => s.cancelTransferDoc({ id: mt.id, ...req({ approver_pin: '333333' }) }), /PIN Admin \/ PIN Pembatalan salah/);
+    throwsMsg(() => s.cancelTransferDoc({ id: mt.id, ...req({ reason: 'ab' }) }), /minimal 3/);
+    assert.ok(!s.getTransferDoc({ id: mt.id }).cancel_block);
+    const c = s.cancelTransferDoc({ id: mt.id, ...req() });
+    assert.deepStrictEqual([c.cancel_reason, c.cancelled_by, c.cancel_approved_by, !!c.cancelled_at], ['Salah input', 'Budi', 'Kepala Toko (PIN Pembatalan)', true]);
+    assert.deepStrictEqual(st(), [-40, 100, 5]);
+    throwsMsg(() => s.cancelTransferDoc({ id: mt.id, ...req() }), /sudah dibatalkan/);
+    assert.match(s.getTransferDoc({ id: mt.id }).cancel_block, /sudah dibatalkan/);
+    // Zona luar: BS → Supplier 3, batal → BS kembali 5 (PIN Admin juga berlaku)
+    const ret = s.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', items: [{ sku: 'BT-A', qty: 3 }] });
+    assert.strictEqual(s.cancelTransferDoc({ id: ret.id, ...req({ approver_pin: '111111' }) }).cancel_approved_by, 'Bos');
+    assert.deepStrictEqual(st(), [-40, 100, 5]);
+    // Penerimaan 2 Dus (48) ke gudang + 5 ke toko; 60 keluar dari gudang → batal: gudang −48 (boleh minus), toko −5
+    const rc = s.createReception({ reference_no: 'SJ-BATAL', items: [{ sku: 'BT-A', qty: 2, pack_type: 'Dus', destination: 'warehouse' }, { sku: 'BT-A', qty: 5, pack_type: 'Biji', destination: 'floor' }] });
+    s.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'BT-A', qty: 148 }] });
+    assert.deepStrictEqual(st(), [113, 0, 5]);
+    const rcc = s.cancelReception({ id: rc.id, ...req() });
+    assert.ok(rcc.cancelled_at && rcc.cancel_block);
+    assert.deepStrictEqual(st(), [108, -48, 5]);
+    throwsMsg(() => s.cancelReception({ id: rc.id, ...req() }), /sudah dibatalkan/);
+    throwsMsg(() => s.createReception({ reference_no: 'SJ-BATAL', items: [{ sku: 'BT-A', qty: 1, destination: 'floor' }] }), /sudah pernah dicatat/);
+    // Lebih dari 7 hari → ditolak
+    const old = s.createTransferDoc({ from_zone: 'floor', to_zone: 'warehouse', items: [{ sku: 'BT-A', qty: 1 }] });
+    d2.tx(() => d2.run("UPDATE stock_transfer_docs SET created_at = '2020-01-01 10:00:00' WHERE id = ?", [old.id]));
+    throwsMsg(() => s.cancelTransferDoc({ id: old.id, ...req() }), /7 hari terakhir/);
+    const oldRc = s.createReception({ reference_no: 'SJ-LAMA', items: [{ sku: 'BT-A', qty: 1, destination: 'floor' }] });
+    d2.tx(() => d2.run("UPDATE stock_receptions SET received_at = '2020-01-01 10:00:00' WHERE id = ?", [oldRc.id]));
+    throwsMsg(() => s.cancelReception({ id: oldRc.id, ...req() }), /7 hari terakhir/);
+    // Dokumen otomatis (pesanan / batal nota) tidak bisa dibatalkan di sini
+    const auto = s.createTransferDoc({ from_zone: 'floor', to_zone: 'damaged', reason: 'Pesanan PSN-20261123-0001 diambil pelanggan', items: [{ sku: 'BT-A', qty: 1 }] });
+    throwsMsg(() => s.cancelTransferDoc({ id: auto.id, ...req() }), /pesanan diambil/);
+    // Kantor diberi tahu lewat snapshot
+    const batal = s.mbBatch({ force: true }).snapshot.dokumen_batal.map((x) => [x.jenis, x.no_dokumen, x.cancel_approved_by]);
+    assert.deepStrictEqual(batal, [['mutasi', mt.doc_no, 'Kepala Toko (PIN Pembatalan)'], ['mutasi', ret.doc_no, 'Bos'], ['penerimaan', 'SJ-BATAL', 'Kepala Toko (PIN Pembatalan)']]);
+  });
+
   await t('mutasi lama tanpa dokumen dibuatkan dokumen MT-LAMA saat database dibuka', async () => {
     db.tx(() => db.run("INSERT INTO stock_transfers(sku, from_zone, to_zone, qty, reason) VALUES('TF-A', 'floor', 'damaged', 1, 'versi lama')"));
     const db2 = await Database.open(file);

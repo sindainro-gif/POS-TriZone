@@ -12,6 +12,54 @@ function bindMoney(input) {
 const moneyVal = (input) => Number(String(input.value).replace(/\D/g, '')) || 0;
 const setMoney = (input, n) => { input.value = n ? Number(n).toLocaleString('id-ID') : ''; };
 
+// Batal dokumen (mutasi / penerimaan): alasan + PIN Admin / PIN Pembatalan. Stok dikembalikan (boleh minus),
+// dokumen tetap di riwayat bertanda Dibatalkan. submit(reason, pin) → Promise.
+function openDocCancelForm({ title, okLabel, changes, submit }) {
+  modal({
+    title,
+    wide: true,
+    body: `<div class="alert warn" style="margin-bottom:10px">Dokumen tidak dihapus: tetap ada di riwayat dengan tanda <b>Dibatalkan</b>.
+        Stok dikembalikan seperti sebelum dokumen dibuat (boleh menjadi <b>minus</b> bila barangnya sudah terpakai).
+        Perlu persetujuan <b>PIN Admin</b> atau <b>PIN Pembatalan</b> (kepala toko).</div>
+      <div class="tbl-wrap" style="max-height:220px"><table class="tbl"><thead><tr><th>Barang</th><th>Perubahan stok</th></tr></thead><tbody>
+        ${changes.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.text}</td></tr>`).join('')}</tbody></table></div>
+      <div class="row-2" style="margin-top:12px">
+        <div class="field"><label>Alasan pembatalan *</label><input id="dcReason" maxlength="200" placeholder="Contoh: salah input jumlah / salah barang"></div>
+        <div class="field"><label>PIN Admin / PIN Pembatalan *</label><input id="dcPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>
+      </div>`,
+    actions: [
+      { label: 'Batal', kind: 'ghost' },
+      {
+        label: okLabel,
+        kind: 'danger',
+        onClick: async ({ close, el, btn }) => {
+          btn.disabled = true;
+          try {
+            await submit($('#dcReason', el).value, $('#dcPin', el).value);
+            close();
+          } catch (err) {
+            btn.disabled = false;
+            sound('err');
+            toast(err.message, 'err', 7000);
+            if (/PIN/.test(err.message)) { $('#dcPin', el).value = ''; $('#dcPin', el).focus(); }
+          }
+        },
+      },
+    ],
+    onOpen: (el) => {
+      $('#dcReason', el).focus();
+      $('#dcReason', el).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#dcPin', el).focus(); } });
+      $('#dcPin', el).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('.modal-foot .btn.danger', el).click(); } });
+    },
+  });
+}
+// Keterangan dokumen yang sudah dibatalkan (di Detail)
+const cancelInfo = (d) => (d.cancelled_at
+  ? `<div class="alert danger" style="margin-bottom:10px"><b>Dibatalkan</b> ${fmtTime(d.cancelled_at)} · ${esc(d.cancel_reason || '-')}
+      · disetujui ${esc(d.cancel_approved_by || '-')}${d.cancelled_by ? ` · diminta ${esc(d.cancelled_by)}` : ''}</div>`
+  : '');
+const cancelledTag = (d) => (d.cancelled_at ? ' <span class="badge bs">Dibatalkan</span>' : '');
+
 // Cetak ulang nota: perlu PIN Admin / PIN Pembatalan (kepala toko); nota tercetak dengan tanda CETAK ULANG.
 // receipt (opsional) = data nota dari layar transaksi berhasil.
 function reprintNota(receipt_no, receipt) {
@@ -1071,8 +1119,8 @@ views.transfers = (() => {
 
   async function loadHistory() {
     const rows = await api('transfers:list', { q: $('#trSearch').value, limit: 300 });
-    $('#trHistory').innerHTML = rows.length ? rows.map((d) => `<tr>
-        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b></td>
+    $('#trHistory').innerHTML = rows.length ? rows.map((d) => `<tr class="${d.cancelled_at ? 'cancelled' : ''}">
+        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b>${cancelledTag(d)}</td>
         <td>${zoneTag(d.from_zone)}</td><td class="arrow">→</td><td>${zoneTag(d.to_zone)}</td>
         <td class="r">${num(d.line_count)}</td><td class="r"><b>${num(d.total_qty)}</b></td><td>${esc(d.reason || '-')}</td>
         <td><button class="btn sm ghost" data-id="${d.id}">Detail</button></td></tr>`).join('')
@@ -1085,16 +1133,42 @@ views.transfers = (() => {
     modal({
       title: `Mutasi ${d.doc_no}`,
       wide: true,
-      body: `<div class="kv"><span>Tanggal</span><b>${fmtTime(d.created_at)}</b></div>
+      body: `${cancelInfo(d)}<div class="kv"><span>Tanggal</span><b>${fmtTime(d.created_at)}</b></div>
         <div class="kv"><span>Arah</span><b>${zoneTag(d.from_zone)} → ${zoneTag(d.to_zone)}</b></div>
         <div class="kv"><span>Alasan</span><b>${esc(d.reason || '-')}</b></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Jumlah</th><th>Satuan</th></tr></thead><tbody>
         ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td><td class="r"><b>${num(i.pack_type === 'Coly' ? i.pack_qty : i.qty)}</b></td>
           <td>${i.pack_type === 'Coly' ? `Coly <span class="muted">(isi ${num(i.qty / i.pack_qty)}) = ${num(i.qty)} Biji</span>` : 'Biji'}</td></tr>`).join('')}
-        </tbody></table></div>`,
-      actions: [{ label: 'Tutup', kind: 'primary' }],
+        </tbody></table></div>
+        ${!d.cancelled_at && d.cancel_block ? `<p class="muted small">${esc(d.cancel_block)}</p>` : ''}`,
+      actions: [
+        ...(!d.cancel_block ? [{ label: 'Batalkan Mutasi', kind: 'danger', onClick: ({ close }) => { close(); cancelDoc(d); } }] : []),
+        { label: 'Tutup', kind: 'primary' },
+      ],
     });
   });
+
+  // Batal mutasi: zona asal kembali bertambah, zona tujuan berkurang (zona luar seperti Supplier tidak punya stok)
+  const STOCK_ZONES = ['floor', 'warehouse', 'damaged', 'shopee'];
+  function cancelDoc(d) {
+    const zn = (z) => esc(state.meta.zones[z] || z);
+    const changes = d.items.map((i) => ({
+      name: i.name || i.sku,
+      text: [STOCK_ZONES.includes(d.from_zone) ? `${zn(d.from_zone)} <b class="diff-pos">+${num(i.qty)}</b>` : '',
+        STOCK_ZONES.includes(d.to_zone) ? `${zn(d.to_zone)} <b class="diff-neg">−${num(i.qty)}</b>` : ''].filter(Boolean).join(' · ') || '-',
+    }));
+    openDocCancelForm({
+      title: `Batalkan Mutasi ${d.doc_no}`,
+      okLabel: 'Batalkan Mutasi',
+      changes,
+      submit: async (reason, approver_pin) => {
+        await api('transfers:cancel', { id: d.id, reason, approver_pin });
+        toast(`Mutasi ${d.doc_no} dibatalkan, stok dikembalikan.`, 'ok', 6000);
+        loadHistory();
+        loadLow();
+      },
+    });
+  }
 
   let inited = false;
   function show() {
@@ -1361,8 +1435,8 @@ views.receiving = (() => {
 
   async function loadHistory() {
     const rows = await api('receptions:list', { q: $('#rcSearch').value });
-    $('#rcHistory').innerHTML = rows.length ? rows.map((r) => `<tr>
-        <td class="muted">${fmtTime(r.received_at)}</td><td class="mono"><b>${esc(r.reference_no)}</b></td>
+    $('#rcHistory').innerHTML = rows.length ? rows.map((r) => `<tr class="${r.cancelled_at ? 'cancelled' : ''}">
+        <td class="muted">${fmtTime(r.received_at)}</td><td class="mono"><b>${esc(r.reference_no)}</b>${cancelledTag(r)}</td>
         <td class="r">${num(r.line_count)}</td><td class="r">${num(r.total_items_count)}</td><td class="muted">${esc(r.notes || '')}</td>
         <td><button class="btn sm ghost" data-id="${r.id}">Detail</button></td></tr>`).join('')
       : '<tr><td colspan="6" class="empty-row">Belum ada riwayat penerimaan.</td></tr>';
@@ -1374,20 +1448,36 @@ views.receiving = (() => {
     modal({
       title: `Penerimaan ${r.reference_no}`,
       wide: true,
-      body: `<div class="kv"><span>Tanggal</span><b>${fmtTime(r.received_at)}</b></div>
+      body: `${cancelInfo(r)}<div class="kv"><span>Tanggal</span><b>${fmtTime(r.received_at)}</b></div>
         ${r.supplier_name ? `<div class="kv"><span>Supplier</span><b>${esc(r.supplier_name)}</b></div>` : ''}
         ${r.notes ? `<div class="kv"><span>Catatan</span><b>${esc(r.notes)}</b></div>` : ''}
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Barang</th><th>Satuan Input</th><th class="r">Diterima (Biji)</th><th>Tujuan</th></tr></thead><tbody>
         ${r.items.map((i) => `<tr><td><div class="pname">${esc(i.name || i.sku)}</div><div class="psub mono">${esc(i.sku)}</div></td>
           <td>${i.pack_type === 'Dus' ? `${esc(i.pack_unit || 'Dus')} (isi ${num(i.pack_ratio)})` : 'Biji'}</td>
           <td class="r"><b>${num(i.quantity_received)}</b></td><td><span class="badge ${DEST_CLASS[i.destination]}">${DEST[i.destination]}</span></td></tr>`).join('')}
-        </tbody></table></div>`,
+        </tbody></table></div>
+        ${!r.cancelled_at && r.cancel_block ? `<p class="muted small">${esc(r.cancel_block)}</p>` : ''}`,
       actions: [
-        { label: 'Cetak Barcode', kind: 'ghost', onClick: ({ close }) => { close(); views.barcode.openWith({ receptionId: r.id }); } },
+        ...(!r.cancelled_at ? [{ label: 'Cetak Barcode', kind: 'ghost', onClick: ({ close }) => { close(); views.barcode.openWith({ receptionId: r.id }); } }] : []),
+        ...(!r.cancel_block ? [{ label: 'Batalkan Penerimaan', kind: 'danger', onClick: ({ close }) => { close(); cancelReception(r); } }] : []),
         { label: 'Tutup', kind: 'primary' },
       ],
     });
   });
+
+  // Batal penerimaan: stok di zona tujuan dikurangi lagi (boleh minus)
+  function cancelReception(r) {
+    openDocCancelForm({
+      title: `Batalkan Penerimaan ${r.reference_no}`,
+      okLabel: 'Batalkan Penerimaan',
+      changes: r.items.map((i) => ({ name: i.name || i.sku, text: `${DEST[i.destination]} <b class="diff-neg">−${num(i.quantity_received)}</b>` })),
+      submit: async (reason, approver_pin) => {
+        await api('receptions:cancel', { id: r.id, reason, approver_pin });
+        toast(`Penerimaan ${r.reference_no} dibatalkan, stok dikurangi kembali.`, 'ok', 6000);
+        loadHistory();
+      },
+    });
+  }
 
   function show() {
     render();
