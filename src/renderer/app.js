@@ -3021,7 +3021,7 @@ async function refreshDraftBadge(n) {
   if (n === undefined) n = await api('rcDrafts:count').catch(() => null);
   if (n === null) return;
   let b = $('.nav-badge', btn);
-  if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; btn.querySelector('kbd').before(b); }
+  if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; btn.appendChild(b); }
   b.textContent = n;
   b.title = `${n} barang penerimaan belum terdaftar di Daftar Barang — lihat Draft di Penerimaan`;
   b.classList.toggle('hidden', !n);
@@ -3035,7 +3035,7 @@ async function refreshOutBadge(rows) {
   if (!rows) return;
   const n = rows.filter((p) => p.sold_out).length;
   let b = $('.nav-badge', btn);
-  if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; btn.querySelector('kbd').before(b); }
+  if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; btn.appendChild(b); }
   b.textContent = n;
   b.title = `${n} barang display tokonya habis/minus — lihat Saran Restock`;
   b.classList.toggle('hidden', !n);
@@ -3357,8 +3357,6 @@ document.addEventListener('keydown', (e) => {
     }
     return;
   }
-  const keys = { F1: 'checkout', F3: 'transfers', F4: 'receiving', F5: 'products', F7: 'opname', F6: 'shift', F10: 'barcode' };
-  if (keys[e.key]) { e.preventDefault(); go(keys[e.key]); return; }
   // F12 = isi Uang Diterima (Enter di kolom itu = Bayar). Pengaturan dibuka lewat tombol sidebar.
   if (e.key === 'F12') {
     e.preventDefault();

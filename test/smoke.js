@@ -402,11 +402,17 @@ app.on('browser-window-created', (_e, win) => {
       const asing = svc.listReceptionDrafts()[0];
       svc.deleteReceptionDraft({ id: asing.id });
 
-      // Stok Opname (F7): scan barang + jumlah fisik → Simpan → stok zona = hitungan fisik
-      await run(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F7', bubbles: true }))`);
+      // Tombol F untuk pindah menu sudah dihapus: F1/F3/F4/F5/F6/F7/F10 tidak memindah layar, label F di menu tidak ada
+      const fKeys = await run(`(() => { const before = state.view;
+        for (const key of ['F1', 'F3', 'F4', 'F5', 'F6', 'F7', 'F10']) document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+        return { before, after: state.view, kbd: document.querySelectorAll('#nav kbd').length }; })()`);
+      console.log('tombol F menu:', JSON.stringify(fKeys));
+      if (fKeys.after !== fKeys.before || fKeys.kbd !== 0) throw new Error('tombol F pindah menu seharusnya sudah tidak ada');
+      // Stok Opname (klik menu): scan barang + jumlah fisik → Simpan → stok zona = hitungan fisik
+      await run(`document.querySelector('#nav [data-view=opname]').click()`);
       await wait(500);
       const opView = await run(`state.view + '/' + document.activeElement.id + (document.querySelector('#view-opname').offsetParent && document.querySelector('#nav [data-view=opname]').classList.contains('active') ? '' : '/tersembunyi')`);
-      if (opView !== 'opname/opPicker') throw new Error(`F7 seharusnya membuka Stok Opname dengan kursor di Barang (${opView})`);
+      if (opView !== 'opname/opPicker') throw new Error(`menu Stok Opname seharusnya terbuka dengan kursor di Barang (${opView})`);
       await run(`(() => { const d = document.querySelector('#opZone'); d.value = 'warehouse'; d.dispatchEvent(new Event('change')); })()`);
       await wait(200);
       const opAdd = async (code, n) => {
