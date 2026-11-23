@@ -841,7 +841,12 @@ app.on('browser-window-created', (_e, win) => {
         const pullShown = await run(`(() => { const b = document.querySelector('#pdPull'); return !!b && b.offsetParent !== null; })()`);
         if (!pullShown) throw new Error(`tombol Perbarui Daftar Barang tidak terlihat oleh ${name}`);
         if (/mother base/i.test(await run(`document.querySelector('#view-products').innerText`))) throw new Error(`Daftar Barang menyebut mother base untuk ${name}`);
-        const edits = await run(`document.querySelectorAll('#pdBody [data-edit]').length + (document.querySelector('#pdAdd').classList.contains('hidden') ? 0 : 1)`);
+        const edits = await run(`document.querySelectorAll('#pdBody [data-edit]').length`);
+        // Tambah Barang & Unduh Template hanya Admin; Import untuk Gudang
+        const pdBtns = await run(`['#pdAdd', '#pdTemplate', '#pdImport'].map((s) => document.querySelector(s).classList.contains('hidden') ? 0 : 1).join('')`);
+        const addNew = await run(`window.posBridge.call('products:save', { isNew: true, product: { sku: 'X-BARU', barcode: '1234', name: 'Baru', unit_price: 1000 } })`);
+        const tpl = await run(`window.posBridge.call('products:template')`);
+        if (pdBtns !== (name === 'Budi' ? '001' : '000') || addNew.ok || !/Akses ditolak/.test(addNew.error) || tpl.ok || !/Akses ditolak/.test(tpl.error)) throw new Error(`tambah barang / template untuk ${name} salah: ${pdBtns} ${addNew.error} ${tpl.error}`);
         if ((name === 'Rina') !== (edits === 0)) throw new Error(`hak ubah Daftar Barang untuk ${name} salah`);
         await shot(`11-login-${name.toLowerCase()}`);
         if (name === 'Rina') {

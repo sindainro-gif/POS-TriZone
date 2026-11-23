@@ -796,7 +796,8 @@ const ACCESS = {
   'products:list': ALL, 'products:categories': ALL, 'products:get': ALL, 'products:findByCode': ALL, 'products:search': ALL,
   'products:pullMaster': ALL,
   'mb:sendSales': KASIR,
-  'products:save': GUDANG, 'products:delete': GUDANG, 'products:import': GUDANG, 'products:template': GUDANG,
+  // Tambah barang manual & unduh template: hanya Admin (Gudang menambah barang lewat Import). products:template tidak tercantum = Admin
+  'products:save': GUDANG, 'products:delete': GUDANG, 'products:import': GUDANG,
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
@@ -899,7 +900,10 @@ const handlers = {
   'products:get': ({ sku }) => viaGudang(() => svc.getProduct(sku), () => offline.getProduct(sku)),
   'products:findByCode': (a) => viaGudang(() => svc.findByCode(a), () => offline.findByCode(a)),
   'products:search': (a) => viaGudang(() => svc.searchProducts(a), () => offline.searchProducts(a)),
-  'products:save': (a) => svc.saveProduct(a),
+  'products:save': (a = {}) => {
+    if (a.isNew && session.role !== 'admin') throw userError('Akses ditolak: barang baru hanya bisa ditambah Admin, atau lewat Import.');
+    return svc.saveProduct(a);
+  },
   'products:delete': (a) => svc.deleteProduct(a),
   'products:import': () => importProducts(),
   'products:template': () => saveTemplate({

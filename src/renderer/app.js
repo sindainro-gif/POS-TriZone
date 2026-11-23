@@ -3072,7 +3072,9 @@ async function logout() {
 
 function applyRole() {
   $$('#nav .nav-btn, .sidebar-foot .nav-btn').forEach((b) => b.classList.toggle('hidden', !canView(b.dataset.view)));
-  ['#pdAdd', '#pdImport', '#pdTemplate'].forEach((sel) => $(sel).classList.toggle('hidden', !canEditProducts()));
+  // Tambah Barang & Unduh Template: hanya Admin; Gudang menambah barang lewat Import
+  ['#pdAdd', '#pdTemplate'].forEach((sel) => $(sel).classList.toggle('hidden', role() !== 'admin'));
+  $('#pdImport').classList.toggle('hidden', !canEditProducts());
   $('#opFormCard').classList.toggle('hidden', !canManualOpname());
   $('#opGudangNote').classList.toggle('hidden', canManualOpname());
   refreshUserBadge();
