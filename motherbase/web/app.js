@@ -18,7 +18,9 @@ const geser = (t, n) => { const d = new Date(`${t}T00:00:00Z`); d.setUTCDate(d.g
 const selisihHari = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 864e5);
 const fmtTgl = (s) => (s ? new Date(String(s).length === 10 ? `${s}T00:00:00Z` : s).toLocaleDateString('id-ID',
   { day: 'numeric', month: 'short', year: 'numeric', timeZone: String(s).length === 10 ? 'UTC' : 'Asia/Jakarta' }) : '-');
-const fmtWaktu = (s) => (s ? new Date(s).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }) : '-');
+const ZONA_TOKO = { floor: 'Display Toko', warehouse: 'Gudang Utama', damaged: 'Gudang BS', shopee: 'Gudang Shopee', customer: 'Retur Pelanggan',
+  supplier: 'Supplier', disposed: 'Dibuang', shopee_sold: 'Terjual di Shopee' };
+const fmtWaktu =(s) => (s ? new Date(s).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }) : '-');
 function relatif(s) {
   if (!s) return 'belum pernah';
   const m = Math.round((Date.now() - new Date(s)) / 60000);
@@ -669,11 +671,11 @@ const hOpname = (el) => halamanStok(el, 'opname');
 
 async function halamanStok(el, jenis) {
   const opname = jenis === 'opname';
-  const daftar = opname ? [['kantor', 'Opname dari kantor'], ['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone']] : [['cari', 'Cari stok'], ['lambat', 'Stok lambat']];
+  const daftar = opname ? [['kantor', 'Opname dari kantor'], ['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone']] : [['cari', 'Cari stok'], ['lambat', 'Stok lambat'], ['dok', 'Mutasi & penerimaan']];
   let tab = daftar[0][0];
   el.innerHTML = `${opname
     ? head('Stock Opname', 'Opname dari kantor (tarik stok, hitung, kirim ke toko), review stok opname dari toko, dan selisih stok Trizone terhadap hitungan mother base.')
-    : head('Stok', 'Stok terkini tiap toko (dari Trizone) dan barang yang lama tidak terjual.', tombolTarik('stTarik'))}
+    : head('Stok', 'Stok terkini tiap toko (dari Trizone), barang yang lama tidak terjual, dan riwayat mutasi & penerimaan toko.', tombolTarik('stTarik'))}
     ${tabs('stTab', daftar, tab)}<div id="stIsi"></div>`;
   pasangTabs(el, 'stTab', (t) => { tab = t; tampil(); });
   const isi = $('#stIsi', el);
@@ -687,6 +689,7 @@ async function halamanStok(el, jenis) {
       if (tab === 'so') return await reviewSo();
       if (tab === 'selisih') return await selisih();
       if (tab === 'cari') return await cari();
+      if (tab === 'dok') return await dokumen();
       return await lambat();
     } catch (e) { isi.innerHTML = `<div class="card"><div class="kosong">${esc(pesanError(e))}</div></div>`; }
   }
@@ -999,6 +1002,60 @@ async function halamanStok(el, jenis) {
         { k: 'shopee', judul: 'Shopee' }, { k: 'per_waktu', judul: 'Stok per' }],
       rows.map((r) => ({ ...r, per_waktu: fmtWaktu(r.per_waktu) }))));
     await muatPilihan();
+    await muat();
+  }
+
+  // Mutasi & penerimaan toko. Dokumen yang dibatalkan di toko (PIN) tetap tampil dengan tanda Dibatalkan,
+  // tetapi tidak dihitung di total.
+  async function dokumen() {
+    const f = S.filterDok || (S.filterDok = { toko: '', jenis: '', status: '' });
+    const opsi = (daftar, nilai) => daftar.map(([v, l]) => `<option value="${esc(v)}" ${v === nilai ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    isi.innerHTML = `<div class="card"><div class="card-head"><div class="row" style="flex-wrap:wrap">${kontrolPeriode()}
+        ${S.toko.length > 1 ? pilihToko('dkToko', f.toko) : ''}
+        <select id="dkJenis" aria-label="Jenis dokumen">${opsi([['', 'Mutasi & penerimaan'], ['mutasi', 'Mutasi'], ['penerimaan', 'Penerimaan']], f.jenis)}</select>
+        <select id="dkStatus" aria-label="Status dokumen">${opsi([['', 'Semua status'], ['sah', 'Tidak dibatalkan'], ['batal', 'Dibatalkan']], f.status)}</select>
+        <button class="btn sm" id="dkCsv">Unduh CSV</button></div></div>
+      <div class="muted small" id="dkJumlah" style="margin:-4px 0 8px"></div><div id="dkHasil"></div></div>`;
+    let rows = [];
+    const keterangan = (r) => (r.jenis === 'mutasi'
+      ? `${ZONA_TOKO[r.dari] || r.dari || '-'} → ${ZONA_TOKO[r.ke] || r.ke || '-'}${r.keterangan ? ` · ${r.keterangan}` : ''}`
+      : r.keterangan || '');
+    const kolom = [
+      { k: 'waktu', judul: 'Waktu', fmt: (v) => esc(fmtWaktu(v)) },
+      { k: 'kode_toko', judul: 'Toko' },
+      { k: 'jenis', judul: 'Jenis', fmt: (v) => (v === 'mutasi' ? 'Mutasi' : 'Penerimaan') },
+      { k: 'no_dokumen', judul: 'No. dokumen', fmt: (v, r) => `<span class="mono"${r.dibatalkan_at ? ' style="text-decoration:line-through"' : ''}>${esc(v)}</span>` },
+      { k: 'keterangan', judul: 'Keterangan', fmt: (v, r) => esc(keterangan(r)) },
+      { k: 'jumlah_baris', judul: 'Barang', num: true, fmt: (v) => num(v) },
+      { k: 'total_qty', judul: 'Qty (Biji)', num: true, fmt: (v, r) => (r.dibatalkan_at ? `<span class="muted">${num(v)}</span>` : num(v)) },
+      { k: 'dibatalkan_at', judul: 'Status', fmt: (v, r) => (v ? `<span class="pill bad">Dibatalkan</span> <span class="muted small">${esc(fmtWaktu(v))}</span>
+        <div class="muted small">${esc([r.alasan_batal, r.batal_diminta_oleh && `diminta ${r.batal_diminta_oleh}`, r.batal_disetujui_oleh && `disetujui ${r.batal_disetujui_oleh}`].filter(Boolean).join(' · '))}</div>` : '') },
+    ];
+    const BATAS = 2000;
+    const muat = async () => {
+      const p = periode();
+      const semua = await rpc('laporan_dokumen_toko', { p_dari: p.dari, p_sampai: p.sampai, p_kode_toko: f.toko || null, p_jenis: f.jenis || null, p_batas: BATAS });
+      rows = semua.filter((r) => (f.status === 'batal' ? r.dibatalkan_at : f.status === 'sah' ? !r.dibatalkan_at : true));
+      const sah = rows.filter((r) => !r.dibatalkan_at);
+      const batal = rows.length - sah.length;
+      const total = (j) => sah.filter((r) => r.jenis === j).reduce((a, r) => a + Number(r.total_qty || 0), 0);
+      $('#dkJumlah', isi).innerHTML = `${num(rows.length)} dokumen · total mutasi <b>${num(total('mutasi'))}</b> Biji, penerimaan <b>${num(total('penerimaan'))}</b> Biji`
+        + (batal ? ` · <span class="pill bad">${num(batal)} dibatalkan</span> tidak dihitung` : '')
+        + (semua.length >= BATAS ? ` (hanya ${num(BATAS)} pertama; persempit periode)` : '');
+      $('#dkHasil', isi).innerHTML = tabel(kolom, rows, { kosong: 'Tidak ada mutasi atau penerimaan di periode ini.' });
+    };
+    const ulang = () => muat().catch((e) => toast(pesanError(e), 'bad'));
+    pasangPeriode(isi, ulang);
+    if ($('#dkToko', isi)) $('#dkToko', isi).addEventListener('change', (e) => { f.toko = e.target.value; ulang(); });
+    $('#dkJenis', isi).addEventListener('change', (e) => { f.jenis = e.target.value; ulang(); });
+    $('#dkStatus', isi).addEventListener('change', (e) => { f.status = e.target.value; ulang(); });
+    $('#dkCsv', isi).addEventListener('click', () => unduhCsv(`mutasi_penerimaan_${periode().dari}_${periode().sampai}.csv`,
+      [{ k: 'waktu', judul: 'Waktu' }, { k: 'kode_toko', judul: 'Toko' }, { k: 'jenis', judul: 'Jenis' }, { k: 'no_dokumen', judul: 'No. dokumen' },
+        { k: 'ket', judul: 'Keterangan' }, { k: 'jumlah_baris', judul: 'Barang' }, { k: 'total_qty', judul: 'Qty (Biji)' }, { k: 'status', judul: 'Status' },
+        { k: 'dibatalkan', judul: 'Dibatalkan' }, { k: 'alasan_batal', judul: 'Alasan batal' }, { k: 'batal_diminta_oleh', judul: 'Diminta oleh' },
+        { k: 'batal_disetujui_oleh', judul: 'Disetujui oleh' }],
+      rows.map((r) => ({ ...r, waktu: fmtWaktu(r.waktu), ket: keterangan(r), status: r.dibatalkan_at ? 'Dibatalkan' : '',
+        dibatalkan: r.dibatalkan_at ? fmtWaktu(r.dibatalkan_at) : '' }))));
     await muat();
   }
 

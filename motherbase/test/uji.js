@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -268,6 +268,71 @@ function fileAccurate() {
     `${T.getProduct('UJ-KESET').floor_stock}.000`);
   ok('stok seharusnya per zona (SO + penerimaan − jual ± mutasi) sama persis dengan stok Trizone');
 
+  // Batal mutasi & penerimaan di toko (PIN Admin): dokumen tetap, ditandai batal, stok dikembalikan saat dibatalkan.
+  // Dokumen yang dibuat sesudah SO patokan: dokumen + pembaliknya = nol.
+  const docMt = (alasan) => T.listTransferDocs({}).find((d) => d.reason === alasan);
+  const batalMt = (alasan, why) => T.cancelTransferDoc({ id: docMt(alasan).id, reason: why, requested_by: 'Dewi', approver_pin: '246810' });
+  batalMt('Pesanan', 'Pesanan Shopee dibatalkan pembeli');
+  batalMt('Stok online', 'Salah pilih zona');
+  const rc4 = T.listReceptions({}).find((x) => x.reference_no === 'DO.UJI.0004');
+  T.cancelReception({ id: rc4.id, reason: 'Barang dikembalikan ke kantor', requested_by: 'Dewi', approver_pin: '246810' });
+  assert.deepStrictEqual(T.mbBatch({ force: true }).snapshot.dokumen_batal.map((d) => [d.jenis, d.no_dokumen]),
+    [['mutasi', docMt('Stok online').doc_no], ['mutasi', docMt('Pesanan').doc_no], ['penerimaan', 'DO.UJI.0004']]);
+  tidur(1100);
+  r = await mb.kirim();
+  assert.ok(r.snapshot);
+  const batalDb = () => q(`select string_agg(no_dok || '|' || alasan_batal || '|' || batal_diminta_oleh || '|' || batal_disetujui_oleh, ';' order by no_dok)
+    from mutasi_toko where kode_toko = 'TRP' and dibatalkan_at is not null`);
+  assert.strictEqual(batalDb(), [docMt('Stok online'), docMt('Pesanan')].sort((a, b) => a.doc_no.localeCompare(b.doc_no))
+    .map((d) => `${d.doc_no}|${d.cancel_reason}|Dewi|Bu Admin`).join(';'));
+  assert.strictEqual(q("select alasan_batal || '|' || batal_disetujui_oleh || '|' || (dibatalkan_at > diterima_at) from penerimaan_toko where no_sj = 'DO.UJI.0004'"),
+    'Barang dikembalikan ke kantor|Bu Admin|true');
+  assert.strictEqual(q("select count(*) from penerimaan_toko where kode_toko = 'TRP' and dibatalkan_at is null"), '1');
+  const stokSama = (pesan) => {
+    assert.strictEqual(q('select count(*) from v_selisih_snapshot'), '0', `${pesan}:\n` + q('select * from v_selisih_snapshot'));
+    for (const [zona, kolom] of [['floor', 'floor_stock'], ['warehouse', 'warehouse_stock'], ['shopee', 'shopee_stock']]) {
+      assert.strictEqual(q(`select stok_seharusnya from v_stok_seharusnya where kode_toko='TRP' and sku='UJ-KESET' and zona='${zona}'`),
+        `${T.getProduct('UJ-KESET')[kolom]}.000`, `${pesan} (${zona})`);
+    }
+  };
+  stokSama('selisih setelah batal');
+  // Laporan: Shopee terjual tidak dihitung; SJ DO.UJI.0004 kembali belum diinput; daftar dokumen bertanda batal
+  assert.strictEqual(q(`select count(*) from v_permintaan_harian where kode_toko='TRP' and kanal='SHOPEE'`), '0');
+  assert.match(q("select status from v_pencocokan_sj where no_sj = 'DO.UJI.0004'"), /^(BELUM_DIINPUT|MENUNGGU)$/);
+  assert.strictEqual(q("select status from v_pencocokan_sj where no_sj = 'DO.UJI.0001'"), 'COCOK');
+  assert.strictEqual(q("select count(*) from v_sj_banding where no_sj = 'DO.UJI.0004' and terima_biji is not null"), '0');
+  const dokLap = JSON.parse(q("select json_agg(x) from public.laporan_dokumen_toko(mb.tgl_wib(now()) - 1, mb.tgl_wib(now()), 'TRP') x"));
+  assert.strictEqual(dokLap.filter((d) => d.dibatalkan_at).length, 3);
+  assert.deepStrictEqual(dokLap.filter((d) => d.jenis === 'penerimaan').map((d) => [d.no_dokumen, !!d.dibatalkan_at]).sort(),
+    [['DO.UJI.0001', false], ['DO.UJI.0004', true]]);
+  assert.strictEqual(q("select count(*) from public.laporan_dokumen_toko(mb.tgl_wib(now()) - 1, mb.tgl_wib(now()), 'TRP', 'mutasi')"), q("select count(*) from mutasi_toko where kode_toko = 'TRP'"));
+  // SO disetujui DI ANTARA mutasi dan pembatalannya: mutasinya sudah termasuk di SO, hanya pembaliknya yang dihitung
+  T.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', reason: 'Antara SO', items: [{ sku: 'UJ-KESET', qty: 1 }] });
+  tidur(1100);
+  T.createOpname({ zone: 'floor', notes: 'SO antara', items: [{ sku: 'UJ-KESET', counted: T.getProduct('UJ-KESET').floor_stock }] });
+  tidur(1100);
+  await mb.kirim();
+  q("update stok_opname_review set status='DISETUJUI'");
+  stokSama('selisih sebelum batal (SO antara)');
+  tidur(1100);
+  batalMt('Antara SO', 'Uji SO di antara');
+  await mb.kirim();
+  stokSama('selisih setelah batal (SO antara)');
+  // Kiriman ulang (semua dokumen + snapshot) tidak dobel dan tidak menghapus tanda batal
+  const tandaBatal = () => q("select string_agg(no_dok || dibatalkan_at, ',' order by no_dok) from mutasi_toko where dibatalkan_at is not null")
+    + q("select string_agg(no_sj || dibatalkan_at, ',') from penerimaan_toko where dibatalkan_at is not null");
+  const tanda0 = tandaBatal();
+  const nDok = () => q('select (select count(*) from mutasi_toko) || \'|\' || (select count(*) from mutasi_toko_baris) || \'|\' || (select count(*) from penerimaan_toko_baris)');
+  const nDok0 = nDok();
+  T.mbSaveConfig({ kode_toko: 'KRP' }); T.mbSaveConfig({ kode_toko: 'TRP' });
+  r = await mb.kirim({ force: true });
+  assert.ok(r.mutasi >= 4 && r.snapshot);
+  assert.deepStrictEqual([tandaBatal(), nDok()], [tanda0, nDok0]);
+  assert.strictEqual(q("select mb.terapkan_dokumen_batal('TRP', " + lit(T.mbBatch({ force: true }).snapshot.dokumen_batal) + ')'), '0'); // isi sama → tidak ditulis ulang
+  // Pembatalan yang sampai sebelum dokumennya dilewati; dokumen tidak dikenal tidak membuat baris baru
+  assert.strictEqual(q(`select mb.terapkan_dokumen_batal('TRP', ${lit([{ jenis: 'mutasi', no_dokumen: 'MT-TIDAK-ADA', cancelled_at: '2026-11-20 10:00:00' }])})`), '0');
+  ok('batal mutasi & penerimaan (PIN): ditandai batal dengan alasan/peminta/penyetuju, stok seharusnya tetap = Trizone, Shopee & SJ tidak menghitungnya, kiriman ulang tidak dobel');
+
   // Master barang: kantor mengisi dari toko, mengubah harga & menambah barang; toko yang terkunci mengambilnya
   assert.strictEqual(q(`select public.isi_master_dari_toko('TRP')`), '3');
   q(`update produk set harga_jual_konsumen = 16000 where sku = 'UJ-KESET'`);
@@ -293,6 +358,9 @@ function fileAccurate() {
   assert.notStrictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from penjualan'), '0');
   assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from toko_kunci'), '0');
   assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000a', 'select count(*) from pembatalan_nota'), '0');
+  assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000a', 'select count(*) from public.laporan_dokumen_toko(current_date - 30, current_date + 1)'), '0');
+  assert.notStrictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from public.laporan_dokumen_toko(current_date - 30, current_date + 1)'), '0');
+  assert.throws(() => q('set role anon; select count(*) from public.laporan_dokumen_toko(current_date, current_date)'), /permission denied/);
   assert.strictEqual(sebagai('00000000-0000-0000-0000-00000000000b', 'select count(*) from public.laporan_pembatalan(mb.tgl_wib(now()) - 30, mb.tgl_wib(now()))'), '1');
   assert.strictEqual(q('set role anon; select count(*) from pembatalan_nota'), '0');
   assert.throws(() => q('set role anon; select count(*) from public.laporan_pembatalan(current_date, current_date)'), /permission denied/);

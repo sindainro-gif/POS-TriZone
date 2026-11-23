@@ -344,7 +344,7 @@ function fileAccurate() {
     ok('opname dari kantor: tarik stok, template per kategori (stok Coly & isi), upload (kode salah ditahan), kirim, toko menerapkan dengan patokan, review SO otomatis, kirim ulang ditolak, stok per jam yang dipilih');
 
     await buka('stok');
-    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat']);
+    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat', 'dok']);
     await page.click('#stTab [data-t="cari"]');
     await page.fill('#stCari', 'keset');
     await tunggu(700);
@@ -373,6 +373,32 @@ function fileAccurate() {
     await page.click('#stTab [data-t="lambat"]');
     await tunggu(500);
     ok('stok: cari stok dengan filter kondisi / kategori / merk / toko, stok lambat (menu terpisah dari Stock Opname)');
+
+    // Mutasi & penerimaan: dokumen yang dibatalkan di toko (PIN) bertanda Dibatalkan dan tidak dihitung di total
+    await page.click('#stTab [data-t="dok"]');
+    await page.waitForSelector('#dkHasil tbody tr');
+    await page.selectOption('#perPilih', '30');
+    await tunggu(700);
+    const dokBatal = await page.$$eval('#dkHasil tbody tr', (x) => x.map((tr) => tr.textContent).filter((t) => /Dibatalkan/.test(t)));
+    assert.strictEqual(dokBatal.length, 2, dokBatal.join('\n'));
+    assert.ok(dokBatal.some((t) => /SDA/.test(t) && /DO\.2026\.11\.00103/.test(t) && /Salah input jumlah/.test(t) && /disetujui Pak Budi/.test(t)), dokBatal.join('\n'));
+    assert.ok(dokBatal.some((t) => /TRP/.test(t) && /MT-/.test(t) && /Display Toko → Gudang Utama/.test(t) && /Salah arah/.test(t) && /disetujui Bu Sari/.test(t)), dokBatal.join('\n'));
+    const dokDb = await db(`select coalesce(sum(total_biji) filter (where dibatalkan_at is null), 0)::int sah, count(*) filter (where dibatalkan_at is not null)::int batal
+      from penerimaan_toko where diterima_at >= now() - interval '30 days'`);
+    assert.strictEqual(dokDb[0].batal, 1);
+    assert.match(await page.textContent('#dkJumlah'), new RegExp(`penerimaan ${dokDb[0].sah.toLocaleString('id-ID')} Biji · 2 dibatalkan tidak dihitung`));
+    await shot('03d-mutasi-penerimaan');
+    await page.selectOption('#dkStatus', 'batal');
+    await tunggu(600);
+    assert.strictEqual(await page.locator('#dkHasil tbody tr').count(), 2);
+    await page.selectOption('#dkJenis', 'penerimaan');
+    await tunggu(600);
+    assert.strictEqual(await page.locator('#dkHasil tbody tr').count(), 1);
+    assert.match(await page.textContent('#dkJumlah'), /penerimaan 0 Biji · 1 dibatalkan/);
+    await page.selectOption('#dkJenis', '');
+    await page.selectOption('#dkStatus', '');
+    await tunggu(600);
+    ok('stok: mutasi & penerimaan toko; yang dibatalkan dengan PIN bertanda Dibatalkan (alasan, penyetuju) dan tidak dihitung di total');
 
     await buka('kiriman');
     await page.setInputFiles('#kjFile', fileAccurate());

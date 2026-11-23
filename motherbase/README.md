@@ -73,7 +73,7 @@ base sudah bersih; nota `BTL-` tidak dihitung sebagai transaksi dan tampil sebag
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
    `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`,
    `migrations/20261119000004_satuan_masuk.sql`, `migrations/20261119000005_tanpa_principal.sql`,
-   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261120000007_filter_stok.sql`, `migrations/20261120000008_pesanan_toko.sql`, `migrations/20261120000009_minta_update.sql`, `migrations/20261122000010_opname_kantor.sql`, `migrations/20261123000011_riwayat_stok.sql`, lalu `seed.sql`
+   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261120000007_filter_stok.sql`, `migrations/20261120000008_pesanan_toko.sql`, `migrations/20261120000009_minta_update.sql`, `migrations/20261122000010_opname_kantor.sql`, `migrations/20261123000011_riwayat_stok.sql`, `migrations/20261123000012_dokumen_batal.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`

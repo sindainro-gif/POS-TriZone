@@ -77,7 +77,7 @@ async function buatDatabase(dbUrl) {
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
     'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql',
-    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/migrations/20261120000009_minta_update.sql', 'supabase/migrations/20261122000010_opname_kantor.sql', 'supabase/migrations/20261123000011_riwayat_stok.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/migrations/20261120000009_minta_update.sql', 'supabase/migrations/20261122000010_opname_kantor.sql', 'supabase/migrations/20261123000011_riwayat_stok.sql', 'supabase/migrations/20261123000012_dokumen_batal.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;
@@ -215,7 +215,11 @@ async function buatDataDemo(dbUrl, opsi = {}) {
   const rows102 = acc.barisImportTrizone({ ...hasil, do: [doList[1]] }).map((r) => ({ ...r, Jumlah: 1 }));
   rows102.push({ ...rows102[0], Jumlah: 3, Satuan: 'Biji' });
   tokoSvc.TRP.svc.importReceptions({ rows: rows102 });
-  tokoSvc.SDA.svc.importReceptions({ rows: acc.barisImportTrizone({ ...hasil, do: [doList[2]] }) });
+  const terima103 = tokoSvc.SDA.svc.importReceptions({ rows: acc.barisImportTrizone({ ...hasil, do: [doList[2]] }) });
+  // Sidoarjo membatalkan penerimaan DO 103 (salah input) dengan PIN Admin: di kantor tampil Dibatalkan, SJ belum diinput
+  tokoSvc.SDA.svc.saveUser({ name: 'Pak Budi', role: 'admin', pin: '864200', active: true });
+  tokoSvc.SDA.svc.cancelReception({ id: terima103.created[0].id, reason: 'Salah input jumlah, diinput ulang besok',
+    requested_by: 'Rina', approver_pin: '864200' });
 
   // Stok opname Tropodo (zona display), lalu shift hari ini yang masih berjalan
   const trp = tokoSvc.TRP.svc;
@@ -234,6 +238,9 @@ async function buatDataDemo(dbUrl, opsi = {}) {
       svc.saveUser({ name: 'Bu Sari', role: 'admin', pin: '135790', active: true });
       svc.voidReceipt({ receipt_no: nota.receipt_no, reason: 'Salah ambil barang', items: [{ sku: 'PLJ-004', destination: 'floor' }],
         requested_by: 'Rina', approver_pin: '135790' });
+      // Mutasi yang salah arah dibatalkan dengan PIN Admin (stok dikembalikan; di kantor ditandai Dibatalkan)
+      const salah = svc.createTransferDoc({ from_zone: 'floor', to_zone: 'warehouse', reason: 'Tarik dari rak', items: [{ sku: 'PLJ-001', qty: 1 }] });
+      svc.cancelTransferDoc({ id: salah.id, reason: 'Salah arah, seharusnya ke Gudang BS', requested_by: 'Rina', approver_pin: '135790' });
     }
     // Pesanan pelanggan: TRP 2 belum diambil (1 lewat tanggal ambil) + 1 batal, MLG 1 sudah diambil
     const hariToko = localNow().slice(0, 10);
