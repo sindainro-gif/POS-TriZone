@@ -845,9 +845,12 @@ app.on('browser-window-created', (_e, win) => {
         // Tambah Barang & Unduh Template hanya Admin; Import untuk Gudang
         const pdBtns = await run(`['#pdAdd', '#pdTemplate', '#pdImport'].map((s) => document.querySelector(s).classList.contains('hidden') ? 0 : 1).join('')`);
         const addNew = await run(`window.posBridge.call('products:save', { isNew: true, product: { sku: 'X-BARU', barcode: '1234', name: 'Baru', unit_price: 1000 } })`);
+        const editOld = await run(`window.posBridge.call('products:save', { product: { sku: 'MNM-001', name: 'Ubah' } })`);
+        const delOld = await run(`window.posBridge.call('products:delete', { sku: 'MNM-001' })`);
+        if (editOld.ok || !/Akses ditolak/.test(editOld.error) || delOld.ok || !/Akses ditolak/.test(delOld.error)) throw new Error(`ubah / hapus barang untuk ${name} seharusnya ditolak`);
         const tpl = await run(`window.posBridge.call('products:template')`);
         if (pdBtns !== (name === 'Budi' ? '001' : '000') || addNew.ok || !/Akses ditolak/.test(addNew.error) || tpl.ok || !/Akses ditolak/.test(tpl.error)) throw new Error(`tambah barang / template untuk ${name} salah: ${pdBtns} ${addNew.error} ${tpl.error}`);
-        if ((name === 'Rina') !== (edits === 0)) throw new Error(`hak ubah Daftar Barang untuk ${name} salah`);
+        if (edits !== 0) throw new Error(`tombol Ubah barang seharusnya tidak tampil untuk ${name}`);
         await shot(`11-login-${name.toLowerCase()}`);
         if (name === 'Rina') {
           // Batal nota: kasir meminta, Admin menyetujui dengan PIN; nota asli tidak hilang

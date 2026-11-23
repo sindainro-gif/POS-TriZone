@@ -173,7 +173,8 @@ const ROLE_VIEWS = {
 const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', kasir: 'Kasir' };
 const role = () => (state.user ? state.user.role : '');
 const canView = (v) => !!state.user && ROLE_VIEWS[role()].includes(v);
-const canEditProducts = () => ['admin', 'gudang'].includes(role());
+const canEditProducts = () => role() === 'admin'; // ubah / hapus barang: hanya Admin
+const canImportProducts = () => ['admin', 'gudang'].includes(role()); // Gudang: Import & antrian Barcode
 const canManualOpname = () => role() === 'admin'; // Gudang: stok opname hanya lewat template Excel
 
 // PC kasir terputus dari PC gudang tetapi data darurat siap → transaksi masuk antrian lokal
@@ -1644,7 +1645,7 @@ views.products = (() => {
         <td><div class="pname">${esc(p.name)}</div><div class="psub">1 ${esc(p.pack_unit)} = ${num(p.pack_ratio)} Biji · min toko ${num(p.min_floor_alert)}</div></td>
         <td>${esc(p.brand)}</td><td>${esc(p.category)}</td><td class="r">${num(p.unit_price)}</td>
         <td class="c">${floorBadge(p)}</td><td class="c">${whBadge(p)}</td><td class="c">${bsBadge(p)}</td><td class="c">${shpBadge(p)}</td>
-        <td>${canEditProducts() ? `<div class="btn-row"><button class="btn sm ghost" data-label="${esc(p.sku)}" title="Tambah ke antrian cetak barcode">Barcode</button><button class="btn sm" data-edit="${esc(p.sku)}">Ubah</button>${locked ? '' : `<button class="btn sm danger" data-del="${esc(p.sku)}">Hapus</button>`}</div>` : ''}</td></tr>`).join('')
+        <td>${canImportProducts() ? `<div class="btn-row"><button class="btn sm ghost" data-label="${esc(p.sku)}" title="Tambah ke antrian cetak barcode">Barcode</button>${canEditProducts() ? `<button class="btn sm" data-edit="${esc(p.sku)}">Ubah</button>${locked ? '' : `<button class="btn sm danger" data-del="${esc(p.sku)}">Hapus</button>`}` : ''}</div>` : ''}</td></tr>`).join('')
       : '<tr><td colspan="11" class="empty-row">Tidak ada barang. Tambah barang baru atau import dari Excel.</td></tr>';
     const tot = rows.reduce((a, p) => ({ f: a.f + p.floor_stock, w: a.w + p.warehouse_stock, d: a.d + p.damaged_stock, s: a.s + p.shopee_stock }), { f: 0, w: 0, d: 0, s: 0 });
     $('#pdCount').style.marginTop = '10px';
@@ -3074,7 +3075,7 @@ function applyRole() {
   $$('#nav .nav-btn, .sidebar-foot .nav-btn').forEach((b) => b.classList.toggle('hidden', !canView(b.dataset.view)));
   // Tambah Barang & Unduh Template: hanya Admin; Gudang menambah barang lewat Import
   ['#pdAdd', '#pdTemplate'].forEach((sel) => $(sel).classList.toggle('hidden', role() !== 'admin'));
-  $('#pdImport').classList.toggle('hidden', !canEditProducts());
+  $('#pdImport').classList.toggle('hidden', !canImportProducts());
   $('#opFormCard').classList.toggle('hidden', !canManualOpname());
   $('#opGudangNote').classList.toggle('hidden', canManualOpname());
   refreshUserBadge();

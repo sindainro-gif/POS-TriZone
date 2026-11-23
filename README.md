@@ -226,7 +226,7 @@ Setiap orang login dengan **nama + PIN 6 digit**. Menu yang tidak diizinkan dise
 | Peran | Menu |
 |---|---|
 | **Admin** | Semua menu, termasuk Pengaturan, Pengguna, Mode Komputer, Cadangkan / Pulihkan |
-| **Gudang** | Mutasi, Penerimaan Barang, Stok Opname **hanya lewat Excel** (Unduh Template → isi Fisik → Import), Daftar Barang (ubah / hapus / **Import**; tambah barang manual & Unduh Template hanya Admin), Cetak Barcode, Pesanan Pelanggan (hanya lihat) |
+| **Gudang** | Mutasi, Penerimaan Barang, Stok Opname **hanya lewat Excel** (Unduh Template → isi Fisik → Import), Daftar Barang (hanya lihat + **Import**; tambah / ubah / hapus barang & Unduh Template hanya Admin), Cetak Barcode, Pesanan Pelanggan (hanya lihat) |
 | **Kasir** | Kasir / Pembayaran, Pesanan Pelanggan, Laporan Shift & Tutup Kasir, Daftar Barang (hanya lihat) |
 
 - **Akun pertama:** saat database belum punya akun, layar login menjadi **Buat Akun Admin**. Tidak ada PIN bawaan.
