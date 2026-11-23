@@ -482,6 +482,14 @@ app.on('browser-window-created', (_e, win) => {
       console.log('antrian label:', queueText);
       if (!/10 label/.test(queueText)) throw new Error(`total label seharusnya 5 (penerimaan) + 5 (manual) = 10: ${queueText}`);
 
+      // Bagian desain (Desain Label, Pratinjau, Designer) tersembunyi; Kertas = desain default
+      const lbInit = await run(`({ setup: document.querySelector('#lbSetup').classList.contains('hidden'), papers: document.querySelectorAll('#lbPaper option').length,
+        paper: document.querySelector('#lbPaper').selectedOptions[0].textContent, info: document.querySelector('#lbPaperInfo').textContent })`);
+      console.log('cetak barcode awal:', JSON.stringify(lbInit));
+      if (!lbInit.setup || lbInit.papers < 1 || !/\(default\)/.test(lbInit.paper) || !/kolom/.test(lbInit.info)) throw new Error('bagian desain seharusnya tersembunyi & Kertas default terpilih');
+      await run(`document.querySelector('#lbSetupToggle').click()`);
+      await wait(600);
+      if (await run(`document.querySelector('#lbSetup').classList.contains('hidden')`)) throw new Error('tombol Atur Desain Label tidak membuka bagian desain');
       // Designer tersembunyi sampai tombol "Buka Designer Label" ditekan
       const dzHidden = await run(`document.querySelector('#lbDesigner').classList.contains('hidden')`);
       if (!dzHidden) throw new Error('Designer Label seharusnya tersembunyi saat layar dibuka');
@@ -531,11 +539,35 @@ app.on('browser-window-created', (_e, win) => {
       const savedPrice = saved.find((e) => e.type === 'price');
       console.log('desain tersimpan:', saved.map((e) => e.type).join(','), '· harga', savedPrice.size, 'pt di x', savedPrice.x);
       if (savedPrice.size !== 14 || savedPrice.x !== 10 || !saved.some((e) => e.type === 'box')) throw new Error('desain dari designer tidak tersimpan');
-      await run(`document.querySelector('#lbPrint').click()`);
-      await wait(2500);
-      const labelPdf = fs.readdirSync(out).find((f) => f.startsWith('Label_'));
-      if (!labelPdf) throw new Error('PDF label tidak terbentuk');
-      console.log('pdf label:', labelPdf);
+      // Desain kedua (kertas lain), lalu tutup bagian desain dan pilih Kertas saat cetak
+      await run(`document.querySelector('#lbNew').click()`);
+      await wait(300);
+      await run(`(() => { const set = (k, v) => { const el = document.querySelector('#view-barcode [data-k="' + k + '"]'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+        document.querySelector('#lbName').value = 'Rol 2 kolom'; set('columns', '2'); set('paper_width_mm', '70'); })()`);
+      await run(`document.querySelector('#lbSave').click()`);
+      await wait(900);
+      await run(`document.querySelector('#lbSetupToggle').click()`);
+      await wait(300);
+      const mediaW = (file) => { const m = /MediaBox\s*\[\s*0\s+0\s+([\d.]+)/.exec(fs.readFileSync(path.join(out, file)).toString('latin1')); return m ? Math.round(Number(m[1]) * 25.4 / 72) : null; };
+      const printWith = async (label) => {
+        await run(`(() => { const s = document.querySelector('#lbPaper'); s.value = [...s.options].find((o) => o.textContent.startsWith(${JSON.stringify(label)})).value; s.dispatchEvent(new Event('change')); })()`);
+        const before = new Set(fs.readdirSync(out).filter((x) => x.startsWith('Label_')));
+        await wait(1100); // nama PDF label per detik
+        await run(`document.querySelector('#lbPrint').click()`);
+        await wait(2500);
+        const pdf = fs.readdirSync(out).find((x) => x.startsWith('Label_') && !before.has(x));
+        return { pdf, w: pdf ? mediaW(pdf) : null };
+      };
+      const lbClosed = await run(`({ setup: document.querySelector('#lbSetup').classList.contains('hidden'), papers: [...document.querySelectorAll('#lbPaper option')].map((o) => o.textContent) })`);
+      const defName = svc.listLabelDesigns().find((x) => x.is_default).name;
+      const p2 = await printWith('Rol 2 kolom');
+      const p1 = await printWith(defName);
+      const remembered = await run(`localStorage.getItem('pos-label-paper')`);
+      console.log('pilihan kertas:', JSON.stringify({ lbClosed, rol2: p2, default: p1, remembered }));
+      if (!lbClosed.setup || lbClosed.papers.length !== 2 || !p2.pdf || !p1.pdf || p2.w !== 70 || p1.w === 70 || remembered !== String(svc.listLabelDesigns().find((x) => x.is_default).id)) {
+        throw new Error('pilihan Kertas saat cetak label tidak sesuai');
+      }
+      await shot('05b2-cetak-barcode-kertas');
       await run(`document.querySelector('[data-view=products]').click()`);
       await shot('06-daftar-barang');
       await run(`document.querySelector('[data-view=shift]').click()`);

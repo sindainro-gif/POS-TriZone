@@ -340,8 +340,10 @@
     <!-- ======================= CETAK BARCODE ======================= -->
     <section class="view" id="view-barcode">
       <header class="page-head">
-        <div><h1>Cetak Barcode</h1><p>Desain label barcode dan cetak untuk barang yang masuk.</p></div>
+        <div><h1>Cetak Barcode</h1><p>Cetak label barcode untuk barang yang masuk.</p></div>
+        <div class="btn-row"><button class="btn ghost" id="lbSetupToggle">⚙ Atur Desain Label</button></div>
       </header>
+      <div id="lbSetup" class="hidden">
       <div class="grid-2">
         <div class="card">
           <div class="card-head">
@@ -407,6 +409,7 @@
         </div>
         <div class="hint">Klik elemen untuk memilih · seret untuk memindah · tarik kotak kecil di sudut/sisi untuk mengubah ukuran · panah = geser 0,5 mm (Shift = 2 mm) · Delete = hapus. Jangan lupa <b>Simpan Desain</b>.</div>
       </div>
+      </div>
       <div class="card">
         <div class="card-head">
           <h2>Antrian Cetak</h2>
@@ -428,9 +431,10 @@
           <tbody id="lbQueue"></tbody>
         </table></div>
         <div class="foot-row">
-          <div id="lbTotal" class="muted">0 label</div>
+          <div><div id="lbTotal" class="muted">0 label</div><div id="lbPaperInfo" class="hint"></div></div>
           <div class="btn-row">
             <button class="btn ghost" id="lbClear">Kosongkan</button>
+            <select id="lbPaper" style="width:auto;min-width:240px" title="Kertas / desain label yang dicetak"></select>
             <select id="lbPrinter" style="width:auto;min-width:240px" title="Printer label"></select>
             <button class="btn primary" id="lbPrint">Cetak Label</button>
           </div>

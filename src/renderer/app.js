@@ -1868,7 +1868,7 @@ views.barcode = (() => {
     }
 
     let rTimer;
-    const scheduleRender = () => { clearTimeout(rTimer); rTimer = setTimeout(() => { updatePreview(); }, 120); };
+    const scheduleRender = () => { dirty = true; clearTimeout(rTimer); rTimer = setTimeout(() => { updatePreview(); }, 120); };
 
     function drawProps() {
       const p = $('#dzProps');
@@ -1923,6 +1923,7 @@ views.barcode = (() => {
       const e = { ...base, ...preset };
       clampEl(e);
       els.push(e);
+      dirty = true;
       select(e.id);
       updatePreview();
       stage.focus();
@@ -1959,7 +1960,7 @@ views.barcode = (() => {
       drawProps();
       scheduleRender();
     });
-    const endDrag = () => { if (drag) { drag = null; updatePreview(); } };
+    const endDrag = () => { if (drag) { drag = null; dirty = true; updatePreview(); } };
     overlay.addEventListener('pointerup', endDrag);
     overlay.addEventListener('pointercancel', endDrag);
 
@@ -2021,6 +2022,7 @@ views.barcode = (() => {
     $('#dzReset').addEventListener('click', async () => {
       if (!(await confirmDialog('Reset Tata Letak', 'Kembalikan isi label ke susunan bawaan (nama, barcode, angka barcode, harga)?', { okLabel: 'Reset' }))) return;
       els = null;
+      dirty = true;
       select(null);
       updatePreview();
     });
@@ -2040,6 +2042,40 @@ views.barcode = (() => {
     return { render, select, add, setOpen, get selected() { return sel; }, get scale() { return S; } };
   })();
 
+  // ---------- Bagian desain (Desain Label, Pratinjau, Designer): tersembunyi sampai "Atur Desain Label" ditekan
+  let dirty = false; // form desain diubah tapi belum disimpan
+  const setupOpen = () => !$('#lbSetup').classList.contains('hidden');
+  function setSetupOpen(open) {
+    $('#lbSetup').classList.toggle('hidden', !open);
+    $('#lbSetupToggle').textContent = open ? 'Tutup Desain Label' : '⚙ Atur Desain Label';
+    if (open) updatePreview();
+    else designer.setOpen(false);
+  }
+  $('#lbSetupToggle').addEventListener('click', () => setSetupOpen(!setupOpen()));
+
+  // ---------- Pilihan Kertas saat cetak = desain tersimpan (tiap desain membawa ukuran kertasnya). Diingat per komputer.
+  const PAPER_KEY = 'pos-label-paper';
+  const paperDesc = (c = {}) => `${num(c.columns || 1)} kolom, ${String(c.paper_width_mm ?? '-').replace('.', ',')} × ${String(c.label_height_mm ?? '-').replace('.', ',')} mm`;
+  function renderPaper() {
+    let saved = null;
+    try { saved = Number(window.localStorage.getItem(PAPER_KEY)) || null; } catch (_) { /* penyimpanan tidak tersedia */ }
+    const pick = designs.find((d) => d.id === saved) || designs.find((d) => d.is_default) || designs[0];
+    $('#lbPaper').innerHTML = designs.map((d) => `<option value="${d.id}">${esc(d.name)}${d.is_default ? ' (default)' : ''} — ${paperDesc(d.config)}</option>`).join('')
+      || '<option value="">Belum ada desain label</option>';
+    if (pick) $('#lbPaper').value = pick.id;
+    paperInfo();
+  }
+  const paperDesign = () => designs.find((d) => d.id === Number($('#lbPaper').value));
+  function paperInfo() {
+    const d = paperDesign();
+    $('#lbPaperInfo').textContent = d ? `Kertas: ${d.name} · ${paperDesc(d.config)}` : '';
+  }
+  $('#lbPaper').addEventListener('change', () => {
+    try { window.localStorage.setItem(PAPER_KEY, $('#lbPaper').value); } catch (_) { /* abaikan */ }
+    paperInfo();
+    renderQueue();
+  });
+
   function renderDesigns() {
     $('#lbDesign').innerHTML = designs.map((d) => `<option value="${d.id}">${esc(d.name)}${d.is_default ? ' (default)' : ''}</option>`).join('')
       + (current && !current.id ? '<option value="" selected>(desain baru)</option>' : '');
@@ -2047,6 +2083,7 @@ views.barcode = (() => {
   }
 
   function selectDesign(d) {
+    dirty = false;
     current = d;
     $('#lbName').value = d.name;
     writeConfig(d.config);
@@ -2056,6 +2093,7 @@ views.barcode = (() => {
 
   async function loadDesigns(selectId) {
     designs = await api('labels:designs');
+    renderPaper();
     selectDesign(designs.find((d) => d.id === selectId) || designs.find((d) => d.is_default) || designs[0]);
   }
 
@@ -2080,7 +2118,7 @@ views.barcode = (() => {
       $('#lbPreviewErr').classList.remove('hidden');
     }
   }
-  $('#view-barcode .card').addEventListener('input', () => { clearTimeout(pvTimer); pvTimer = setTimeout(updatePreview, 200); });
+  $('#view-barcode .card').addEventListener('input', () => { dirty = true; clearTimeout(pvTimer); pvTimer = setTimeout(updatePreview, 200); });
 
   $('#lbDesign').addEventListener('change', () => {
     const d = designs.find((x) => x.id === Number($('#lbDesign').value));
@@ -2117,7 +2155,8 @@ views.barcode = (() => {
         <td class="c"><button class="icon-btn" data-act="del" title="Hapus">✕</button></td></tr>`).join('')
       : '<tr><td colspan="5" class="empty-row">Antrian kosong. Ambil dari dokumen penerimaan atau tambah barang manual.</td></tr>';
     const total = queue.reduce((s, q) => s + q.copies, 0);
-    const cols = Number(readConfig().columns) || 1;
+    const pd = typeof paperDesign === 'function' ? paperDesign() : null; // kolom dari Kertas yang dipilih untuk cetak
+    const cols = Number((pd ? pd.config : readConfig()).columns) || 1;
     $('#lbTotal').textContent = `${num(queue.length)} barang · ${num(total)} label · ${num(Math.ceil(total / cols))} baris kertas`;
   }
   $('#lbQueue').addEventListener('change', (e) => {
@@ -2213,20 +2252,22 @@ views.barcode = (() => {
     btn.disabled = true;
     btn.textContent = 'Mencetak…';
     try {
-      const r = await api('labels:print', { config: readConfig(), items: items.map((q) => ({ sku: q.product.sku, copies: q.copies })) });
-      toast(`${num(r.labels)} label dikirim ke printer (${num(r.rows)} baris).`, 'ok', 6000);
+      const paper = paperDesign();
+      if (!paper) { toast('Pilih kertas / desain label dulu (Atur Desain Label → Simpan Desain).', 'err', 6000); return; }
+      const r = await api('labels:print', { design_id: paper.id, items: items.map((q) => ({ sku: q.product.sku, copies: q.copies })) });
+      toast(`${num(r.labels)} label dikirim ke printer (${num(r.rows)} baris, kertas ${paper.name}).`, 'ok', 6000);
+      if (setupOpen() && dirty) toast('Perubahan desain yang belum disimpan tidak ikut dicetak. Simpan desain dulu bila ingin mencetak dengan perubahan.', 'warn', 8000);
     } catch (e) { toast(e.message, 'err', 8000); } finally { btn.disabled = false; btn.textContent = 'Cetak Label'; }
   });
 
   async function show() {
-    designer.setOpen(false); // designer tersembunyi setiap layar dibuka
+    setSetupOpen(false); // bagian desain & designer tersembunyi setiap layar dibuka
     const recs = await api('receptions:list', { limit: 50 });
     $('#lbReception').innerHTML = recs.length
       ? recs.map((r) => `<option value="${r.id}">${esc(r.reference_no)} · ${fmtTime(r.received_at)}</option>`).join('')
       : '<option value="">Belum ada dokumen penerimaan</option>';
     await loadPrinters();
     if (!current) await loadDesigns();
-    else updatePreview();
     renderQueue();
     if (!$('#modalRoot').children.length) lbQty.focus();
   }

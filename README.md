@@ -191,7 +191,7 @@ Format nota diatur di `src/receipt.js` (58 mm = 32 karakter, 80 mm = 48 karakter
 
 ## Cetak label barcode
 
-- Menu **Cetak Barcode**: atur desain label (kertas label rol, lebar, tinggi, kolom, jarak, margin, isi label, ukuran huruf) dengan pratinjau langsung. Desain bisa disimpan lebih dari satu; salah satunya default.
+- Menu **Cetak Barcode**: yang tampil langsung **Antrian Cetak**. Pilih **Kertas** (desain label tersimpan, mis. "Rol 3 kolom") di samping pilihan printer sebelum **Cetak Label**; pilihan diingat per komputer. Bagian desain disembunyikan dan baru muncul lewat tombol **⚙ Atur Desain Label**: atur desain label (kertas label rol, lebar, tinggi, kolom, jarak, margin, isi label, ukuran huruf) dengan pratinjau langsung. Desain bisa disimpan lebih dari satu; salah satunya default.
 - Setelah **Simpan Penerimaan**, aplikasi menawarkan cetak label; antrian otomatis terisi jumlah Biji yang diterima (bisa diubah). Bisa juga lewat Detail Penerimaan atau tombol **Barcode** di Daftar Barang.
 - Barcode: EAN-13 untuk barcode 13 digit yang valid, selain itu Code 128 (pilihan "Otomatis"). Lebar batang dibulatkan ke titik printer 203 dpi agar mudah di-scan.
 - Tambah barang manual ke antrian: kursor selalu berada di **Jumlah label**. Isi jumlah, tekan **Enter** (kursor pindah ke kolom scan), lalu scan barcode. Setelah barang ditambahkan, Jumlah kembali ke 1 dan kursor kembali ke Jumlah label. Enter di kolom scan yang kosong juga kembali ke Jumlah. Scan barang yang sudah ada di antrian menambah jumlah labelnya.
