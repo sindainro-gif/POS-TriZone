@@ -171,6 +171,16 @@ CREATE TABLE IF NOT EXISTS mb_outbox_shift (
 );
 CREATE INDEX IF NOT EXISTS idx_mb_outbox_pending ON mb_outbox_shift(sent_at, closed_at);
 
+-- Stock opname dari kantor (homebase) yang sudah diterapkan di toko ini. Dicek sebelum menerapkan,
+-- jadi opname yang dikirim ulang (mis. laporan ke kantor gagal) tidak pernah diterapkan dua kali.
+CREATE TABLE IF NOT EXISTS mb_opname_kantor (
+    kantor_id INTEGER PRIMARY KEY,   -- id opname di mother base
+    no_dok TEXT NOT NULL,            -- OPK-YYYYMMDD-NNN
+    doc_no TEXT,                     -- nomor OP di toko (kosong = tidak ada barang yang dikenal)
+    skipped TEXT NOT NULL DEFAULT '[]', -- JSON SKU yang tidak ada di Daftar Barang
+    applied_at DATETIME NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS shift_history_sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     shift_uid TEXT NOT NULL,

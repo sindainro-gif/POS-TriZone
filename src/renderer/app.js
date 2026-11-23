@@ -2553,6 +2553,16 @@ views.orders = (() => {
 
 views.shift = (() => {
   const root = $('#shiftContent');
+  // Kasir & Admin: kirim penjualan + stok terbaru ke kantor sekarang (di PC kasir diteruskan ke PC server)
+  $('#shSendMb').addEventListener('click', async () => {
+    const btn = $('#shSendMb');
+    btn.disabled = true;
+    btn.textContent = 'Mengirim…';
+    try {
+      await api('mb:sendSales');
+      toast('Data penjualan dan stok terkirim ke kantor.', 'ok', 6000);
+    } catch (e) { toast(e.message, 'err', 8000); } finally { btn.disabled = false; btn.textContent = 'Kirim Data ke Kantor'; }
+  });
 
   // Isi satu struk shift berjalan + tombol cetak ulang / batalkan. ref = { receipt_no }, row = baris di daftar transaksi
   function showReceipt(lines, ref, row = {}) {

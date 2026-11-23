@@ -319,6 +319,22 @@ async function sendShiftToMotherbase(uid) {
 // Ambil master barang dari mother base sekarang (tombol Perbarui Daftar Barang, semua peran, juga dari PC kasir).
 // Pesannya netral: pegawai tidak perlu tahu ada mother base. Detail error tersimpan di status untuk Admin.
 const MB_SEND_EVERY_MS = 3 * 60 * 60 * 1000; // kiriman berkala ke mother base: tiap 3 jam
+const MB_CEK_PERMINTAAN_MS = 5 * 60 * 1000; // cek tombol "Update penjualan" di homebase: tiap 5 menit
+
+// Tombol "Kirim Penjualan ke Kantor" (Kasir & Admin, juga dari PC kasir): kirim keadaan terkini sekarang.
+// Pesannya netral seperti Perbarui Daftar Barang; detail error tersimpan di status untuk Admin.
+async function sendSalesLocal() {
+  if (!mb || DEMO) throw userError('Versi DEMO tidak mengirim data ke kantor.');
+  if (!localSvc.mbConfig().ready) throw userError('Pengiriman ke kantor belum diatur. Hubungi Admin.');
+  try {
+    if (mb.isRunning()) await mb.kirim().catch(() => {}); // kiriman yang sedang jalan mungkin belum memuat data terbaru
+    await mb.kirim({ force: true });
+  } catch (err) {
+    console.error('[mother base] kirim manual:', err.message);
+    throw userError('Data penjualan belum terkirim. Periksa internet, lalu coba lagi. Data tetap aman dan dikirim otomatis nanti.');
+  }
+  return { sent_at: localNow(), pending_shifts: localSvc.mbStatus().pending_shifts };
+}
 
 // Buka shift: ambil daftar barang & harga terbaru (yang berubah sejak terakhir) dari mother base di latar,
 // kasir tidak menunggu. Hanya bila daftar barang dikunci ke mother base (sama seperti dulu ambil berkala).
@@ -357,12 +373,14 @@ const SERVER_MAIN = {
   'main.voidReceipt': (a) => localSvc.voidReceipt(a),
   'main.closeShift': closeShiftLocal,
   'main.pullMaster': pullMasterLocal,
+  'main.sendSales': sendSalesLocal,
   'main.masterOnShiftOpen': pullMasterOnShiftOpen,
 };
 const REMOTE_BLOCKED = new Set([
   'archiveShift', 'pruneShiftHistory', 'checkout', 'shiftData', 'createOrder', 'completeOrder',
   // Mother base: kunci toko & antrean kiriman hanya di PC pemilik database (mbStatus boleh, tanpa rahasia)
   'mbConfig', 'mbSaveConfig', 'mbState', 'mbSetState', 'mbQueueHistory', 'mbBatch', 'mbAck', 'mbApplyMaster', 'mbMasterSince',
+  'mbApplyKantorOpname',
 ]);
 
 function serverCall(method, args) {
@@ -760,6 +778,7 @@ const ACCESS = {
   'settings:get': ALL, 'printer:list': ALL, 'stock:low': ALL, 'shift:get': ALL,
   'products:list': ALL, 'products:categories': ALL, 'products:get': ALL, 'products:findByCode': ALL, 'products:search': ALL,
   'products:pullMaster': ALL,
+  'mb:sendSales': KASIR,
   'products:save': GUDANG, 'products:delete': GUDANG, 'products:import': GUDANG, 'products:template': GUDANG,
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
@@ -938,6 +957,7 @@ const handlers = {
   },
   'orders:print': async ({ order_no, reprint = true } = {}) => printOrder(await svc.getOrder({ order_no }), { reprint: reprint !== false }),
   'products:pullMaster': () => runMain('main.pullMaster'),
+  'mb:sendSales': () => runMain('main.sendSales'),
   'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
   'offline:markChecked': (a) => svc.markOfflineChecked(a),
 
@@ -1109,6 +1129,15 @@ async function startup() {
   const mbTick = () => mb.tick({ pullMaster: false }).catch((err) => console.error('[mother base]', err));
   setTimeout(mbTick, 20 * 1000);
   setInterval(mbTick, MB_SEND_EVERY_MS);
+  // Permintaan dari homebase (Tarik data terbaru / stock opname dari kantor): dicek tiap 5 menit (satu RPC kecil)
+  const mbCekPermintaan = () => mb.cekPermintaan()
+    .then((r) => {
+      for (const o of r.opname || []) if (o.baru) console.log(`[mother base] opname kantor ${o.no_dok} diterapkan: ${o.no_op || 'tidak ada barang yang dikenal'}`);
+      const err = r.opnameError || r.laporError || r.kirimError;
+      if (err) console.error('[mother base] permintaan kantor:', err);
+    })
+    .catch((err) => console.error('[mother base] cek permintaan:', err.message));
+  setInterval(mbCekPermintaan, MB_CEK_PERMINTAAN_MS);
   if (device.mode === 'server' && !DEMO) {
     if (!device.server_pair_key) device = saveDevice(DATA_DIR, { server_pair_key: newPairKey() });
     const port = Number(process.env.POS_SERVER_PORT || device.server_port) || DEFAULT_PORT;

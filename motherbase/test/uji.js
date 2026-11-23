@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -406,6 +406,77 @@ function fileAccurate() {
   assert.strictEqual(usul('UJ-SAT1'), ''); // PO yang disetujui & belum datang mengurangi kebutuhan
   assert.throws(() => sebagai('00000000-0000-0000-0000-00000000000a', 'select public.buat_po_dari_usulan()'), /Hanya pengguna kantor/);
   ok('usulan beli tanpa principal: semua barang, lead time dari pengaturan, dibulatkan ke isi 1 Coly, satu PO');
+
+  // ---------------------------------------------------------------- Tarik data & stock opname dari kantor
+  const OWNER = '00000000-0000-0000-0000-00000000000c';
+  const PURCH = '00000000-0000-0000-0000-00000000000d';
+  const PTRP = '00000000-0000-0000-0000-00000000000e';
+  const PMLG = '00000000-0000-0000-0000-00000000000a';
+  q(`insert into auth.users values ('${OWNER}'), ('${PURCH}'), ('${PTRP}')`);
+  q(`insert into pengguna values ('${OWNER}','Owner Uji','owner',null,true), ('${PURCH}','Purchasing Uji','purchasing',null,true),
+                                 ('${PTRP}','Pemilik Tropodo','pemilik_toko','TRP',true)`);
+  await mb.kirim({ force: true });
+  const cek = (p) => JSON.parse(q(`set role anon; select public.cek_permintaan(${lit(p)})`));
+  assert.throws(() => sebagai(PMLG, "select public.minta_update_toko('TRP')"), /hanya untuk toko Anda/);
+  assert.throws(() => q("set role anon; select public.minta_update_toko('TRP')"), /permission denied/);
+  assert.strictEqual(sebagai(ADMIN, 'select public.minta_update_toko()'), q('select count(*) from toko where aktif'));
+  assert.strictEqual(sebagai(PTRP, 'select public.minta_update_toko()'), '1'); // pemilik toko: tokonya sendiri
+  assert.strictEqual(sebagai(PTRP, "select minta_update_oleh from public.status_koneksi_toko() where kode = 'TRP'"), 'Pemilik Tropodo');
+  assert.strictEqual(cek({ kode_toko: 'TRP', kunci }).minta, true);
+  assert.throws(() => cek({ kode_toko: 'TRP', kunci: 'salah' }), /kunci toko salah/);
+  tidur(1100);
+  let jawab = await mb.cekPermintaan();
+  assert.ok(jawab.minta && jawab.kirim, JSON.stringify(jawab));
+  assert.strictEqual(cek({ kode_toko: 'TRP', kunci }).minta, false); // terjawab oleh kiriman yang lebih baru
+  assert.strictEqual(sebagai(ADMIN, "select coalesce(minta_update_at::text, '-') from public.status_koneksi_toko() where kode = 'TRP'"), '-');
+
+  const stokPer = q("select to_char(max(per_waktu) at time zone 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI:SS') from stok_toko where kode_toko = 'TRP'");
+  const kesetDisplay = Number(q("select display from stok_toko where kode_toko = 'TRP' and sku = 'UJ-KESET'"));
+  const kursiDisplay = Number(q("select display from stok_toko where kode_toko = 'TRP' and sku = 'UJ-KURSI'"));
+  assert.strictEqual(kesetDisplay, T.getProduct('UJ-KESET').floor_stock);
+  const dok = [{ zona: 'floor', stok_per: stokPer, baris: [{ sku: 'UJ-KESET', patokan: kesetDisplay, fisik: kesetDisplay - 3 }, { sku: 'UJ-KURSI', patokan: kursiDisplay, fisik: kursiDisplay }] }];
+  const buatOpk = (uid, d, cat = 'Uji kantor') => JSON.parse(sebagai(uid, `select public.buat_opname_kantor('TRP', '${cat}', ${lit(d)})`));
+  assert.throws(() => buatOpk(PURCH, dok), /hanya owner dan admin kantor/);
+  assert.throws(() => buatOpk(PTRP, dok), /hanya owner dan admin kantor/);
+  assert.throws(() => buatOpk(OWNER, [{ ...dok[0], baris: [{ sku: 'TIDAK-ADA', patokan: 1, fisik: 1 }] }]), /tidak ada di Daftar Barang toko TRP: TIDAK-ADA/);
+  assert.throws(() => buatOpk(OWNER, [{ ...dok[0], baris: [{ sku: 'UJ-KESET', patokan: 1, fisik: 1.5 }] }]), /bilangan bulat/);
+  assert.throws(() => buatOpk(OWNER, [{ ...dok[0], zona: 'kasir' }]), /Zona opname "kasir" tidak dikenal/);
+  const dibuat = buatOpk(OWNER, dok);
+  assert.strictEqual(dibuat.length, 1);
+  assert.match(dibuat[0].no_dok, /^OPK-\d{8}-001$/);
+  assert.throws(() => buatOpk(ADMIN, dok), /masih menunggu toko: OPK-\d{8}-001 \(UJ-KESET\)/);
+  assert.strictEqual(sebagai(PTRP, 'select count(*) from opname_kantor'), '0');
+  assert.strictEqual(cek({ kode_toko: 'TRP', kunci }).opname[0].baris.length, 2);
+  // Toko memindah 1 Keset dari display setelah stok ditarik, sebelum opname masuk: tetap terhitung
+  T.createTransferDoc({ from_zone: 'floor', to_zone: 'warehouse', reason: 'Uji', items: [{ sku: 'UJ-KESET', qty: 1 }] });
+  const kesetSebelum = T.getProduct('UJ-KESET').floor_stock;
+  tidur(1100);
+  jawab = await mb.cekPermintaan();
+  assert.strictEqual(jawab.opname.length, 1, JSON.stringify(jawab));
+  assert.strictEqual(T.getProduct('UJ-KESET').floor_stock, kesetSebelum - 3);
+  const opk = q(`select o.status || '|' || o.no_op_toko || '|' || r.status || '|' || r.catatan || '|' || (r.direview_oleh = '${OWNER}')
+                 from opname_kantor o join stok_opname_review r on r.kode_toko = o.kode_toko and r.no_op = o.no_op_toko`).split('|');
+  assert.deepStrictEqual([opk[0], opk[2], opk[4]], ['diterapkan', 'DISETUJUI', 'true']);
+  assert.match(opk[1], /^OP-/);
+  assert.strictEqual(opk[3], `Opname dari kantor ${dibuat[0].no_dok}`);
+  assert.strictEqual(T.listOpnames({}).find((d) => d.doc_no === opk[1]).notes, `Opname kantor ${dibuat[0].no_dok} · Uji kantor`);
+  assert.deepStrictEqual(sebagai(ADMIN, 'select jumlah_barang || \'|\' || jumlah_selisih || \'|\' || minus_qty || \'|\' || status from public.laporan_opname_kantor()').split('|'), ['2', '1', '3.000', 'diterapkan']);
+  assert.throws(() => buatOpk(OWNER, dok), /sudah diopname kantor setelah stok di file/); // file lama dikirim lagi
+  jawab = await mb.cekPermintaan();
+  assert.strictEqual(jawab.opname.length, 0);
+  assert.strictEqual(T.getProduct('UJ-KESET').floor_stock, kesetSebelum - 3);
+  // Batal sebelum toko menerapkan
+  const per2 = q("select to_char(max(per_waktu) at time zone 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI:SS') from stok_toko where kode_toko = 'TRP'");
+  const dok2 = buatOpk(ADMIN, [{ zona: 'warehouse', stok_per: per2, baris: [{ sku: 'UJ-EMBER', patokan: 0, fisik: 5 }] }], 'Salah');
+  assert.throws(() => sebagai(PURCH, `select public.batal_opname_kantor(${dok2[0].id}, 'salah hitung')`), /hanya owner dan admin kantor/);
+  assert.throws(() => sebagai(ADMIN, `select public.batal_opname_kantor(${dok2[0].id}, 'x')`), /minimal 3 huruf/);
+  sebagai(ADMIN, `select public.batal_opname_kantor(${dok2[0].id}, 'salah hitung')`);
+  assert.throws(() => sebagai(ADMIN, `select public.batal_opname_kantor(${dok2[0].id}, 'salah hitung')`), /sudah dibatalkan/);
+  assert.strictEqual(cek({ kode_toko: 'TRP', kunci }).opname.length, 0);
+  assert.strictEqual(q('set role anon; select count(*) from opname_kantor'), '0');
+  assert.throws(() => q("set role anon; select public.buat_opname_kantor('TRP', null, '[]')"), /permission denied/);
+  assert.throws(() => sebagai(ADMIN, `select public.opname_diterapkan(${lit({ kode_toko: 'TRP', kunci, hasil: [] })})`), /permission denied/);
+  ok('tarik data: kantor semua toko / pemilik hanya tokonya, toko menjawab lalu permintaan selesai; opname kantor: hanya owner & admin, diterapkan dengan patokan, review SO otomatis, tidak dobel, batal');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });

@@ -77,13 +77,15 @@ async function buatDatabase(dbUrl) {
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
     'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql',
-    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/migrations/20261120000009_minta_update.sql', 'supabase/migrations/20261122000010_opname_kantor.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;
 }
 
-async function buatDataDemo(dbUrl) {
+// opsi.toko (objek): diisi Trizone contoh per toko ({ svc, db, mb }) agar uji bisa menjawab permintaan homebase;
+// koneksi database lalu tetap terbuka sampai opsi.tutup() dipanggil.
+async function buatDataDemo(dbUrl, opsi = {}) {
   const c = await buatDatabase(dbUrl);
   const pool = new Pool({ connectionString: dbUrl, max: 2 });
   const q = (sql, params) => c.query(sql, params).then((r) => r.rows);
@@ -119,7 +121,8 @@ async function buatDataDemo(dbUrl) {
     const client = await pool.connect();
     try {
       await client.query('begin; set local role anon');
-      const r = await client.query(`select public.${fn === 'terima_data' ? 'terima_data' : 'ambil_master'}($1::jsonb) as v`, [JSON.stringify(p)]);
+      if (!['terima_data', 'ambil_master', 'cek_permintaan', 'opname_diterapkan'].includes(fn)) throw new Error(`fungsi ${fn} tidak dikenal`);
+      const r = await client.query(`select public.${fn}($1::jsonb) as v`, [JSON.stringify(p)]);
       await client.query('commit');
       return new Response(JSON.stringify(r.rows[0].v), { status: 200 });
     } catch (e) {
@@ -255,7 +258,10 @@ async function buatDataDemo(dbUrl) {
   await q('select public.buat_po_dari_usulan()').catch(() => null);
 
   await c.end();
-  await pool.end();
+  if (opsi.toko) {
+    Object.assign(opsi.toko, tokoSvc);
+    opsi.tutup = () => pool.end();
+  } else await pool.end();
   return AKUN;
 }
 

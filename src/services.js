@@ -1804,6 +1804,32 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   // Master barang & harga dari mother base. Stok tidak diubah. Barang yang tidak ada di master dibiarkan.
+  // Stock opname dari kantor (homebase): diterapkan dengan patokan stok di file (lihat createOpname), jadi
+  // penjualan / mutasi setelah Tanggal_Stok tetap terhitung. Satu kali per dokumen kantor: bila sudah
+  // pernah diterapkan, hasil lama dikembalikan. Barang yang tidak ada di Daftar Barang dilewati.
+  function mbApplyKantorOpname({ id, no_dok, zona, catatan, stok_per, baris = [] } = {}) {
+    const kantorId = Number(id);
+    if (!Number.isInteger(kantorId) || kantorId <= 0) fail('Opname kantor tanpa id.');
+    if (!ZONE_COL[zona]) fail(`Zona opname kantor "${zona}" tidak dikenal.`);
+    const hasil = (r) => ({ id: kantorId, no_dok: r.no_dok, no_op: r.doc_no || null, dilewati: JSON.parse(r.skipped || '[]') });
+    return db.tx(() => {
+      const ada = db.get('SELECT * FROM mb_opname_kantor WHERE kantor_id = ?', [kantorId]);
+      if (ada) return { ...hasil(ada), baru: false };
+      const dilewati = [];
+      const items = [];
+      for (const b of Array.isArray(baris) ? baris : []) {
+        if (!b || !getProduct(b.sku)) { dilewati.push(b && b.sku); continue; }
+        items.push({ sku: b.sku, counted: Number(b.fisik), baseline: Number(b.patokan) });
+      }
+      const no = String(no_dok || `OPK-${kantorId}`);
+      const notes = `Opname kantor ${no}${catatan ? ` · ${catatan}` : ''}`.slice(0, 200);
+      const op = items.length ? createOpname({ zone: zona, notes, items, count_at: stok_per }) : null;
+      db.run('INSERT INTO mb_opname_kantor(kantor_id, no_dok, doc_no, skipped, applied_at) VALUES(?, ?, ?, ?, ?)',
+        [kantorId, no, op ? op.doc_no : null, JSON.stringify(dilewati), localNow()]);
+      return { ...hasil(db.get('SELECT * FROM mb_opname_kantor WHERE kantor_id = ?', [kantorId])), baru: true };
+    });
+  }
+
   function mbApplyMaster({ produk = [], server_at } = {}) {
     const out = { baru: 0, diubah: 0, sama: 0, dilewati: [] };
     db.tx(() => {
@@ -1907,7 +1933,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   return {
     ensureShiftUid, shiftData, masterLocked,
-    mbConfig, mbSaveConfig, mbStatus, mbShiftSent, mbState, mbSetState, mbQueueHistory, mbBatch, mbAck, mbApplyMaster, mbMasterSince,
+    mbConfig, mbSaveConfig, mbStatus, mbShiftSent, mbState, mbSetState, mbQueueHistory, mbBatch, mbAck, mbApplyMaster, mbMasterSince, mbApplyKantorOpname,
     needsSetup, listUsers, saveUser, deleteUser, authCache, verifyLogin,
     listLabelDesigns, getLabelDesign, saveLabelDesign, deleteLabelDesign, setDefaultLabelDesign, labelItemsFromReception,
     meta, getSettings, saveSettings,

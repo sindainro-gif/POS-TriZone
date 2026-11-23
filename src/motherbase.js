@@ -130,6 +130,50 @@ function createMotherbase({ svc, appVersion = '', demo = false, fetchFn = global
     return { kode_toko: r.kode_toko, server_at: r.server_at };
   }
 
+  // Permintaan dari homebase, dicek tiap 5 menit (satu RPC kecil):
+  //   * minta  = tombol "Tarik data terbaru": keadaan terkini (penjualan & stok) langsung dikirim;
+  //   * opname = stock opname dari kantor: diterapkan ke stok (sekali per dokumen), dilaporkan lewat
+  //     opname_diterapkan, lalu stok terbaru dikirim.
+  // Tidak pernah melempar: gagal (mis. internet putus) dikembalikan di hasil dan dicoba lagi 5 menit kemudian.
+  async function cekPermintaan() {
+    if (demo || !svc.mbConfig().ready) return { minta: false, opname: [] };
+    const out = { minta: false, opname: [] };
+    let cfg;
+    let r;
+    try {
+      cfg = config();
+      r = await rpc(cfg, 'cek_permintaan', { kode_toko: cfg.kode_toko, kunci: cfg.kunci });
+    } catch (err) {
+      return { ...out, error: err.message };
+    }
+    out.minta = !!(r && r.minta);
+    const dokumen = Array.isArray(r && r.opname) ? r.opname : [];
+    const hasil = [];
+    for (const d of dokumen) {
+      try {
+        const h = svc.mbApplyKantorOpname(d);
+        hasil.push({ id: h.id, no_op: h.no_op, dilewati: h.dilewati });
+        out.opname.push(h);
+      } catch (err) {
+        out.opnameError = `${d && d.no_dok}: ${err.message}`;
+      }
+    }
+    if (hasil.length) {
+      try {
+        await rpc(cfg, 'opname_diterapkan', { kode_toko: cfg.kode_toko, kunci: cfg.kunci, hasil });
+      } catch (err) {
+        out.laporError = err.message; // dilaporkan lagi pada cek berikutnya (tidak diterapkan ulang)
+      }
+    }
+    if (!out.minta && !hasil.length) return out;
+    try {
+      out.kirim = await kirim({ force: true });
+    } catch (err) {
+      out.kirimError = err.message;
+    }
+    return out;
+  }
+
   // Dipanggil berkala oleh proses utama; tidak pernah melempar error (status tersimpan di mbState)
   async function tick({ pullMaster = false } = {}) {
     if (demo || !svc.mbConfig().ready) return null;
@@ -141,7 +185,7 @@ function createMotherbase({ svc, appVersion = '', demo = false, fetchFn = global
     return out;
   }
 
-  return { kirim, ambilMaster, tes, tick, isRunning: () => !!running };
+  return { kirim, ambilMaster, tes, tick, cekPermintaan, isRunning: () => !!running };
 }
 
 module.exports = { createMotherbase, PROTOKOL };

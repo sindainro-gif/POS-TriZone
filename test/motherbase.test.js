@@ -17,7 +17,8 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
 
 // Mother base palsu: mencatat kiriman, membalas seperti RPC terima_data / ambil_master
 function fakeMotherbase() {
-  const fm = { calls: [], down: false, kunci: 'kunci-rahasia', master: [], rejectShifts: false };
+  const fm = { calls: [], down: false, kunci: 'kunci-rahasia', master: [], rejectShifts: false,
+    permintaan: { minta: false, opname: [] }, diterapkan: [], ackDown: false };
   fm.fetch = async (url, opt) => {
     if (fm.down) { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; }
     const fn = url.split('/rpc/')[1];
@@ -31,6 +32,12 @@ function fakeMotherbase() {
         ok: true, kode_toko: p.kode_toko, shift_diterima: fm.rejectShifts ? [] : (p.shifts || []).map((s) => s.shift.shift_uid),
         snapshot: p.snapshot ? true : null, dokumen: { penerimaan: (d.receptions || []).length, mutasi: (d.transfers || []).length, opname: (d.opnames || []).length },
       });
+    }
+    if (fn === 'cek_permintaan') return reply(200, { kode_toko: p.kode_toko, ...fm.permintaan });
+    if (fn === 'opname_diterapkan') {
+      if (fm.ackDown) return reply(503, { message: 'sedang pemeliharaan' });
+      fm.diterapkan.push(...p.hasil);
+      return reply(200, { ok: true, diterapkan: p.hasil.length });
     }
     if (fn === 'ambil_master') return reply(200, { kode_toko: p.kode_toko, server_at: '2026-11-16T10:00:00Z', produk: p.sejak && p.sejak > '2900' ? [] : fm.master });
     return reply(404, { message: 'not found' });
@@ -296,6 +303,64 @@ function fakeMotherbase() {
     assert.strictEqual(svc.saveProduct({ product: { ...a, min_floor_alert: 9 } }).min_floor_alert, 9);
     svc.mbSaveConfig({ kunci_master: false });
     assert.strictEqual(svc.saveProduct({ product: { ...a, unit_price: 1300 } }).unit_price, 1300);
+  });
+
+  await t('permintaan kantor: tanpa permintaan tidak mengirim; "Tarik data terbaru" langsung mengirim; internet putus tidak melempar', async () => {
+    fm.calls.length = 0;
+    let r = await mb.cekPermintaan();
+    assert.deepStrictEqual(fm.calls.map((c) => c.fn), ['cek_permintaan']);
+    assert.strictEqual(r.minta, false);
+    fm.permintaan.minta = true;
+    fm.calls.length = 0;
+    r = await mb.cekPermintaan();
+    assert.deepStrictEqual(fm.calls.map((c) => c.fn), ['cek_permintaan', 'terima_data']);
+    assert.ok(fm.calls[1].p.snapshot && fm.calls[1].p.snapshot.inventory.length, 'stok terkini ikut terkirim walau tidak berubah');
+    assert.ok(r.kirim);
+    fm.permintaan.minta = false;
+    fm.down = true;
+    r = await mb.cekPermintaan();
+    fm.down = false;
+    assert.match(r.error, /internet/i);
+  });
+
+  await t('stock opname dari kantor: patokan stok di file (perubahan setelahnya tetap terhitung), sekali saja, SKU tak dikenal dilewati, dilaporkan & stok dikirim', async () => {
+    const awal = svc.getProduct('B-2').floor_stock;
+    const docsAwal = db.get('SELECT COUNT(*) AS n FROM stock_opname_docs').n;
+    // Stok per Tanggal_Stok = awal; kantor menghitung fisik awal − 3. Setelah itu toko menjual 1 sebelum opname masuk.
+    db.run("UPDATE inventory SET floor_stock = floor_stock - 1 WHERE sku = 'B-2'");
+    fm.permintaan.opname = [{ id: 7, no_dok: 'OPK-20261122-001', zona: 'floor', catatan: 'Hitung ulang rak', stok_per: '2026-11-22 09:00:00',
+      baris: [{ sku: 'B-2', patokan: awal, fisik: awal - 3 }, { sku: 'TIDAK-ADA', patokan: 5, fisik: 4 }] }];
+    fm.calls.length = 0;
+    let r = await mb.cekPermintaan();
+    assert.strictEqual(svc.getProduct('B-2').floor_stock, awal - 1 - 3, 'hanya selisih fisik − patokan yang diterapkan');
+    const op = db.get('SELECT * FROM stock_opname_docs ORDER BY id DESC LIMIT 1');
+    assert.match(op.notes, /^Opname kantor OPK-20261122-001 · Hitung ulang rak$/);
+    assert.strictEqual(op.zone, 'floor');
+    assert.strictEqual(op.count_at, '2026-11-22 09:00:00');
+    assert.deepStrictEqual(fm.diterapkan, [{ id: 7, no_op: op.doc_no, dilewati: ['TIDAK-ADA'] }]);
+    assert.deepStrictEqual(fm.calls.map((c) => c.fn), ['cek_permintaan', 'opname_diterapkan', 'terima_data']);
+    assert.ok(fm.calls[2].p.dokumen.opnames.some((d) => d.doc_no === op.doc_no), 'dokumen OP langsung dikirim ke kantor');
+    assert.strictEqual(r.opname[0].baru, true);
+
+    // Kantor belum mencatat (dikirim ulang): tidak diterapkan dua kali, hanya dilaporkan lagi
+    fm.ackDown = true;
+    r = await mb.cekPermintaan();
+    assert.match(r.laporError, /HTTP 503/);
+    fm.ackDown = false;
+    fm.diterapkan.length = 0;
+    r = await mb.cekPermintaan();
+    assert.strictEqual(svc.getProduct('B-2').floor_stock, awal - 4);
+    assert.strictEqual(db.get('SELECT COUNT(*) AS n FROM stock_opname_docs').n, docsAwal + 1);
+    assert.deepStrictEqual(fm.diterapkan, [{ id: 7, no_op: op.doc_no, dilewati: ['TIDAK-ADA'] }]);
+    assert.strictEqual(r.opname[0].baru, false);
+
+    // Semua barang tidak dikenal: tidak ada dokumen OP, tetap dilaporkan
+    fm.permintaan.opname = [{ id: 8, no_dok: 'OPK-20261122-002', zona: 'warehouse', stok_per: '2026-11-22 09:00:00', baris: [{ sku: 'X-9', patokan: 1, fisik: 0 }] }];
+    fm.diterapkan.length = 0;
+    await mb.cekPermintaan();
+    assert.deepStrictEqual(fm.diterapkan, [{ id: 8, no_op: null, dilewati: ['X-9'] }]);
+    assert.strictEqual(db.get('SELECT COUNT(*) AS n FROM stock_opname_docs').n, docsAwal + 1);
+    fm.permintaan.opname = [];
   });
 
   await t('tes koneksi tidak mengubah data', async () => {

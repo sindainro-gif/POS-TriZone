@@ -43,7 +43,8 @@ function fileAccurate() {
 (async () => {
   const dbUrl = process.env.MB_DATABASE_URL;
   if (!dbUrl) { console.log('Isi MB_DATABASE_URL (database ini dibuat ulang).'); process.exit(2); }
-  await buatDataDemo(dbUrl);
+  const demo = { toko: {} }; // Trizone contoh per toko: dipakai untuk menjawab permintaan homebase
+  await buatDataDemo(dbUrl, demo);
   const pool = new Pool({ connectionString: dbUrl });
   const jwtSecret = crypto.randomBytes(32).toString('hex');
   const anonKey = signJwt({ role: 'anon' }, jwtSecret);
@@ -216,6 +217,8 @@ function fileAccurate() {
     assert.ok(menuKantor.includes('stok') && menuKantor.includes('opname'), 'menu Stok dan Stock Opname terpisah');
     assert.strictEqual(menuKantor.indexOf('opname'), menuKantor.indexOf('stok') + 1);
     await buka('opname');
+    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['kantor', 'so', 'selisih']);
+    await page.click('#stTab [data-t="so"]');
     await page.waitForSelector('[data-so] [data-aksi="DISETUJUI"]');
     await shot('03-review-so');
     await page.click('[data-so] [data-aksi="DISETUJUI"]');
@@ -227,8 +230,92 @@ function fileAccurate() {
     await page.click('#stTab [data-t="selisih"]');
     await tunggu(500);
     await shot('03b-selisih-trizone');
-    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['so', 'selisih']);
     ok('stock opname: SO disetujui dengan catatan (tercatat penyetujunya), selisih vs Trizone');
+
+    // Opname dari kantor: tarik stok → unduh template → hitung → upload → kirim → toko menerapkan
+    const trp = demo.toko.TRP;
+    await page.evaluate(() => { PANTAU.ms = 300; });
+    await page.click('#stTab [data-t="kantor"]');
+    await page.waitForSelector('#okToko');
+    await page.selectOption('#okToko', 'TRP');
+    await page.waitForFunction(() => /Stok di template/.test(document.querySelector('#okStokPer').textContent));
+    await page.click('#okTarik');
+    await toastCocok(/Permintaan dikirim ke TRP/);
+    await tungguDb("select minta_update_at is not null from toko_status where kode_toko = 'TRP'", [true]);
+    assert.match(await page.textContent('#okTarik'), /Menunggu toko/);
+    const tarik = await trp.mb.cekPermintaan(); // Trizone TRP memeriksa permintaan (tiap 5 menit di toko)
+    assert.ok(tarik.minta && tarik.kirim, JSON.stringify(tarik));
+    await toastCocok(/Data terbaru TRP sudah masuk/);
+    await page.waitForFunction(() => /Tarik stok terbaru/.test(document.querySelector('#okTarik').textContent));
+    await page.waitForFunction(() => /Stok di template/.test(document.querySelector('#okStokPer').textContent));
+
+    await page.selectOption('#okKategori', 'Plastik');
+    const [tpl] = await Promise.all([page.waitForEvent('download'), page.click('#okUnduh')]);
+    assert.match(tpl.suggestedFilename(), /^Opname_TRP_\d{12}_Plastik\.xlsx$/);
+    const isiTpl = XLSX.utils.sheet_to_json(XLSX.readFile(await tpl.path()).Sheets.Opname, { defval: '' });
+    assert.deepStrictEqual(Object.keys(isiTpl[0]), ['Kode', 'Nama_Barang', 'Display Toko', 'Fisik Display Toko', 'Gudang Utama', 'Fisik Gudang Utama',
+      'Gudang BS', 'Fisik Gudang BS', 'Gudang Shopee', 'Fisik Gudang Shopee', 'Tanggal_Stok', 'Toko']);
+    assert.ok(isiTpl.every((r) => /^PLJ-/.test(r.Kode) && r.Toko === 'TRP' && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(r.Tanggal_Stok)), 'hanya kategori Plastik');
+    const pTrp = (sku) => trp.svc.getProduct(sku);
+    const ember = isiTpl.find((r) => r.Kode === 'PLJ-001');
+    const gayung = isiTpl.find((r) => r.Kode === 'PLJ-002');
+    assert.strictEqual(ember['Display Toko'], pTrp('PLJ-001').floor_stock);
+    const tulisHasil = (rows, nama) => {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Opname');
+      const f = path.join(OUT, nama);
+      XLSX.writeFile(wb, f);
+      return f;
+    };
+    // File salah: kode yang tidak ada di toko → ditahan
+    const salah = isiTpl.map((r) => ({ ...r }));
+    salah[0]['Fisik Display Toko'] = 1;
+    salah.push({ ...salah[0], Kode: 'TIDAK-ADA', 'Fisik Display Toko': 3 });
+    await page.setInputFiles('#okFile', tulisHasil(salah, 'opname_salah.xlsx'));
+    await page.waitForSelector('#okPratinjau .alert.bad');
+    assert.match(await page.textContent('#okPratinjau'), /TIDAK-ADA tidak ada di Daftar Barang toko TRP/);
+    assert.strictEqual(await page.$('#okKirim'), null);
+    // Hasil hitung: Ember di display kurang 2, Gayung di gudang lebih 1
+    const hasilHitung = isiTpl.map((r) => ({ ...r }));
+    hasilHitung.find((r) => r.Kode === 'PLJ-001')['Fisik Display Toko'] = ember['Display Toko'] - 2;
+    hasilHitung.find((r) => r.Kode === 'PLJ-002')['Fisik Gudang Utama'] = gayung['Gudang Utama'] + 1;
+    const fileHasil = tulisHasil(hasilHitung, 'opname_hasil.xlsx');
+    await page.setInputFiles('#okFile', fileHasil);
+    await page.waitForSelector('#okKirim');
+    const pratinjau = await page.textContent('#okPratinjau');
+    assert.match(pratinjau, /Display Toko[\s\S]*Gudang Utama/);
+    assert.match(pratinjau, /PLJ-001[\s\S]*-2/);
+    await shot('03c-opname-kantor-pratinjau');
+    await page.fill('#okCatatan', 'Opname rak plastik');
+    await page.click('#okKirim');
+    await page.click('.modal-kaki .btn.primary');
+    await toastCocok(/OPK-\d{8}-\d{3}, OPK-\d{8}-\d{3} dikirim ke TRP/);
+    const dokOpk = await db("select no_dok, zona, status from opname_kantor where kode_toko = 'TRP' order by id");
+    assert.deepStrictEqual(dokOpk.map((d) => [d.zona, d.status]), [['floor', 'dikirim'], ['warehouse', 'dikirim']]);
+    // Toko menjual 1 Ember setelah stok ditarik, sebelum opname masuk: tetap terhitung
+    const sebelum = pTrp('PLJ-001').floor_stock;
+    trp.svc.checkout({ items: [{ sku: 'PLJ-001', qty: 1 }], payment_method: 'QRIS' });
+    const gudangGayung = pTrp('PLJ-002').warehouse_stock;
+    const jawab = await trp.mb.cekPermintaan();
+    assert.strictEqual(jawab.opname.length, 2, JSON.stringify(jawab));
+    assert.strictEqual(pTrp('PLJ-001').floor_stock, sebelum - 1 - 2);
+    assert.strictEqual(pTrp('PLJ-002').warehouse_stock, gudangGayung + 1);
+    const terapan = await db("select o.status, o.no_op_toko, r.status as review, r.catatan from opname_kantor o join stok_opname_review r on r.kode_toko = o.kode_toko and r.no_op = o.no_op_toko where o.kode_toko = 'TRP' order by o.id");
+    assert.strictEqual(terapan.length, 2);
+    assert.ok(terapan.every((x) => x.status === 'diterapkan' && x.review === 'DISETUJUI' && /^Opname dari kantor OPK-/.test(x.catatan)), JSON.stringify(terapan));
+    await page.waitForFunction(() => [...document.querySelectorAll('#okDaftar tbody tr')].filter((tr) => /Diterapkan/.test(tr.textContent)).length === 2, null, { timeout: 15000 });
+    await shot('03d-opname-kantor-diterapkan');
+    await page.click('#okDaftar tr.klik');
+    await page.waitForSelector('.modal');
+    assert.match(await page.textContent('.modal'), /Diterapkan di toko[\s\S]*OP-/);
+    await page.click('.modal .tutup');
+    // File yang sama dikirim lagi: ditolak (selisih tidak boleh dihitung dua kali)
+    await page.setInputFiles('#okFile', fileHasil);
+    await page.waitForSelector('#okKirim');
+    await page.click('#okKirim');
+    await page.click('.modal-kaki .btn.primary');
+    await toastCocok(/sudah diopname kantor setelah stok di file/);
+    ok('opname dari kantor: tarik stok, template per kategori, upload (kode salah ditahan), kirim, toko menerapkan dengan patokan, review SO otomatis, kirim ulang ditolak');
 
     await buka('stok');
     assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat']);
@@ -463,7 +550,7 @@ function fileAccurate() {
     ok('pemilik toko: menu terbatas, hanya data TRP, halaman kantor tidak bisa dibuka');
 
     // Login dengan kata sandi salah memang dibalas 400 (disengaja di awal uji)
-    const nyata = kesalahan.filter((k) => !/favicon/.test(k) && !/invalid_credentials/.test(k) && !/status of 400/.test(k));
+    const nyata = kesalahan.filter((k) => !/favicon/.test(k) && !/invalid_credentials/.test(k) && !/status of 400/.test(k) && !/sudah diopname kantor/.test(k));
     assert.deepStrictEqual(nyata, [], `error di konsol browser:\n${nyata.join('\n')}`);
     ok('tidak ada error JavaScript di konsol browser');
     console.log(`\n${lulus} uji browser lulus · tangkapan layar: ${OUT}`);
@@ -476,5 +563,6 @@ function fileAccurate() {
     await browser.close();
     server.close();
     await pool.end();
+    if (demo.tutup) await demo.tutup();
   }
 })();
