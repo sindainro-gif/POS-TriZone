@@ -176,6 +176,23 @@ async function printShiftRecap(recap, { reprint = false } = {}) {
   return printPage(page, { deviceName: s.printer_name, pdfName: `Rekap_Shift_${String(recap.closed_at || localNow()).replace(/\D/g, '')}`, what: 'Rekap shift' });
 }
 
+// Buka laci lewat printer nota KOMPUTER INI (PC Kasir tidak lewat PC Server, jadi tetap jalan saat MODE DARURAT).
+// Printer nota kosong = printer default Windows. Mode uji (POS_PRINT_TO_PDF): perintahnya ditulis ke file.
+async function openDrawerHere() {
+  const testDir = process.env.POS_PRINT_TO_PDF || '';
+  let printerName = (await getSettings()).printer_name;
+  if (!printerName && !testDir) {
+    const def = (await win.webContents.getPrintersAsync()).find((p) => p.isDefault);
+    printerName = def ? def.name : '';
+  }
+  return openDrawer({ printerName, dataDir: DATA_DIR, testDir });
+}
+// Transaksi tunai: laci terbuka otomatis (Pengaturan → "Buka laci otomatis"). Tidak menunggu, gagal tidak mengganggu transaksi.
+function autoDrawer() {
+  getSettings().then((s) => (s.drawer_auto !== '0' ? openDrawerHere() : null))
+    .catch((err) => console.error('[laci otomatis]', err.message));
+}
+
 async function printReceipt(receipt, { reprint = false } = {}) {
   const s = await getSettings();
   const page = receiptPage(buildReceiptRows(receipt, s, { reprint }), s.paper_width, { offsetMm: s.receipt_offset, fontScale: s.receipt_font_scale });
@@ -862,7 +879,7 @@ const handlers = {
   'settings:clearVoidPin': () => svc.clearVoidPin(),
   'settings:save': async (a) => {
     const own = {};
-    for (const k of PRINTER_KEYS) if (a[k] !== undefined) own[k] = k === 'auto_print' ? (a[k] === true || a[k] === '1' ? '1' : '0') : String(a[k]);
+    for (const k of PRINTER_KEYS) if (a[k] !== undefined) own[k] = ['auto_print', 'drawer_auto'].includes(k) ? (a[k] === true || a[k] === '1' ? '1' : '0') : String(a[k]);
     if (own.paper_width && !['58', '80'].includes(own.paper_width)) throw userError('Lebar kertas harus 58 mm atau 80 mm.');
     if (own.receipt_font_scale !== undefined && !FONT_SCALES.includes(own.receipt_font_scale)) throw userError('Ukuran huruf nota tidak dikenal.');
     if (own.receipt_offset !== undefined) {
@@ -938,6 +955,7 @@ const handlers = {
     if ((await getSettings()).auto_print !== '0') {
       try { await printOrder(o); } catch (err) { o.print_error = err.message; }
     }
+    if (o.deposit > 0) autoDrawer(); // deposit masuk laci
     return o;
   },
   'orders:complete': async (a = {}) => {
@@ -945,6 +963,7 @@ const handlers = {
     if ((await getSettings()).auto_print !== '0') {
       try { await printReceiptOnce(r.receipt); } catch (err) { r.print_error = err.message; }
     }
+    autoDrawer(); // sisa bayar pesanan
     return r;
   },
   'orders:cancel': async (a = {}) => {
@@ -958,7 +977,11 @@ const handlers = {
   'orders:print': async ({ order_no, reprint = true } = {}) => printOrder(await svc.getOrder({ order_no }), { reprint: reprint !== false }),
   'products:pullMaster': () => runMain('main.pullMaster'),
   'mb:sendSales': () => runMain('main.sendSales'),
-  'sales:checkout': (a) => (isClient() ? checkoutClient(a) : runMain('main.checkout', a)),
+  'sales:checkout': async (a) => {
+    const r = await (isClient() ? checkoutClient(a) : runMain('main.checkout', a));
+    autoDrawer(); // uang tunai masuk laci
+    return r;
+  },
   'offline:markChecked': (a) => svc.markOfflineChecked(a),
 
   'printer:list': async () => (await win.webContents.getPrintersAsync()).map((p) => ({ name: p.name, displayName: p.displayName || p.name, isDefault: !!p.isDefault })),
@@ -967,24 +990,16 @@ const handlers = {
   // Batal nota: kasir meminta, Admin menyetujui dengan PIN. Peminta diambil dari akun yang login, bukan dari layar.
   'receipt:void': async (a = {}) => {
     try {
-      return await runMain('main.voidReceipt', { ...a, requested_by: session.name });
+      const v = await runMain('main.voidReceipt', { ...a, requested_by: session.name });
+      autoDrawer(); // uang dikembalikan dari laci
+      return v;
     } catch (err) {
       if (/PIN Admin \/ PIN Pembatalan salah/.test(err.message)) await new Promise((r) => setTimeout(r, 800)); // memperlambat tebak-tebakan PIN
       throw err;
     }
   },
   'receipt:test': () => printReceipt({ ...SAMPLE_RECEIPT, created_at: localNow() }),
-  // Buka laci lewat printer nota KOMPUTER INI (PC Kasir tidak lewat PC Server, jadi tetap jalan saat MODE DARURAT).
-  // Printer nota kosong = printer default Windows. Mode uji (POS_PRINT_TO_PDF): perintahnya ditulis ke file.
-  'drawer:open': async () => {
-    const testDir = process.env.POS_PRINT_TO_PDF || '';
-    let printerName = (await getSettings()).printer_name;
-    if (!printerName && !testDir) {
-      const def = (await win.webContents.getPrintersAsync()).find((p) => p.isDefault);
-      printerName = def ? def.name : '';
-    }
-    return openDrawer({ printerName, dataDir: DATA_DIR, testDir });
-  },
+  'drawer:open': () => openDrawerHere(),
   // Pratinjau nota di Pengaturan: tampilan sama dengan hasil cetak (font, ukuran huruf, geser)
   'receipt:preview': async ({ settings }) => {
     const s = { ...(await getSettings()), ...(settings || {}) };

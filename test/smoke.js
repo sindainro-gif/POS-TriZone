@@ -228,8 +228,10 @@ app.on('browser-window-created', (_e, win) => {
       // Keripik: display toko 4, di keranjang 11 → tetap masuk keranjang dengan peringatan kuning
       const keripikQty = await run(`document.querySelector('#cartBody tr[data-sku="SNK-010"] [data-act=qty]').value`);
       if (keripikQty !== '11' || !/warn/.test(alertText) || !/Tetap dijual/.test(alertText)) throw new Error(`kasir seharusnya boleh menjual melebihi stok (qty ${keripikQty})`);
+      const laciBayar = laciFiles().length;
       await run(`document.querySelector('#cashInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
       await wait(700);
+      if (laciFiles().length !== laciBayar + 1) throw new Error('laci tidak terbuka otomatis saat Bayar');
       const receiptTitle = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);
       if (!/Transaksi Berhasil/.test(receiptTitle)) throw new Error('Enter di Uang Diterima tidak membayar');
       if (await run(`document.querySelector('#coQty').textContent + '/' + document.querySelector('#coKinds').textContent`) !== '0/0') throw new Error('jumlah barang tidak kembali 0 setelah bayar');

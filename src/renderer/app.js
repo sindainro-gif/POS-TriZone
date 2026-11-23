@@ -3229,6 +3229,7 @@ views.settings = (() => {
     await loadPrinters(s.printer_name);
     for (const [k, sel] of Object.entries(F)) $(sel).value = s[k] || '';
     $('#stAutoPrint').checked = s.auto_print !== '0';
+    $('#stDrawerAuto').checked = s.drawer_auto !== '0';
     updatePreview();
     const info = await api('app:info');
     $('#infoVersion').textContent = info.version;
@@ -3240,6 +3241,7 @@ views.settings = (() => {
     const d = {};
     for (const [k, sel] of Object.entries(F)) d[k] = $(sel).value;
     d.auto_print = $('#stAutoPrint').checked ? '1' : '0';
+    d.drawer_auto = $('#stDrawerAuto').checked ? '1' : '0';
     state.settings = await api('settings:save', d);
     $('#storeName').textContent = state.settings.store_name;
     if (!silent) toast('Pengaturan tersimpan.', 'ok');

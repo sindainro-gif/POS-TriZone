@@ -134,7 +134,7 @@ Di layar Kasir, kursor selalu kembali ke kolom **scan barcode**. Kolom **Jumlah*
 
 **Buka laci:** tombol **Buka Laci** (atau **F2**) di layar Kasir membuka laci uang tanpa transaksi, misalnya untuk menukar uang. Bebas dipakai Kasir & Admin dan tidak dicatat.
 - Laci harus tersambung ke **printer nota** komputer itu (kabel RJ11 di belakang printer). Aplikasi mengirim perintah ESC/POS "buka laci" langsung ke printer, tanpa mencetak dan tanpa kertas keluar. Bila printer nota belum dipilih, dipakai printer default Windows.
-- Laci yang terbuka otomatis saat **Bayar** tetap diatur oleh driver printer (tidak berubah).
+- **Laci terbuka otomatis** setiap transaksi tunai: Bayar, ambil pesanan, deposit pesanan, dan batal nota (uang dikembalikan). Bisa dimatikan per komputer di **Pengaturan → Buka laci otomatis**. Laci tetap terbuka walau nota gagal dicetak / cetak otomatis dimatikan.
 - Untuk mengecek saat memasang: **Pengaturan → Tes Buka Laci**.
 - Jalan juga saat MODE DARURAT (perintah dikirim ke printer komputer kasir itu sendiri).
 

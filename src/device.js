@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PRINTER_KEYS = ['printer_name', 'paper_width', 'auto_print', 'label_printer_name', 'receipt_offset', 'receipt_font_scale'];
+const PRINTER_KEYS = ['printer_name', 'paper_width', 'auto_print', 'label_printer_name', 'receipt_offset', 'receipt_font_scale', 'drawer_auto'];
 const MODES = ['standalone', 'server', 'client'];
 
 const DEFAULTS = {
@@ -18,6 +18,7 @@ const DEFAULTS = {
   label_printer_name: '',
   receipt_offset: '0', // mm geser cetakan nota ke kanan (bila sisi kiri terpotong)
   receipt_font_scale: '100', // ukuran huruf nota (persen): 90 / 100 / 115 / 130
+  drawer_auto: '1', // buka laci otomatis setiap transaksi tunai (bayar, ambil pesanan, deposit, batal nota)
 };
 
 function loadDevice(dir) {
