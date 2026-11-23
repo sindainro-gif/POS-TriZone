@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -477,6 +477,61 @@ function fileAccurate() {
   assert.throws(() => q("set role anon; select public.buat_opname_kantor('TRP', null, '[]')"), /permission denied/);
   assert.throws(() => sebagai(ADMIN, `select public.opname_diterapkan(${lit({ kode_toko: 'TRP', kunci, hasil: [] })})`), /permission denied/);
   ok('tarik data: kantor semua toko / pemilik hanya tokonya, toko menjawab lalu permintaan selesai; opname kantor: hanya owner & admin, diterapkan dengan patokan, review SO otomatis, tidak dobel, batal');
+
+  // ---------------------------------------------------------------- Riwayat stok 7 hari (stok per jam untuk opname kantor)
+  const snapTerakhir = () => q("select max(per_waktu) from toko_snapshot_waktu where kode_toko = 'TRP'");
+  const snap1 = snapTerakhir();
+  const kesetS1 = Number(q("select display from stok_toko where kode_toko = 'TRP' and sku = 'UJ-KESET'"));
+  T.createTransferDoc({ from_zone: 'floor', to_zone: 'warehouse', reason: 'Uji riwayat', items: [{ sku: 'UJ-KESET', qty: 2 }] });
+  tidur(1100);
+  await mb.kirim({ force: true });
+  const snap2 = snapTerakhir();
+  assert.notStrictEqual(snap2, snap1);
+  assert.strictEqual(q(`select string_agg(sku, ',' order by sku) from stok_toko_riwayat where kode_toko = 'TRP' and per_waktu = '${snap2}'`), 'UJ-KESET'); // hanya yang berubah
+  const stokPada = (uid, w) => JSON.parse(sebagai(uid, `select public.stok_toko_per('TRP', ${w ? `'${w}'` : 'null'})`));
+  const barisSku = (r, sku) => r.baris.find((b) => b.sku === sku);
+  const lamaS1 = stokPada(ADMIN, snap1);
+  assert.strictEqual(Date.parse(lamaS1.per_waktu), Date.parse(snap1.replace(' ', 'T').replace(/([+-]\d\d)$/, '$1:00')));
+  assert.strictEqual(Number(barisSku(lamaS1, 'UJ-KESET').display), kesetS1);
+  const kini = stokPada(ADMIN, null);
+  assert.strictEqual(Number(barisSku(kini, 'UJ-KESET').display), kesetS1 - 2);
+  assert.strictEqual(Number(barisSku(kini, 'UJ-KESET').gudang), T.getProduct('UJ-KESET').warehouse_stock);
+  assert.deepStrictEqual([barisSku(kini, 'UJ-KURSI').satuan_masuk, barisSku(kini, 'UJ-KURSI').isi], ['Coly', 6]);
+  assert.deepStrictEqual([barisSku(kini, 'UJ-KESET').satuan_masuk, barisSku(kini, 'UJ-KESET').isi], ['Biji', 1]);
+  const sebelumRiwayat = stokPada(ADMIN, '2000-01-01T00:00:00Z');
+  assert.deepStrictEqual([sebelumRiwayat.per_waktu, sebelumRiwayat.baris.length, !!sebelumRiwayat.paling_awal], [null, 0, true]);
+  assert.strictEqual(sebagai(PMLG, "select count(*) from stok_toko_riwayat where kode_toko = 'TRP'"), '0');
+  assert.strictEqual(stokPada(PMLG, null).baris.length, 0);
+  assert.throws(() => q("set role anon; select public.stok_toko_per('TRP', null)"), /permission denied/);
+
+  // Stok lama sebagai patokan ditolak bila toko sudah membuat SO barang itu sesudahnya
+  T.createOpname({ zone: 'floor', notes: 'Opname toko', items: [{ sku: 'UJ-EMBER', counted: T.getProduct('UJ-EMBER').floor_stock + 1 }] });
+  tidur(1100);
+  await mb.kirim();
+  const s1Teks = q(`select to_char('${snap1}'::timestamptz at time zone 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI:SS')`);
+  const emberS1 = Number(barisSku(lamaS1, 'UJ-EMBER').display);
+  assert.throws(() => buatOpk(OWNER, [{ zona: 'floor', stok_per: s1Teks, baris: [{ sku: 'UJ-EMBER', patokan: emberS1, fisik: emberS1 }] }]),
+    /Toko sudah membuat stok opname untuk barang ini setelah stok di file: OP-\d{8}-\d{3} \(UJ-EMBER\)/);
+  const baruS1 = Number(barisSku(lamaS1, 'UJ-BARU').display);
+  const opkLama = buatOpk(OWNER, [{ zona: 'floor', stok_per: s1Teks, baris: [{ sku: 'UJ-BARU', patokan: baruS1, fisik: baruS1 }] }]);
+  assert.strictEqual(q(`select to_char(stok_per at time zone 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI:SS') from opname_kantor where id = ${opkLama[0].id}`), s1Teks);
+  sebagai(OWNER, `select public.batal_opname_kantor(${opkLama[0].id}, 'uji selesai')`);
+
+  // Lebih dari 7 hari: waktu snapshot lama dihapus; tiap barang tetap punya satu baris dasar sebelum batas
+  q(`update toko_snapshot_waktu set per_waktu = per_waktu - interval '8 days' where kode_toko = 'TRP';
+     update stok_toko_riwayat set per_waktu = per_waktu - interval '8 days' where kode_toko = 'TRP'`);
+  assert.ok(Number(q("select count(*) from stok_toko_riwayat where kode_toko = 'TRP' and sku = 'UJ-KESET'")) >= 3);
+  T.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', reason: 'Uji riwayat', items: [{ sku: 'UJ-KESET', qty: 1 }] });
+  tidur(1100);
+  await mb.kirim({ force: true });
+  assert.strictEqual(q("select count(*) from toko_snapshot_waktu where kode_toko = 'TRP'"), '1');
+  assert.strictEqual(q("select max(n) from (select count(*) n from stok_toko_riwayat where kode_toko = 'TRP' and per_waktu < now() - interval '7 days' group by sku) x"), '1');
+  const setelahBersih = stokPada(ADMIN, null);
+  for (const sku of ['UJ-KESET', 'UJ-KURSI', 'UJ-EMBER']) {
+    assert.deepStrictEqual([Number(barisSku(setelahBersih, sku).display), Number(barisSku(setelahBersih, sku).gudang)],
+      [T.getProduct(sku).floor_stock, T.getProduct(sku).warehouse_stock], sku);
+  }
+  ok('riwayat stok 7 hari: hanya barang yang berubah dicatat, stok per jam dipilih (Coly & isi), sebelum riwayat kosong, hak akses, SO toko sesudahnya menolak stok lama, pembersihan > 7 hari');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });

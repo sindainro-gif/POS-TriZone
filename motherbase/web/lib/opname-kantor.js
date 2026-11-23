@@ -1,10 +1,11 @@
 /* Stock opname dari kantor (halaman Stock Opname → Opname dari kantor).
  * Dipakai aplikasi web (window.MbOpnameKantor) dan uji Node (require). Butuh SheetJS (XLSX).
  *
- * Template sama dengan template opname Trizone, ditambah kolom Toko:
- *   Kode, Nama_Barang, Display Toko, Fisik Display Toko, Gudang Utama, Fisik Gudang Utama, Gudang BS, Fisik Gudang BS,
- *   Gudang Shopee, Fisik Gudang Shopee, Tanggal_Stok, Toko
- * Kolom stok = patokan (stok toko per Tanggal_Stok, dari kiriman terakhir). Isi kolom Fisik zona yang dihitung;
+ * Kolom template (kolom stok & Fisik sama dengan template opname Trizone):
+ *   Kode, Nama_Barang, Satuan_Masuk, Isi_Coly, lalu per zona (Display Toko, Gudang Utama, Gudang BS, Gudang Shopee):
+ *   <zona> (stok, Biji), <zona> (Coly) (teks bantu hitung, mis. "2 Coly 3 Biji"), Fisik <zona> (diisi, Biji);
+ *   lalu Tanggal_Stok, Toko.
+ * Kolom stok = patokan (stok toko per Tanggal_Stok: kiriman terakhir, atau kiriman pada jam yang dipilih). Isi kolom Fisik zona yang dihitung;
  * Fisik kosong = barang itu tidak dihitung di zona tersebut. Di toko, hanya selisih Fisik − patokan yang
  * ditambahkan ke stok sekarang, jadi penjualan setelah Tanggal_Stok tetap terhitung.
  */
@@ -20,7 +21,8 @@
     { id: 'damaged', label: 'Gudang BS', stok: 'bs' },
     { id: 'shopee', label: 'Gudang Shopee', stok: 'shopee' },
   ];
-  const HEADER = ['Kode', 'Nama_Barang', ...ZONA.flatMap((z) => [z.label, `Fisik ${z.label}`]), 'Tanggal_Stok', 'Toko'];
+  const HEADER = ['Kode', 'Nama_Barang', 'Satuan_Masuk', 'Isi_Coly',
+    ...ZONA.flatMap((z) => [z.label, `${z.label} (Coly)`, `Fisik ${z.label}`]), 'Tanggal_Stok', 'Toko'];
   const norm = (k) => String(k ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const p2 = (n) => String(n).padStart(2, '0');
 
@@ -53,12 +55,31 @@
     return /^-?\d+$/.test(s) ? Number(s) : NaN;
   }
 
-  // Baris template dari stok toko: [{ sku, nama, display, gudang, bs, shopee }], stokPer = waktu stok (ISO)
+  // Stok Biji → teks Coly: 15 isi 6 → "2 Coly 3 Biji"; 12 → "2 Coly"; 3 → "3 Biji"; −15 → "-2 Coly 3 Biji".
+  // Barang satuan Biji (isi 1) → kosong.
+  function teksColy(biji, isi) {
+    const n = Math.round(Number(biji) || 0);
+    const k = Math.round(Number(isi) || 1);
+    if (k <= 1) return '';
+    if (!n) return '0';
+    const a = Math.abs(n);
+    const coly = Math.floor(a / k);
+    const sisa = a % k;
+    const t = [coly ? `${coly} Coly` : '', sisa || !coly ? `${sisa} Biji` : ''].filter(Boolean).join(' ');
+    return n < 0 ? `-${t}` : t;
+  }
+
+  // Baris template dari stok toko: [{ sku, nama, satuan_masuk, isi, display, gudang, bs, shopee }], stokPer = waktu stok (ISO)
   function barisTemplate(stok, stokPer, kodeToko) {
     const tgl = teksWib(stokPer);
     return stok.map((r) => {
-      const o = { Kode: String(r.sku), Nama_Barang: r.nama || '' };
-      for (const z of ZONA) { o[z.label] = Number(r[z.stok]) || 0; o[`Fisik ${z.label}`] = ''; }
+      const isi = r.satuan_masuk === 'Biji' ? 1 : Math.max(Number(r.isi) || 1, 1);
+      const o = { Kode: String(r.sku), Nama_Barang: r.nama || '', Satuan_Masuk: r.satuan_masuk || (isi > 1 ? 'Coly' : 'Biji'), Isi_Coly: isi };
+      for (const z of ZONA) {
+        o[z.label] = Number(r[z.stok]) || 0;
+        o[`${z.label} (Coly)`] = teksColy(o[z.label], isi);
+        o[`Fisik ${z.label}`] = '';
+      }
       o.Tanggal_Stok = tgl;
       o.Toko = kodeToko;
       return o;
@@ -68,7 +89,7 @@
   function workbook(rows) {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(rows, { header: HEADER });
-    ws['!cols'] = HEADER.map((h) => ({ wch: h === 'Nama_Barang' ? 34 : h === 'Tanggal_Stok' ? 20 : Math.max(h.length + 2, 10) }));
+    ws['!cols'] = HEADER.map((h) => ({ wch: h === 'Nama_Barang' ? 34 : h === 'Tanggal_Stok' ? 20 : /\(Coly\)$/.test(h) ? 18 : Math.max(h.length + 2, 10) }));
     XLSX.utils.book_append_sheet(wb, ws, 'Opname');
     return wb;
   }
@@ -129,5 +150,5 @@
     return { zona, stokPer, toko: toko.size === 1 ? [...toko][0] : null, masalah, jumlahBaris };
   }
 
-  return { ZONA, HEADER, barisTemplate, workbook, bacaFile, teksWib, bacaTanggal, bulat };
+  return { ZONA, HEADER, barisTemplate, workbook, bacaFile, teksWib, bacaTanggal, bulat, teksColy };
 }));

@@ -38,7 +38,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 | Pembatalan Nota | semua | Riwayat pembatalan nota: ringkasan per toko (jumlah, nilai, % dari penjualan) dan rincian per nota (nota asal, alasan, peminta, penyetuju); unduh CSV |
 | Pesanan Pelanggan | semua | Pesanan pelanggan dari Trizone: belum diambil (tanda lewat tanggal ambil, deposit tertahan), diambil, batal (alasan, deposit kembali / hangus, penyetuju); rincian barang; unduh CSV |
 | Stok | semua | Cari stok per toko & zona dengan filter kondisi (ada, habis, di bawah minimum, perlu isi display, minus, BS), kategori, merk; stok lambat |
-| Stock Opname | kantor | **Opname dari kantor** (owner & admin kantor): tarik stok terbaru, unduh template (format template opname Trizone + kolom Toko, bisa per kategori / merk), upload hasil hitung, periksa selisih, kirim ke toko; Trizone menerapkannya dengan patokan stok di file (penjualan setelah stok ditarik tetap terhitung), SO hasilnya langsung disetujui. Review & persetujuan SO dari toko, selisih stok Trizone vs hitungan mother base |
+| Stock Opname | kantor | **Opname dari kantor** (owner & admin kantor): tarik stok terbaru atau pilih **stok per tanggal/jam** (riwayat stok tiap kiriman toko disimpan 7 hari), unduh template (format template opname Trizone + Satuan_Masuk, Isi_Coly, stok tiap zona dalam Coly, kolom Toko; bisa per kategori / merk; Fisik diisi dalam Biji), upload hasil hitung, periksa selisih, kirim ke toko; Trizone menerapkannya dengan patokan stok di file (penjualan setelah stok ditarik tetap terhitung), SO hasilnya langsung disetujui. Review & persetujuan SO dari toko, selisih stok Trizone vs hitungan mother base |
 | Surat Jalan | kantor | Upload Excel Accurate di browser, unduh file import penerimaan Trizone per toko, simpan, status pencocokan |
 | Pembelian | kantor | Usulan beli semua barang dalam satu daftar (lead time, periode order, stok pengaman diatur owner; dibulatkan ke isi 1 Coly) → usulan PO dengan alasan per baris → owner ubah qty & setujui → tandai dikirim → terima barang (stok gudang & harga beli diperbarui) |
 | Master Barang | kantor | Barcode, harga jual, satuan masuk (Coly / Biji) & isi 1 Coly; harga beli / pricelist; markup (owner); import Excel dengan pratinjau |
@@ -73,7 +73,7 @@ base sudah bersih; nota `BTL-` tidak dihitung sebagai transaksi dan tampil sebag
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
    `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`,
    `migrations/20261119000004_satuan_masuk.sql`, `migrations/20261119000005_tanpa_principal.sql`,
-   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261120000007_filter_stok.sql`, `migrations/20261120000008_pesanan_toko.sql`, `migrations/20261120000009_minta_update.sql`, `migrations/20261122000010_opname_kantor.sql`, lalu `seed.sql`
+   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261120000007_filter_stok.sql`, `migrations/20261120000008_pesanan_toko.sql`, `migrations/20261120000009_minta_update.sql`, `migrations/20261122000010_opname_kantor.sql`, `migrations/20261123000011_riwayat_stok.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`
