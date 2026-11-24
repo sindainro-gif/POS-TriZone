@@ -219,7 +219,6 @@ const HALAMAN = [
   { id: 'pembatalan', judul: 'Pembatalan Nota', ikon: '⊘', untuk: 'semua' },
   { id: 'pesanan', judul: 'Pesanan Pelanggan', ikon: '⧉', untuk: 'semua' },
   { id: 'stok', judul: 'Stok & Barang', ikon: '▦', untuk: 'semua' },
-  { id: 'opname', judul: 'Stock Opname', ikon: '▣', untuk: 'kantor' },
   { id: 'laporan', judul: 'Laporan', ikon: '⇩', untuk: 'semua' },
   { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
   { id: 'retur', judul: 'Retur Barang', ikon: '↩', untuk: 'kantor' },
@@ -345,10 +344,10 @@ async function hRingkasan(el) {
     ]);
     if (belum.length) li.push(['bad', `${belum.length} toko belum menutup shift ${fmtTgl(kemarin)}`, belum.map((b) => b.kode).join(', '), 'toko']);
     if (sj.length) li.push(['warn', `${sj.length} surat jalan perlu dicek`, '', 'kiriman']);
-    if (so.length) li.push(['warn', `${so.length} stok opname menunggu review`, '', 'opname']);
+    if (so.length) li.push(['warn', `${so.length} stok opname menunggu review`, '', 'stok', 'so']);
     if (po.length) li.push([isOwner() ? 'warn' : 'info', `${po.length} usulan PO ${isOwner() ? 'menunggu persetujuan Anda' : 'menunggu persetujuan owner'}`, '', 'pembelian']);
     if (returBelum.length) li.push(['warn', `${returBelum.length} retur toko ke supplier belum diinput di Accurate`, [...new Set(returBelum.map((r) => r.kode_toko))].join(', '), 'retur']);
-    if (opk.length) li.push(['warn', `${opk.length} opname kantor belum diterapkan toko (lebih dari 1 jam)`, [...new Set(opk.map((o) => o.kode_toko))].join(', '), 'opname']);
+    if (opk.length) li.push(['warn', `${opk.length} opname kantor belum diterapkan toko (lebih dari 1 jam)`, [...new Set(opk.map((o) => o.kode_toko))].join(', '), 'stok', 'kantor']);
     const lambat = S.toko.filter((t) => !t.kiriman_terakhir_at || Date.now() - new Date(t.kiriman_terakhir_at) > 26 * 3600e3);
     if (lambat.length && isKantor()) li.push(['info', `${lambat.length} toko belum mengirim data lebih dari sehari`, lambat.map((t) => t.kode).join(', '), 'toko']);
     if (batal.length) li.push(['info', `${batal.length} nota dibatalkan dalam 7 hari terakhir`, [...new Set(batal.map((b) => b.kode_toko))].join(', '), 'pembatalan']);
@@ -361,7 +360,11 @@ async function hRingkasan(el) {
       `<li><span class="pill ${k}">${k === 'bad' ? 'Penting' : k === 'warn' ? 'Cek' : 'Info'}</span><span>${esc(t)}${s ? ` <span class="muted small">${esc(s)}</span>` : ''}</span><a href="#${hal}" class="small"${tab ? ` data-tab="${tab}"` : ''}>Buka</a></li>`).join('')
       : '<li class="muted">Tidak ada yang perlu ditindaklanjuti.</li>';
   }
-  $('#rkPerhatian', el).addEventListener('click', (e) => { const a = e.target.closest('a[data-tab]'); if (a) S.tabPenjualan = a.dataset.tab; });
+  $('#rkPerhatian', el).addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-tab]');
+    if (!a) return;
+    if (a.getAttribute('href') === '#stok') S.tabStok = a.dataset.tab; else S.tabPenjualan = a.dataset.tab;
+  });
 
   await Promise.all([muat(), perhatian().catch((e) => { $('#rkPerhatian', el).innerHTML = `<li class="muted">${esc(pesanError(e))}</li>`; })]);
 }
@@ -678,24 +681,21 @@ async function detailPesanan(p) {
   });
 }
 
-// ---------------------------------------------------------------- Stok & stock opname
-// Dua menu memakai satu halaman bertab: Stok (cari stok, stok lambat) dan Stock Opname (review SO, selisih).
-const hStok = (el) => halamanStok(el, 'stok');
-const hOpname = (el) => halamanStok(el, 'opname');
-
-async function halamanStok(el, jenis) {
-  const opname = jenis === 'opname';
-  const daftar = opname ? [['kantor', 'Opname dari kantor'], ['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone']]
-    : [['cari', 'Cari stok'], ['lambat', 'Stok lambat'], ['dok', 'Mutasi & penerimaan'], ...(isKantor() ? [['barang', 'Master Barang']] : [])];
-  // Menu Stok & Barang mengingat tab terakhir (alamat lama #barang membuka tab Master Barang)
-  let tab = !opname && daftar.some(([k]) => k === S.tabStok) ? S.tabStok : daftar[0][0];
-  el.innerHTML = `${opname
-    ? head('Stock Opname', 'Opname dari kantor (tarik stok, hitung, kirim ke toko), review stok opname dari toko, dan selisih stok Trizone terhadap hitungan mother base.')
-    : head(isKantor() ? 'Stok & Barang' : 'Stok', `Stok terkini tiap toko (dari Trizone), barang yang lama tidak terjual, dan riwayat mutasi & penerimaan toko${isKantor() ? '; Master Barang: kode, barcode, harga jual, dan satuan untuk semua toko' : ''}.`, tombolTarik('stTarik'))}
+// ---------------------------------------------------------------- Stok & Barang (termasuk stock opname & master barang)
+// Satu menu bertab: cari stok, stok lambat, mutasi & penerimaan; untuk kantor juga stock opname (opname dari kantor,
+// review SO toko, selisih vs Trizone) dan Master Barang. Alamat lama #opname / #barang membuka tab masing-masing.
+async function hStok(el) {
+  const daftar = [['cari', 'Cari stok'], ['lambat', 'Stok lambat'], ['dok', 'Mutasi & penerimaan'],
+    ...(isKantor() ? [['kantor', 'Opname dari kantor'], ['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone'], ['barang', 'Master Barang']] : [])];
+  // Tab terakhir diingat
+  let tab = daftar.some(([k]) => k === S.tabStok) ? S.tabStok : daftar[0][0];
+  el.innerHTML = `${head(isKantor() ? 'Stok & Barang' : 'Stok', isKantor()
+    ? 'Stok terkini tiap toko (dari Trizone), barang yang lama tidak terjual, riwayat mutasi & penerimaan toko; stock opname: opname dari kantor (tarik stok, hitung, kirim ke toko), review stok opname dari toko, selisih stok Trizone terhadap hitungan mother base; Master Barang: kode, barcode, harga jual, dan satuan untuk semua toko.'
+    : 'Stok terkini toko (dari Trizone), barang yang lama tidak terjual, dan riwayat mutasi & penerimaan toko.', tombolTarik('stTarik'))}
     ${tabs('stTab', daftar, tab)}<div id="stIsi"></div>`;
-  pasangTabs(el, 'stTab', (t) => { tab = t; if (!opname) S.tabStok = t; tampil(); });
+  pasangTabs(el, 'stTab', (t) => { tab = t; S.tabStok = t; tampil(); });
   const isi = $('#stIsi', el);
-  if (!opname) $('#stTarik', el).addEventListener('click', (e) => tarikData((S.filterStok && S.filterStok.toko) || null, () => tampil(), e.currentTarget));
+  $('#stTarik', el).addEventListener('click', (e) => tarikData((S.filterStok && S.filterStok.toko) || null, () => tampil(), e.currentTarget));
 
   async function tampil() {
     isi.innerHTML = '<div class="card"><div class="kosong">Memuat…</div></div>';
@@ -2216,7 +2216,7 @@ async function hAsisten(el) {
 }
 
 // ================================================================ Kerangka aplikasi
-const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, pesanan: hPesanan, stok: hStok, opname: hOpname, laporan: hLaporan, kiriman: hKiriman, retur: hRetur, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, pesanan: hPesanan, stok: hStok, laporan: hLaporan, kiriman: hKiriman, retur: hRetur, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
 
 function tampilLogin(pesan = '') {
   $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
@@ -2286,7 +2286,9 @@ let rute = 0;
 async function route() {
   if (!S.profil) return;
   let id = location.hash.replace(/^#/, '') || 'ringkasan';
-  if (id === 'barang') { S.tabStok = 'barang'; id = 'stok'; } // menu Master Barang sudah digabung ke Stok & Barang
+  // Menu Master Barang & Stock Opname sudah digabung ke Stok & Barang: alamat lama membuka tabnya
+  if (id === 'barang') { S.tabStok = 'barang'; id = 'stok'; }
+  if (id === 'opname') { S.tabStok = 'kantor'; id = 'stok'; }
   const h = HALAMAN.find((x) => x.id === id && boleh(x)) || HALAMAN[0];
   $$('.nav a').forEach((a) => a.classList.toggle('aktif', a.dataset.h === h.id));
   document.title = `${h.judul} · Mother Base`;
