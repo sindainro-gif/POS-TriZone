@@ -218,13 +218,12 @@ const HALAMAN = [
   { id: 'penjualan', judul: 'Penjualan', ikon: '▤', untuk: 'semua' },
   { id: 'pembatalan', judul: 'Pembatalan Nota', ikon: '⊘', untuk: 'semua' },
   { id: 'pesanan', judul: 'Pesanan Pelanggan', ikon: '⧉', untuk: 'semua' },
-  { id: 'stok', judul: 'Stok', ikon: '▦', untuk: 'semua' },
+  { id: 'stok', judul: 'Stok & Barang', ikon: '▦', untuk: 'semua' },
   { id: 'opname', judul: 'Stock Opname', ikon: '▣', untuk: 'kantor' },
   { id: 'laporan', judul: 'Laporan', ikon: '⇩', untuk: 'semua' },
   { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
   { id: 'retur', judul: 'Retur Barang', ikon: '↩', untuk: 'kantor' },
   { id: 'pembelian', judul: 'Pembelian', ikon: '⊕', untuk: 'kantor' },
-  { id: 'barang', judul: 'Master Barang', ikon: '☰', untuk: 'kantor' },
   { id: 'toko', judul: 'Toko', ikon: '⌂', untuk: 'kantor' },
   { id: 'asisten', judul: 'Asisten AI', ikon: '✦', untuk: 'semua' },
   { id: 'pengguna', judul: 'Pengguna', ikon: '☺', untuk: 'owner' },
@@ -676,13 +675,15 @@ const hOpname = (el) => halamanStok(el, 'opname');
 
 async function halamanStok(el, jenis) {
   const opname = jenis === 'opname';
-  const daftar = opname ? [['kantor', 'Opname dari kantor'], ['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone']] : [['cari', 'Cari stok'], ['lambat', 'Stok lambat'], ['dok', 'Mutasi & penerimaan']];
-  let tab = daftar[0][0];
+  const daftar = opname ? [['kantor', 'Opname dari kantor'], ['so', 'Review stok opname'], ['selisih', 'Selisih vs Trizone']]
+    : [['cari', 'Cari stok'], ['lambat', 'Stok lambat'], ['dok', 'Mutasi & penerimaan'], ...(isKantor() ? [['barang', 'Master Barang']] : [])];
+  // Menu Stok & Barang mengingat tab terakhir (alamat lama #barang membuka tab Master Barang)
+  let tab = !opname && daftar.some(([k]) => k === S.tabStok) ? S.tabStok : daftar[0][0];
   el.innerHTML = `${opname
     ? head('Stock Opname', 'Opname dari kantor (tarik stok, hitung, kirim ke toko), review stok opname dari toko, dan selisih stok Trizone terhadap hitungan mother base.')
-    : head('Stok', 'Stok terkini tiap toko (dari Trizone), barang yang lama tidak terjual, dan riwayat mutasi & penerimaan toko.', tombolTarik('stTarik'))}
+    : head(isKantor() ? 'Stok & Barang' : 'Stok', `Stok terkini tiap toko (dari Trizone), barang yang lama tidak terjual, dan riwayat mutasi & penerimaan toko${isKantor() ? '; Master Barang: kode, barcode, harga jual, dan satuan untuk semua toko' : ''}.`, tombolTarik('stTarik'))}
     ${tabs('stTab', daftar, tab)}<div id="stIsi"></div>`;
-  pasangTabs(el, 'stTab', (t) => { tab = t; tampil(); });
+  pasangTabs(el, 'stTab', (t) => { tab = t; if (!opname) S.tabStok = t; tampil(); });
   const isi = $('#stIsi', el);
   if (!opname) $('#stTarik', el).addEventListener('click', (e) => tarikData((S.filterStok && S.filterStok.toko) || null, () => tampil(), e.currentTarget));
 
@@ -695,6 +696,7 @@ async function halamanStok(el, jenis) {
       if (tab === 'selisih') return await selisih();
       if (tab === 'cari') return await cari();
       if (tab === 'dok') return await dokumen();
+      if (tab === 'barang') return await hBarang(isi, { dalamTab: true });
       return await lambat();
     } catch (e) { isi.innerHTML = `<div class="card"><div class="kosong">${esc(pesanError(e))}</div></div>`; }
   }
@@ -1395,9 +1397,12 @@ async function detailSj(sj) {
 }
 
 // ---------------------------------------------------------------- Master barang
-async function hBarang(el) {
-  el.innerHTML = `${head('Master Barang', 'Kode, barcode, harga jual, dan satuan yang dipakai semua toko. Toko dengan daftar barang terkunci mengambilnya otomatis setiap buka shift.',
-    `<button class="btn" id="brImport">Import Excel…</button><button class="btn" id="brIsi">Isi dari toko…</button><button class="btn" id="brHarga">Catat harga beli…</button>${isOwner() ? '<button class="btn" id="brMarkup">Markup…</button>' : ''}<button class="btn primary" id="brTambah">+ Barang</button>`)}
+// Master Barang: tab di menu Stok & Barang (dalamTab) — judul halaman tidak digambar ulang, tombol di atas kartu
+async function hBarang(el, { dalamTab = false } = {}) {
+  const tombol = `<button class="btn" id="brImport">Import Excel…</button><button class="btn" id="brIsi">Isi dari toko…</button><button class="btn" id="brHarga">Catat harga beli…</button>${isOwner() ? '<button class="btn" id="brMarkup">Markup…</button>' : ''}<button class="btn primary" id="brTambah">+ Barang</button>`;
+  const ket = 'Kode, barcode, harga jual, dan satuan yang dipakai semua toko. Toko dengan daftar barang terkunci mengambilnya otomatis setiap buka shift.';
+  el.innerHTML = `${dalamTab ? `<div class="row" style="flex-wrap:wrap;justify-content:space-between;margin-bottom:12px"><span class="muted small" style="max-width:520px">${ket}</span><div class="row" style="flex-wrap:wrap">${tombol}</div></div>`
+    : head('Master Barang', ket, tombol)}
     <div class="card"><div class="card-head"><div class="row"><input id="brCari" placeholder="Cari nama atau SKU" style="min-width:220px"></div>
     <span class="muted small" id="brJumlah"></span></div><div id="brIsiTabel"></div></div>`;
   const markupRow = await q(sb.from('pengaturan').select('nilai').eq('kunci', 'markup_jual_ke_toko'));
@@ -2079,7 +2084,8 @@ function menu(buka) {
 let rute = 0;
 async function route() {
   if (!S.profil) return;
-  const id = location.hash.replace(/^#/, '') || 'ringkasan';
+  let id = location.hash.replace(/^#/, '') || 'ringkasan';
+  if (id === 'barang') { S.tabStok = 'barang'; id = 'stok'; } // menu Master Barang sudah digabung ke Stok & Barang
   const h = HALAMAN.find((x) => x.id === id && boleh(x)) || HALAMAN[0];
   $$('.nav a').forEach((a) => a.classList.toggle('aktif', a.dataset.h === h.id));
   document.title = `${h.judul} · Mother Base`;

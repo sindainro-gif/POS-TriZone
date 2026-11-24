@@ -423,7 +423,8 @@ function fileAccurate() {
     ok('retur barang: daftar retur toko, upload Rincian Retur Penjualan Accurate, pencocokan per barang (cocok, belum diinput, lebih), status dokumen, Excel');
 
     await buka('stok');
-    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat', 'dok']);
+    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat', 'dok', 'barang']);
+    assert.ok(!(await page.$$eval('.nav a[data-h]', (a) => a.map((x) => x.dataset.h))).includes('barang'), 'Master Barang digabung ke Stok & Barang');
     await page.click('#stTab [data-t="cari"]');
     await page.fill('#stCari', 'keset');
     await tunggu(700);
@@ -544,7 +545,12 @@ function fileAccurate() {
     await shot('05b-usulan-beli');
     ok('pembelian: owner mengubah qty & menyetujui PO, ditandai dikirim (no. Accurate), barang diterima → stok gudang & status Selesai; usulan beli satu daftar, lead time diatur owner');
 
-    await buka('barang');
+    // Master Barang = tab di menu Stok & Barang; alamat lama #barang membuka tab itu
+    await page.evaluate(() => { location.hash = 'barang'; });
+    await page.waitForSelector('#brIsiTabel tbody tr');
+    assert.strictEqual(await page.$eval('.nav a.aktif', (a) => a.dataset.h), 'stok');
+    assert.strictEqual(await page.$eval('#stTab .aktif', (b) => b.dataset.t), 'barang');
+    await shot('06-stok-barang-master');
     await page.click('#brIsiTabel tr.klik:has-text("RTN-001")');
     assert.deepStrictEqual(await page.$$eval('#fSatuan option', (o) => o.map((x) => x.value)), ['Coly', 'Biji']);
     assert.strictEqual(await page.inputValue('#fSatuan'), 'Coly');
@@ -749,6 +755,10 @@ function fileAccurate() {
     await masuk('tropodo@contoh.local', 'toko123');
     const menu = await page.$$eval('.nav a', (x) => x.map((a) => a.dataset.h));
     assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'pembatalan', 'pesanan', 'stok', 'laporan', 'asisten']);
+    await page.click('.nav a[data-h="stok"]');
+    await page.waitForSelector('#stTab');
+    assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat', 'dok'], 'pemilik toko tanpa Master Barang');
+    await page.click('.nav a[data-h="ringkasan"]');
     await page.waitForSelector('#rkToko tbody tr');
     assert.deepStrictEqual(await page.$$eval('#rkToko tbody tr td:first-child b', (x) => x.map((e) => e.textContent)), ['TRP']);
     await page.goto(`${BASE}/#pembelian`);
