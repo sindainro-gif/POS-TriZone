@@ -152,12 +152,12 @@ function fileAccurate() {
       }
     }
     // Pembatalan: Malang (5 hari lalu), Tropodo (2 hari lalu, shift tertutup) dan hari ini (shift berjalan)
-    const batal = await page.$$eval('#pjIsi tbody tr', (x) => x.map((tr) => tr.textContent));
+    const batal = await page.$$eval('#pjBatalNota tbody tr', (x) => x.map((tr) => tr.textContent));
     assert.strictEqual(batal.length, 3);
     assert.ok(batal.every((b) => /BTL-\d{8}-\d{4}/.test(b) && /Rina/.test(b) && /Bu Sari/.test(b)), batal.join('\n'));
     assert.ok(batal.some((b) => /Salah ambil barang/.test(b)) && batal.some((b) => /Pelanggan batal beli/.test(b)));
     await shot('02b-penjualan-pembatalan');
-    await page.click('#pjIsi tbody tr.klik');
+    await page.click('#pjBatalNota tbody tr.klik');
     await page.waitForSelector('.modal');
     const rinci = await page.textContent('.modal');
     assert.match(rinci, /Disetujui oleh \(PIN\)\s*Bu Sari/);
@@ -168,36 +168,42 @@ function fileAccurate() {
     assert.strictEqual(await page.$('.modal'), null);
     await page.selectOption('#pjToko', 'TRP');
     await tunggu(500);
-    assert.strictEqual((await page.$$('#pjIsi tbody tr')).length, 2);
+    assert.strictEqual((await page.$$('#pjBatalNota tbody tr')).length, 2);
     const [{ n: struk }] = await db("select count(distinct no_struk)::int n from penjualan where no_struk like 'BTL-%'");
     assert.strictEqual(struk, 3);
     ok('penjualan: per produk, naik/turun, ABC, per kasir, per hari, pembatalan (rincian & penyetuju); filter toko');
 
-    // Laporan riwayat pembatalan: per toko & per nota
-    await buka('pembatalan');
-    await page.selectOption('#btRentang', 'semua');
-    await page.waitForFunction(() => document.querySelectorAll('#btPerNota tbody tr').length === 3);
-    const perToko = await page.$$eval('#btPerToko tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+    // Pembatalan per toko & per nota di Penjualan → Pembatalan (menu Pembatalan Nota sudah dihapus)
+    assert.ok(!(await page.$$eval('.nav a[data-h]', (a) => a.map((x) => x.dataset.h))).includes('pembatalan'), 'menu Pembatalan Nota dihapus');
+    await page.selectOption('#pjToko', '');
+    await page.waitForFunction(() => document.querySelectorAll('#pjBatalNota tbody tr').length === 3);
+    const perToko = await page.$$eval('#pjBatalToko tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
     assert.deepStrictEqual(perToko.map((r) => [r[0].slice(0, 3), r[1]]).sort(), [['MLG', '1'], ['TRP', '2']]);
     assert.ok(perToko.every((r) => /%/.test(r[4]) && r[5] !== '-'), JSON.stringify(perToko));
-    assert.match(await page.textContent('#btRingkas'), /3 nota dibatalkan/);
-    await shot('02d-laporan-pembatalan');
-    const [csvToko] = await Promise.all([page.waitForEvent('download'), page.click('#btCsvToko')]);
+    assert.match(await page.textContent('#pjBatalRingkas'), /3 nota dibatalkan/);
+    await shot('02d-penjualan-pembatalan-per-toko');
+    const [csvToko] = await Promise.all([page.waitForEvent('download'), page.click('#pjCsvBatalToko')]);
     assert.match(csvToko.suggestedFilename(), /^pembatalan_per_toko_/);
-    await page.click('#btPerToko tr.klik:has-text("TRP")');
-    await page.waitForFunction(() => document.querySelectorAll('#btPerNota tbody tr').length === 2);
-    assert.match(await page.textContent('#btJudulNota'), /TRP \(2\)/);
-    const [csvNota] = await Promise.all([page.waitForEvent('download'), page.click('#btCsvNota')]);
+    await page.click('#pjBatalToko tr.klik:has-text("TRP")');
+    await page.waitForFunction(() => document.querySelectorAll('#pjBatalNota tbody tr').length === 2);
+    assert.strictEqual(await page.$eval('#pjToko', (x) => x.value), 'TRP');
+    assert.match(await page.textContent('#pjBatalJudulNota'), /TRP \(2\)/);
+    const [csvNota] = await Promise.all([page.waitForEvent('download'), page.click('#pjCsv')]);
     const fNota = path.join(OUT, csvNota.suggestedFilename());
     await csvNota.saveAs(fNota);
     const isiCsv = fs.readFileSync(fNota, 'utf8');
     assert.match(isiCsv, /Nota asal;.*Diminta oleh;Disetujui oleh/);
     assert.strictEqual(isiCsv.trim().split(/\r?\n/).length, 3);
-    await page.click('#btPerNota tr.klik');
-    await page.waitForSelector('.modal');
-    assert.match(await page.textContent('.modal'), /Disetujui oleh \(PIN\)/);
-    await page.click('.modal .tutup');
-    ok('pembatalan nota: riwayat per toko (jumlah, nilai, % batal) & per nota, filter toko, CSV, rincian');
+    await page.selectOption('#pjToko', '');
+    // Alamat lama #pembatalan membuka Penjualan → Pembatalan
+    await page.click('.nav a[data-h="ringkasan"]');
+    await page.waitForSelector('#rkToko tbody tr');
+    await page.evaluate(() => { S.tabPenjualan = 'produk'; location.hash = 'pembatalan'; });
+    await page.waitForSelector('#pjBatalNota');
+    assert.strictEqual(await page.$eval('.nav a.aktif', (a) => a.dataset.h), 'penjualan');
+    assert.strictEqual(await page.$eval('#pjTab .aktif', (b) => b.dataset.t), 'batal');
+    await page.evaluate(() => { S.tabPenjualan = 'produk'; });
+    ok('pembatalan nota di Penjualan: per toko (jumlah, nilai, % batal) & per nota, klik toko = filter, CSV per toko & per nota; menu Pembatalan Nota dihapus, #pembatalan diarahkan');
 
     // Pesanan pelanggan dari toko
     await buka('pesanan');
@@ -893,7 +899,7 @@ function fileAccurate() {
     await page.waitForSelector('#lgEmail');
     await masuk('tropodo@contoh.local', 'toko123');
     const menu = await page.$$eval('.nav a', (x) => x.map((a) => a.dataset.h));
-    assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'pembatalan', 'pesanan', 'stok', 'laporan', 'asisten']);
+    assert.deepStrictEqual(menu, ['ringkasan', 'penjualan', 'pesanan', 'stok', 'laporan', 'asisten']);
     await page.click('.nav a[data-h="stok"]');
     await page.waitForSelector('#stTab');
     assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat', 'dok'], 'pemilik toko tanpa stock opname & Master Barang');

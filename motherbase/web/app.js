@@ -216,7 +216,6 @@ const fmtBatal = (v, r) => (Number(r.jumlah_pembatalan) ? `<span class="pill war
 const HALAMAN = [
   { id: 'ringkasan', judul: 'Ringkasan', ikon: '◧', untuk: 'semua' },
   { id: 'penjualan', judul: 'Penjualan', ikon: '▤', untuk: 'semua' },
-  { id: 'pembatalan', judul: 'Pembatalan Nota', ikon: '⊘', untuk: 'semua' },
   { id: 'pesanan', judul: 'Pesanan Pelanggan', ikon: '⧉', untuk: 'semua' },
   { id: 'stok', judul: 'Stok & Barang', ikon: '▦', untuk: 'semua' },
   { id: 'laporan', judul: 'Laporan', ikon: '⇩', untuk: 'semua' },
@@ -350,7 +349,7 @@ async function hRingkasan(el) {
     if (opk.length) li.push(['warn', `${opk.length} opname kantor belum diterapkan toko (lebih dari 1 jam)`, [...new Set(opk.map((o) => o.kode_toko))].join(', '), 'stok', 'kantor']);
     const lambat = S.toko.filter((t) => !t.kiriman_terakhir_at || Date.now() - new Date(t.kiriman_terakhir_at) > 26 * 3600e3);
     if (lambat.length && isKantor()) li.push(['info', `${lambat.length} toko belum mengirim data lebih dari sehari`, lambat.map((t) => t.kode).join(', '), 'toko']);
-    if (batal.length) li.push(['info', `${batal.length} nota dibatalkan dalam 7 hari terakhir`, [...new Set(batal.map((b) => b.kode_toko))].join(', '), 'pembatalan']);
+    if (batal.length) li.push(['info', `${batal.length} nota dibatalkan dalam 7 hari terakhir`, [...new Set(batal.map((b) => b.kode_toko))].join(', '), 'penjualan', 'batal']);
     const pesananLewat = pesanan.filter((r) => r.lewat);
     if (pesananLewat.length) {
       li.push(['warn', `${pesananLewat.length} pesanan pelanggan lewat tanggal ambil`, [...new Set(pesananLewat.map((r) => r.kode_toko))].join(', '), 'pesanan']);
@@ -393,7 +392,7 @@ function grafikHarian(rows, p) {
 // ---------------------------------------------------------------- Penjualan
 async function hPenjualan(el) {
   let tab = S.tabPenjualan || 'produk';
-  el.innerHTML = `${head('Penjualan', 'Penjualan per produk, tren, analisa ABC, per kasir, dan pembatalan nota. Omzet sudah dikurangi pembatalan.', `${kontrolPeriode()}${pilihToko('pjToko')}${tombolTarik('pjTarik')}`)}
+  el.innerHTML = `${head('Penjualan', 'Penjualan per produk, tren, analisa ABC, per kasir, per hari, dan pembatalan nota (per toko & per nota). Omzet sudah dikurangi pembatalan.', `${kontrolPeriode()}${pilihToko('pjToko')}${tombolTarik('pjTarik')}`)}
     ${tabs('pjTab', [['produk', 'Per produk'], ['tren', 'Naik / turun'], ['abc', 'Analisa ABC'], ['kasir', 'Per kasir'], ['harian', 'Per hari'], ['batal', 'Pembatalan']], tab)}
     <div class="card"><div class="card-head"><h2 id="pjJudul"></h2><div class="row"><select id="pjUrut" aria-label="Urutkan"><option value="nilai">Urut nilai</option><option value="qty">Urut qty</option></select>
     <button class="btn sm" id="pjCsv">Unduh CSV</button></div></div><div id="pjIsi"><div class="kosong">Memuat…</div></div></div>`;
@@ -456,10 +455,25 @@ async function hPenjualan(el) {
           { k: 'pembatalan', judul: 'Pembatalan', num: true, fmt: fmtBatal }, { k: 'total', judul: 'Total', num: true, fmt: rp }];
       } else if (tab === 'batal') {
         $('#pjJudul', el).textContent = 'Pembatalan nota (disetujui di toko dengan PIN)';
-        baris = await rpc('laporan_pembatalan', { p_dari: p.dari, p_sampai: p.sampai, p_kode_toko: toko, p_batas: 2000 });
-        kolom = KOLOM_BATAL;
-        isi.innerHTML = tabel(kolom, baris, { klik: true, kosong: 'Tidak ada nota yang dibatalkan di periode ini.' });
-        onBaris(isi, baris, detailBatal);
+        const [ring, nota] = await Promise.all([
+          rpc('laporan_ringkasan', { p_dari: p.dari, p_sampai: p.sampai }),
+          rpc('laporan_pembatalan', { p_dari: p.dari, p_sampai: p.sampai, p_kode_toko: toko, p_batas: 2000 }),
+        ]);
+        const perToko = ringkasBatalPerToko(ring, nota, toko);
+        const tot = perToko.reduce((a, r) => ({ jumlah: a.jumlah + r.jumlah, nilai: a.nilai + r.nilai, kotor: a.kotor + r.kotor }), { jumlah: 0, nilai: 0, kotor: 0 });
+        isi.innerHTML = `<div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:6px"><div><b>Per toko</b>
+            <span class="muted small" id="pjBatalRingkas">${perToko.length ? `· ${num(tot.jumlah)} nota dibatalkan · ${esc(rp(tot.nilai))} · ${num(tot.kotor ? (tot.nilai / tot.kotor) * 100 : 0, 2)}% dari penjualan kotor · klik toko untuk notanya saja` : ''}</span></div>
+            <button class="btn sm" id="pjCsvBatalToko">Unduh CSV per toko</button></div>
+          <div id="pjBatalToko">${tabel(KOLOM_BATAL_TOKO, perToko, { klik: true, kosong: 'Tidak ada nota yang dibatalkan di periode ini.' })}</div>
+          <div style="margin:16px 0 6px"><b id="pjBatalJudulNota">Per nota${toko ? ` · ${esc(toko)}` : ''} (${num(nota.length)}${nota.length >= 2000 ? ', 2.000 terbaru' : ''})</b>
+            <span class="muted small">· klik nota untuk rincian barang · Unduh CSV = daftar per nota</span></div>
+          <div id="pjBatalNota">${tabel(KOLOM_BATAL, nota, { klik: true, kosong: 'Tidak ada nota yang dibatalkan di periode ini.' })}</div>`;
+        onBaris($('#pjBatalToko', isi), perToko, (r) => { $('#pjToko', el).value = r.kode_toko; muat(); });
+        onBaris($('#pjBatalNota', isi), nota, detailBatal);
+        $('#pjCsvBatalToko', isi).addEventListener('click', () => unduhCsv(`pembatalan_per_toko_${p.dari}_${p.sampai}.csv`, KOLOM_CSV_BATAL_TOKO,
+          perToko.map((r) => ({ ...r, nama: namaToko(r.kode_toko), terakhir: r.terakhir ? fmtWaktu(r.terakhir) : '' }))));
+        kolom = KOLOM_CSV_BATAL_NOTA;
+        baris = nota.map((r) => ({ ...r, waktu: fmtWaktu(r.waktu), waktu_struk_asal: r.waktu_struk_asal ? fmtWaktu(r.waktu_struk_asal) : '' }));
         return;
       } else {
         $('#pjJudul', el).textContent = 'Penjualan per hari';
@@ -508,93 +522,30 @@ async function detailBatal(b) {
   });
 }
 
-// ---------------------------------------------------------------- Pembatalan nota (riwayat per toko & per nota)
-async function hPembatalan(el) {
-  const RENTANG = [['30', '30 hari terakhir'], ['90', '90 hari terakhir'], ['tahun', 'Tahun ini'], ['semua', 'Semua riwayat'], ['atur', 'Pilih tanggal…']];
-  const st = S.pembatalan || (S.pembatalan = { pilihan: 'semua', dari: '2000-01-01', sampai: hariIni(), toko: '' });
-  if (st.pilihan === 'semua') st.sampai = hariIni();
-  el.innerHTML = `${head('Pembatalan Nota', 'Riwayat nota yang dibatalkan di toko: ringkasan per toko dan rincian per nota (nota asal, alasan, yang meminta, dan yang menyetujui dengan PIN). Klik toko untuk melihat notanya saja, klik nota untuk rincian barang.',
-    `<select id="btRentang" aria-label="Rentang">${RENTANG.map(([v, l]) => `<option value="${v}" ${st.pilihan === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-     <input type="date" id="btDari" value="${st.dari}" aria-label="Dari tanggal"> <span class="muted">s/d</span>
-     <input type="date" id="btSampai" value="${st.sampai}" aria-label="Sampai tanggal">${pilihToko('btPilihToko', st.toko)}`)}
-    <div class="card"><div class="card-head"><div><h2>Per toko</h2><div class="muted small" id="btRingkas"></div></div><button class="btn sm" id="btCsvToko">Unduh CSV</button></div><div id="btPerToko"></div></div>
-    <div class="card"><div class="card-head"><h2 id="btJudulNota">Per nota</h2><button class="btn sm" id="btCsvNota">Unduh CSV</button></div><div id="btPerNota"></div></div>`;
+// ---------------------------------------------------------------- Pembatalan nota per toko (tab Pembatalan di Penjualan)
+const KOLOM_BATAL_TOKO = [
+  { k: 'kode_toko', judul: 'Toko', fmt: (v) => `<b>${esc(v)}</b> <span class="muted">${esc(namaToko(v))}</span>` },
+  { k: 'jumlah', judul: 'Nota batal', num: true, fmt: (v) => num(v) },
+  { k: 'nilai', judul: 'Nilai batal', num: true, fmt: rp },
+  { k: 'kotor', judul: 'Penjualan kotor', num: true, fmt: rp },
+  { k: 'persen', judul: '% batal', num: true, fmt: (v) => `${num(v, 2)}%` },
+  { k: 'terakhir', judul: 'Batal terakhir', fmt: (v) => esc(v ? fmtWaktu(v) : '-') },
+];
+const KOLOM_CSV_BATAL_TOKO = [{ k: 'kode_toko', judul: 'Toko' }, { k: 'nama', judul: 'Nama toko' }, { k: 'jumlah', judul: 'Nota batal' }, { k: 'nilai', judul: 'Nilai batal' },
+  { k: 'kotor', judul: 'Penjualan kotor' }, { k: 'persen', judul: '% batal' }, { k: 'terakhir', judul: 'Batal terakhir' }];
+const KOLOM_CSV_BATAL_NOTA = [{ k: 'waktu', judul: 'Waktu batal' }, { k: 'kode_toko', judul: 'Toko' }, { k: 'no_batal', judul: 'No. pembatalan' }, { k: 'no_struk_asal', judul: 'Nota asal' },
+  { k: 'waktu_struk_asal', judul: 'Waktu nota asal' }, { k: 'kasir', judul: 'Kasir shift' }, { k: 'qty', judul: 'Qty (Biji)' }, { k: 'total', judul: 'Total' },
+  { k: 'alasan', judul: 'Alasan' }, { k: 'diminta_oleh', judul: 'Diminta oleh' }, { k: 'disetujui_oleh', judul: 'Disetujui oleh' }];
 
-  const KOLOM_TOKO = [
-    { k: 'kode_toko', judul: 'Toko', fmt: (v) => `<b>${esc(v)}</b> <span class="muted">${esc(namaToko(v))}</span>` },
-    { k: 'jumlah', judul: 'Nota batal', num: true, fmt: (v) => num(v) },
-    { k: 'nilai', judul: 'Nilai batal', num: true, fmt: rp },
-    { k: 'kotor', judul: 'Penjualan kotor', num: true, fmt: rp },
-    { k: 'persen', judul: '% batal', num: true, fmt: (v) => `${num(v, 2)}%` },
-    { k: 'terakhir', judul: 'Batal terakhir', fmt: (v) => esc(v ? fmtWaktu(v) : '-') },
-  ];
-  let perToko = [];
-  let perNota = [];
-
-  async function muat() {
-    const boxToko = $('#btPerToko', el);
-    const boxNota = $('#btPerNota', el);
-    try {
-      const [ring, nota] = await Promise.all([
-        rpc('laporan_ringkasan', { p_dari: st.dari, p_sampai: st.sampai }),
-        rpc('laporan_pembatalan', { p_dari: st.dari, p_sampai: st.sampai, p_kode_toko: st.toko || null, p_batas: 2000 }),
-      ]);
-      const terakhir = {};
-      for (const n of nota) if (!terakhir[n.kode_toko] || n.waktu > terakhir[n.kode_toko]) terakhir[n.kode_toko] = n.waktu;
-      perToko = ring.filter((r) => Number(r.jumlah_pembatalan) > 0 && (!st.toko || r.kode_toko === st.toko)).map((r) => {
-        const kotor = Number(r.omzet) + Number(r.pembatalan);
-        return { kode_toko: r.kode_toko, jumlah: Number(r.jumlah_pembatalan), nilai: Number(r.pembatalan), kotor,
-          persen: kotor > 0 ? Math.round((Number(r.pembatalan) / kotor) * 10000) / 100 : 0, terakhir: terakhir[r.kode_toko] || null };
-      }).sort((a, b) => b.nilai - a.nilai);
-      perNota = nota;
-      const tot = perToko.reduce((a, r) => ({ jumlah: a.jumlah + r.jumlah, nilai: a.nilai + r.nilai, kotor: a.kotor + r.kotor }), { jumlah: 0, nilai: 0, kotor: 0 });
-      $('#btRingkas', el).textContent = perToko.length
-        ? `${num(tot.jumlah)} nota dibatalkan · ${rp(tot.nilai)} · ${num(tot.kotor ? (tot.nilai / tot.kotor) * 100 : 0, 2)}% dari penjualan kotor`
-        : '';
-      boxToko.innerHTML = tabel(KOLOM_TOKO, perToko, { klik: true, kosong: 'Tidak ada nota yang dibatalkan di rentang ini.' });
-      onBaris(boxToko, perToko, (r) => { st.toko = r.kode_toko; $('#btPilihToko', el).value = r.kode_toko; muat(); });
-      $('#btJudulNota', el).textContent = `Per nota${st.toko ? ` · ${st.toko}` : ''} (${num(nota.length)}${nota.length >= 2000 ? ', 2.000 terbaru' : ''})`;
-      boxNota.innerHTML = tabel(KOLOM_BATAL, nota, { klik: true, kosong: 'Tidak ada nota yang dibatalkan di rentang ini.' });
-      onBaris(boxNota, nota, detailBatal);
-    } catch (e) {
-      boxToko.innerHTML = `<div class="kosong">${esc(pesanError(e))}</div>`;
-      boxNota.innerHTML = '';
-    }
-  }
-
-  $('#btRentang', el).addEventListener('change', (e) => {
-    const v = e.target.value;
-    const h = hariIni();
-    st.pilihan = v;
-    if (v === '30') { st.dari = geser(h, -29); st.sampai = h; }
-    if (v === '90') { st.dari = geser(h, -89); st.sampai = h; }
-    if (v === 'tahun') { st.dari = `${h.slice(0, 4)}-01-01`; st.sampai = h; }
-    if (v === 'semua') { st.dari = '2000-01-01'; st.sampai = h; }
-    $('#btDari', el).value = st.dari;
-    $('#btSampai', el).value = st.sampai;
-    muat();
-  });
-  for (const id of ['#btDari', '#btSampai']) {
-    $(id, el).addEventListener('change', () => {
-      st.dari = $('#btDari', el).value || st.dari;
-      st.sampai = $('#btSampai', el).value || st.sampai;
-      if (st.dari > st.sampai) [st.dari, st.sampai] = [st.sampai, st.dari];
-      st.pilihan = 'atur';
-      $('#btRentang', el).value = 'atur';
-      muat();
-    });
-  }
-  $('#btPilihToko', el).addEventListener('change', (e) => { st.toko = e.target.value; muat(); });
-  $('#btCsvToko', el).addEventListener('click', () => unduhCsv(`pembatalan_per_toko_${st.dari}_${st.sampai}.csv`,
-    [{ k: 'kode_toko', judul: 'Toko' }, { k: 'nama', judul: 'Nama toko' }, { k: 'jumlah', judul: 'Nota batal' }, { k: 'nilai', judul: 'Nilai batal' },
-      { k: 'kotor', judul: 'Penjualan kotor' }, { k: 'persen', judul: '% batal' }, { k: 'terakhir', judul: 'Batal terakhir' }],
-    perToko.map((r) => ({ ...r, nama: namaToko(r.kode_toko), terakhir: r.terakhir ? fmtWaktu(r.terakhir) : '' }))));
-  $('#btCsvNota', el).addEventListener('click', () => unduhCsv(`pembatalan_per_nota_${st.toko || 'semua'}_${st.dari}_${st.sampai}.csv`,
-    [{ k: 'waktu', judul: 'Waktu batal' }, { k: 'kode_toko', judul: 'Toko' }, { k: 'no_batal', judul: 'No. pembatalan' }, { k: 'no_struk_asal', judul: 'Nota asal' },
-      { k: 'waktu_struk_asal', judul: 'Waktu nota asal' }, { k: 'kasir', judul: 'Kasir shift' }, { k: 'qty', judul: 'Qty (Biji)' }, { k: 'total', judul: 'Total' },
-      { k: 'alasan', judul: 'Alasan' }, { k: 'diminta_oleh', judul: 'Diminta oleh' }, { k: 'disetujui_oleh', judul: 'Disetujui oleh' }],
-    perNota.map((r) => ({ ...r, waktu: fmtWaktu(r.waktu), waktu_struk_asal: r.waktu_struk_asal ? fmtWaktu(r.waktu_struk_asal) : '' }))));
-  await muat();
+// Per toko: jumlah & nilai nota batal, penjualan kotor (omzet + pembatalan), % batal, waktu batal terakhir
+function ringkasBatalPerToko(ring, nota, toko) {
+  const terakhir = {};
+  for (const n of nota) if (!terakhir[n.kode_toko] || n.waktu > terakhir[n.kode_toko]) terakhir[n.kode_toko] = n.waktu;
+  return ring.filter((r) => Number(r.jumlah_pembatalan) > 0 && (!toko || r.kode_toko === toko)).map((r) => {
+    const kotor = Number(r.omzet) + Number(r.pembatalan);
+    return { kode_toko: r.kode_toko, jumlah: Number(r.jumlah_pembatalan), nilai: Number(r.pembatalan), kotor,
+      persen: kotor > 0 ? Math.round((Number(r.pembatalan) / kotor) * 10000) / 100 : 0, terakhir: terakhir[r.kode_toko] || null };
+  }).sort((a, b) => b.nilai - a.nilai);
 }
 
 // ---------------------------------------------------------------- Pesanan pelanggan (dari Trizone)
@@ -2216,7 +2167,7 @@ async function hAsisten(el) {
 }
 
 // ================================================================ Kerangka aplikasi
-const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, pesanan: hPesanan, stok: hStok, laporan: hLaporan, kiriman: hKiriman, retur: hRetur, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pesanan: hPesanan, stok: hStok, laporan: hLaporan, kiriman: hKiriman, retur: hRetur, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
 
 function tampilLogin(pesan = '') {
   $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
@@ -2289,6 +2240,7 @@ async function route() {
   // Menu Master Barang & Stock Opname sudah digabung ke Stok & Barang: alamat lama membuka tabnya
   if (id === 'barang') { S.tabStok = 'barang'; id = 'stok'; }
   if (id === 'opname') { S.tabStok = 'kantor'; id = 'stok'; }
+  if (id === 'pembatalan') { S.tabPenjualan = 'batal'; id = 'penjualan'; } // menu Pembatalan Nota sudah ada di Penjualan → Pembatalan
   const h = HALAMAN.find((x) => x.id === id && boleh(x)) || HALAMAN[0];
   $$('.nav a').forEach((a) => a.classList.toggle('aktif', a.dataset.h === h.id));
   document.title = `${h.judul} · Mother Base`;
