@@ -522,10 +522,17 @@ function fileAccurate() {
     ok('laporan: Penjualan per Toko per Item — angka merah bila stok bisa dijual di toko < 10 (HOUSEWARE) / < 5 (SPECIAL), di layar & Excel');
 
     // Retur barang: retur toko (BS → Supplier) vs Retur Penjualan Accurate
-    await buka('retur');
+    // Menu Surat Jalan & Retur (Retur Barang digabung); alamat lama #retur membuka tab Retur dari toko
+    const menuSj = await page.$$eval('.nav a[data-h]', (a) => a.map((x) => x.dataset.h));
+    assert.ok(menuSj.includes('kiriman') && !menuSj.includes('retur'), menuSj.join(','));
+    assert.strictEqual(await page.textContent('.nav a[data-h="kiriman"]').then((t) => t.trim()).then((t) => /Surat Jalan & Retur/.test(t)), true);
+    await page.evaluate(() => { location.hash = 'retur'; });
     await page.waitForSelector('#rtDaftar tbody tr');
+    assert.strictEqual(await page.$eval('.nav a.aktif', (a) => a.dataset.h), 'kiriman');
+    assert.deepStrictEqual(await page.$$eval('#kjTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['sj', 'toko', 'cocok']);
+    assert.strictEqual(await page.$eval('#kjTab .aktif', (b) => b.dataset.t), 'toko');
     assert.match(await page.textContent('#rtDaftar'), /TRP[\s\S]*Retur BS ke kantor[\s\S]*Belum di Accurate/);
-    await page.click('#rtTab [data-t="cocok"]');
+    await page.click('#kjTab [data-t="cocok"]');
     await page.waitForSelector('#rtFile');
     const fileReturWeb = (() => {
       const r = (isi) => { const x = new Array(19).fill(''); for (const [k, v] of Object.entries(isi)) x[k] = v; return x; };
@@ -558,7 +565,7 @@ function fileAccurate() {
     const [xlsRetur] = await Promise.all([page.waitForEvent('download'), page.click('#rtExcel')]);
     assert.match(xlsRetur.suggestedFilename(), /^Pencocokan_Retur_Semua_/);
     await page.selectOption('#rtStatusC', 'masalah');
-    await page.click('#rtTab [data-t="toko"]');
+    await page.click('#kjTab [data-t="toko"]');
     await page.waitForFunction(() => /Sebagian di Accurate/.test(document.querySelector('#rtDaftar')?.textContent || ''));
     await page.click('#rtDaftar tr.klik');
     await page.waitForSelector('.modal');
@@ -626,6 +633,8 @@ function fileAccurate() {
     ok('stok: mutasi & penerimaan toko; yang dibatalkan dengan PIN bertanda Dibatalkan (alasan, penyetuju) dan tidak dihitung di total');
 
     await buka('kiriman');
+    await page.click('#kjTab [data-t="sj"]');
+    await page.waitForSelector('#kjFile');
     await page.setInputFiles('#kjFile', fileAccurate());
     await page.waitForSelector('#kjSimpan');
     assert.match(await page.textContent('#kjPratinjau'), /1 DO, 2 baris/);

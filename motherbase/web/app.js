@@ -219,8 +219,7 @@ const HALAMAN = [
   { id: 'pesanan', judul: 'Pesanan Pelanggan', ikon: '⧉', untuk: 'semua' },
   { id: 'stok', judul: 'Stok & Barang', ikon: '▦', untuk: 'semua' },
   { id: 'laporan', judul: 'Laporan', ikon: '⇩', untuk: 'semua' },
-  { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
-  { id: 'retur', judul: 'Retur Barang', ikon: '↩', untuk: 'kantor' },
+  { id: 'kiriman', judul: 'Surat Jalan & Retur', ikon: '⇄', untuk: 'kantor' },
   { id: 'pembelian', judul: 'Pembelian', ikon: '⊕', untuk: 'kantor' },
   { id: 'toko', judul: 'Toko', ikon: '⌂', untuk: 'kantor' },
   { id: 'asisten', judul: 'Asisten AI', ikon: '✦', untuk: 'semua' },
@@ -342,10 +341,10 @@ async function hRingkasan(el) {
       rpc('laporan_pesanan', { p_status: 'baru', p_batas: 5000 }).catch(kosong),
     ]);
     if (belum.length) li.push(['bad', `${belum.length} toko belum menutup shift ${fmtTgl(kemarin)}`, belum.map((b) => b.kode).join(', '), 'toko']);
-    if (sj.length) li.push(['warn', `${sj.length} surat jalan perlu dicek`, '', 'kiriman']);
+    if (sj.length) li.push(['warn', `${sj.length} surat jalan perlu dicek`, '', 'kiriman', 'sj']);
     if (so.length) li.push(['warn', `${so.length} stok opname menunggu review`, '', 'stok', 'so']);
     if (po.length) li.push([isOwner() ? 'warn' : 'info', `${po.length} usulan PO ${isOwner() ? 'menunggu persetujuan Anda' : 'menunggu persetujuan owner'}`, '', 'pembelian']);
-    if (returBelum.length) li.push(['warn', `${returBelum.length} retur toko ke supplier belum diinput di Accurate`, [...new Set(returBelum.map((r) => r.kode_toko))].join(', '), 'retur']);
+    if (returBelum.length) li.push(['warn', `${returBelum.length} retur toko ke supplier belum diinput di Accurate`, [...new Set(returBelum.map((r) => r.kode_toko))].join(', '), 'kiriman', 'toko']);
     if (opk.length) li.push(['warn', `${opk.length} opname kantor belum diterapkan toko (lebih dari 1 jam)`, [...new Set(opk.map((o) => o.kode_toko))].join(', '), 'stok', 'kantor']);
     const lambat = S.toko.filter((t) => !t.kiriman_terakhir_at || Date.now() - new Date(t.kiriman_terakhir_at) > 26 * 3600e3);
     if (lambat.length && isKantor()) li.push(['info', `${lambat.length} toko belum mengirim data lebih dari sehari`, lambat.map((t) => t.kode).join(', '), 'toko']);
@@ -362,7 +361,10 @@ async function hRingkasan(el) {
   $('#rkPerhatian', el).addEventListener('click', (e) => {
     const a = e.target.closest('a[data-tab]');
     if (!a) return;
-    if (a.getAttribute('href') === '#stok') S.tabStok = a.dataset.tab; else S.tabPenjualan = a.dataset.tab;
+    const hal = a.getAttribute('href');
+    if (hal === '#stok') S.tabStok = a.dataset.tab;
+    else if (hal === '#kiriman') S.tabKiriman = a.dataset.tab;
+    else S.tabPenjualan = a.dataset.tab;
   });
 
   await Promise.all([muat(), perhatian().catch((e) => { $('#rkPerhatian', el).innerHTML = `<li class="muted">${esc(pesanError(e))}</li>`; })]);
@@ -1299,11 +1301,10 @@ const STATUS_RETUR = { COCOK: ['ok', 'Cocok'], BELUM_DI_ACCURATE: ['warn', 'Belu
   BARANG_TIDAK_DIKENAL: ['bad', 'Barang tidak dikenal'], PELANGGAN_BELUM_DIPETAKAN: ['warn', 'Pelanggan belum dipetakan'] };
 const STATUS_DOK_RETUR = { SUDAH: ['ok', 'Sudah di Accurate'], SEBAGIAN: ['warn', 'Sebagian di Accurate'], BELUM: ['bad', 'Belum di Accurate'] };
 
-async function hRetur(el) {
+async function hRetur(el, { tab } = {}) {
   const f = S.retur || (S.retur = { tab: 'toko', toko: '', statusDok: '', statusCocok: 'masalah' });
-  el.innerHTML = `${head('Retur Barang', 'Retur barang dari toko ke supplier (di Trizone: mutasi <b>Gudang BS → Supplier</b>) dan pencocokannya dengan <b>Retur Penjualan</b> yang diinput di Accurate.')}
-    ${tabs('rtTab', [['toko', 'Retur dari toko'], ['cocok', 'Pencocokan Accurate']], f.tab)}<div id="rtIsi"></div>`;
-  pasangTabs(el, 'rtTab', (t) => { f.tab = t; tampil(); });
+  f.tab = tab || f.tab;
+  el.innerHTML = '<div id="rtIsi"></div>';
   const isi = $('#rtIsi', el);
   const mulai = async () => {
     const [r] = await q(sb.from('pengaturan').select('nilai').eq('kunci', 'mulai_pencocokan_retur').limit(1));
@@ -1455,10 +1456,32 @@ async function hRetur(el) {
   await tampil();
 }
 
+// ---------------------------------------------------------------- Surat Jalan & Retur (satu menu bertab)
+// Surat jalan Accurate → toko, dan retur barang toko → supplier dicocokkan dengan Retur Penjualan Accurate.
+// Alamat lama #retur membuka tab Retur dari toko.
+async function hSjRetur(el) {
+  const daftar = [['sj', 'Surat jalan'], ['toko', 'Retur dari toko'], ['cocok', 'Pencocokan retur Accurate']];
+  let tab = daftar.some(([k]) => k === S.tabKiriman) ? S.tabKiriman : daftar[0][0];
+  el.innerHTML = `${head('Surat Jalan & Retur', 'Surat jalan dari Accurate (<b>Rincian Pengiriman Pesanan</b>) untuk penerimaan toko, dan retur barang dari toko ke supplier (di Trizone: mutasi <b>Gudang BS → Supplier</b>) yang dicocokkan dengan <b>Retur Penjualan</b> di Accurate.')}
+    ${tabs('kjTab', daftar, tab)}<div id="kjTabIsi"></div>`;
+  const isi = $('#kjTabIsi', el);
+  async function tampil() {
+    const box = document.createElement('div'); // elemen baru tiap tab: pendengar tab sebelumnya ikut terbuang
+    isi.replaceChildren(box);
+    box.innerHTML = '<div class="card"><div class="kosong">Memuat…</div></div>';
+    try {
+      if (tab === 'sj') await hKiriman(box);
+      else await hRetur(box, { tab });
+    } catch (e) { box.innerHTML = `<div class="card"><div class="kosong">${esc(pesanError(e))}</div></div>`; }
+  }
+  pasangTabs(el, 'kjTab', (t) => { tab = t; S.tabKiriman = t; tampil(); });
+  await tampil();
+}
+
 // ---------------------------------------------------------------- Surat jalan (Accurate)
 async function hKiriman(el) {
-  el.innerHTML = `${head('Surat Jalan', 'Upload laporan Accurate <b>Rincian Pengiriman Pesanan</b>, kirim file import penerimaan ke toko, lalu pantau pencocokannya.')}
-    <div class="card"><div class="card-head"><h2>Upload dari Accurate</h2></div>
+  el.innerHTML = `<div class="card"><div class="card-head"><div><h2>Upload dari Accurate</h2>
+      <div class="muted small">Upload laporan Accurate <b>Rincian Pengiriman Pesanan</b>, kirim file import penerimaan ke toko, lalu pantau pencocokannya.</div></div></div>
       <div class="row"><input type="file" id="kjFile" accept=".xlsx,.xls" aria-label="File Excel Accurate"><span class="muted small">Ekspor laporan Rincian Pengiriman Pesanan dari Accurate ke Excel.</span></div>
       <div id="kjPratinjau"></div></div>
     <div class="card"><div class="card-head"><h2>Pencocokan surat jalan</h2>
@@ -2167,7 +2190,7 @@ async function hAsisten(el) {
 }
 
 // ================================================================ Kerangka aplikasi
-const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pesanan: hPesanan, stok: hStok, laporan: hLaporan, kiriman: hKiriman, retur: hRetur, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pesanan: hPesanan, stok: hStok, laporan: hLaporan, kiriman: hSjRetur, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
 
 function tampilLogin(pesan = '') {
   $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>
@@ -2240,7 +2263,8 @@ async function route() {
   // Menu Master Barang & Stock Opname sudah digabung ke Stok & Barang: alamat lama membuka tabnya
   if (id === 'barang') { S.tabStok = 'barang'; id = 'stok'; }
   if (id === 'opname') { S.tabStok = 'kantor'; id = 'stok'; }
-  if (id === 'pembatalan') { S.tabPenjualan = 'batal'; id = 'penjualan'; } // menu Pembatalan Nota sudah ada di Penjualan → Pembatalan
+  if (id === 'pembatalan') { S.tabPenjualan = 'batal'; id = 'penjualan'; }
+  if (id === 'retur') { S.tabKiriman = 'toko'; id = 'kiriman'; } // menu Retur Barang sudah digabung ke Surat Jalan & Retur // menu Pembatalan Nota sudah ada di Penjualan → Pembatalan
   const h = HALAMAN.find((x) => x.id === id && boleh(x)) || HALAMAN[0];
   $$('.nav a').forEach((a) => a.classList.toggle('aktif', a.dataset.h === h.id));
   document.title = `${h.judul} · Mother Base`;
