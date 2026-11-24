@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'migrations/20261124000016_retur_barang.sql', 'migrations/20261124000017_penjualan_toko_item.sql', 'migrations/20261124000018_stok_penjualan_toko_item.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'migrations/20261124000016_retur_barang.sql', 'migrations/20261124000017_penjualan_toko_item.sql', 'migrations/20261124000018_stok_penjualan_toko_item.sql', 'migrations/20261124000019_omzet_kategori_harian.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -197,6 +197,18 @@ function fileAccurate() {
   assert.strictEqual(q("select jumlah_transaksi || '|' || omzet || '|' || pembatalan || '|' || jumlah_pembatalan from v_ringkasan_harian where kode_toko='TRP'"),
     `5|${omzetBatal}.00|55000.00|1`);
   assert.strictEqual(q("select jumlah_transaksi || '|' || pembatalan || '|' || jumlah_pembatalan from public.laporan_harian(mb.tgl_wib(now()), mb.tgl_wib(now()), 'TRP')"), '5|55000.00|1');
+  // Omzet per kategori: SPECIAL + HOUSEWARE + lainnya = omzet (bersih)
+  const katAsli = q("select coalesce(json_agg(json_build_object('t', 'produk_toko', 'k', kode_toko, 's', sku, 'v', kategori)), '[]') from produk_toko where sku in ('UJ-KESET', 'UJ-EMBER')");
+  const katProduk = q("select coalesce(json_agg(json_build_object('s', sku, 'v', kategori)), '[]') from produk where sku in ('UJ-KESET', 'UJ-EMBER')");
+  for (const t of ['produk', 'produk_toko']) {
+    q(`update ${t} set kategori = 'special' where sku = 'UJ-KESET'`);
+    q(`update ${t} set kategori = 'HOUSEWARE' where sku = 'UJ-EMBER'`);
+  }
+  const [oTotal, oSp, oHw, oLain] = q("select omzet || '|' || omzet_special || '|' || omzet_houseware || '|' || omzet_lain from public.laporan_harian(mb.tgl_wib(now()), mb.tgl_wib(now()), 'TRP')").split('|').map(Number);
+  const omzetSku = (sku) => Number(q(`select coalesce(sum(subtotal), 0) from penjualan where kode_toko = 'TRP' and sku = '${sku}' and tanggal = mb.tgl_wib(now())`));
+  assert.deepStrictEqual([oSp, oHw, oSp + oHw + oLain], [omzetSku('UJ-KESET'), omzetSku('UJ-EMBER'), oTotal]);
+  for (const x of JSON.parse(katAsli)) q(`update produk_toko set kategori = ${x.v === null ? 'null' : `'${x.v}'`} where kode_toko = '${x.k}' and sku = '${x.s}'`);
+  for (const x of JSON.parse(katProduk)) q(`update produk set kategori = ${x.v === null ? 'null' : `'${x.v}'`} where sku = '${x.s}'`);
   assert.strictEqual(q("select jumlah_transaksi || '|' || pembatalan from public.laporan_ringkasan(mb.tgl_wib(now()), mb.tgl_wib(now())) where kode_toko = 'TRP'"), '5|55000.00');
   assert.strictEqual(q("select jumlah_struk || '|' || nilai || '|' || pembatalan || '|' || jumlah_pembatalan from v_penjualan_kasir where kode_toko='TRP' and kasir='Dewi'"), '2|15000.00|55000.00|1');
 

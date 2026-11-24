@@ -456,8 +456,13 @@ async function hPenjualan(el) {
       } else {
         $('#pjJudul', el).textContent = 'Penjualan per hari';
         baris = await rpc('laporan_harian', { p_dari: p.dari, p_sampai: p.sampai, p_kode_toko: toko });
+        // Omzet per kategori (sudah dikurangi pembatalan); kolom Lainnya hanya bila ada barang di luar SPECIAL / HOUSEWARE
+        const adaLain = baris.some((r) => Number(r.omzet_lain || 0) !== 0);
         kolom = [{ k: 'tanggal', judul: 'Tanggal', fmt: (v) => esc(fmtTgl(v)) }, { k: 'jumlah_transaksi', judul: 'Transaksi', num: true, fmt: (v) => num(v) },
-          { k: 'pembatalan', judul: 'Pembatalan', num: true, fmt: fmtBatal }, { k: 'omzet', judul: 'Omzet', num: true, fmt: rp }];
+          { k: 'pembatalan', judul: 'Pembatalan', num: true, fmt: fmtBatal },
+          { k: 'omzet_special', judul: 'Omzet Special', num: true, fmt: rp }, { k: 'omzet_houseware', judul: 'Omzet Houseware', num: true, fmt: rp },
+          ...(adaLain ? [{ k: 'omzet_lain', judul: 'Omzet Lainnya', num: true, fmt: rp }] : []),
+          { k: 'omzet', judul: 'Total Omzet', num: true, fmt: (v) => `<b>${rp(v)}</b>` }];
       }
       isi.innerHTML = tabel(kolom, baris, { kosong: 'Tidak ada penjualan di periode ini.' });
     } catch (e) { isi.innerHTML = `<div class="kosong">${esc(pesanError(e))}</div>`; }

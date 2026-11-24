@@ -34,7 +34,7 @@ mengelola master barang & harga, dan menyetujui pembelian.
 | Menu | Untuk | Isi |
 |---|---|---|
 | Ringkasan | semua | Omzet, transaksi, grafik harian, per toko, daftar yang perlu ditindaklanjuti. Tombol **Tarik data terbaru** (juga di Penjualan, Stok, Toko): toko mengirim penjualan & stok dalam ±5 menit (Trizone 1.23.0 memeriksa permintaan tiap 5 menit) |
-| Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari, pembatalan nota; unduh CSV |
+| Penjualan | semua | Per produk, naik/turun dibanding periode sebelumnya, analisa ABC, per kasir, per hari (Omzet Special, Omzet Houseware, Omzet Lainnya bila ada, Total Omzet; semua sudah dikurangi pembatalan), pembatalan nota; unduh CSV |
 | Pembatalan Nota | semua | Riwayat pembatalan nota: ringkasan per toko (jumlah, nilai, % dari penjualan) dan rincian per nota (nota asal, alasan, peminta, penyetuju); unduh CSV |
 | Pesanan Pelanggan | semua | Pesanan pelanggan dari Trizone: belum diambil (tanda lewat tanggal ambil, deposit tertahan), diambil, batal (alasan, deposit kembali / hangus, penyetuju); rincian barang; unduh CSV |
 | Stok & Barang | semua | Cari stok per toko & zona dengan filter kondisi (ada, habis, di bawah minimum, perlu isi display, minus, BS), kategori, merk; stok lambat; mutasi & penerimaan toko. Tab **Master Barang** (kantor saja): barcode, harga jual, satuan masuk (Coly / Biji) & isi 1 Coly; harga beli / pricelist; markup (owner); import Excel dengan pratinjau |
@@ -74,7 +74,7 @@ base sudah bersih; nota `BTL-` tidak dihitung sebagai transaksi dan tampil sebag
 2. SQL Editor: jalankan berurutan `migrations/20261116000001_mother_base.sql`,
    `migrations/20261116000002_aplikasi.sql`, `migrations/20261116000003_import_barang.sql`,
    `migrations/20261119000004_satuan_masuk.sql`, `migrations/20261119000005_tanpa_principal.sql`,
-   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261120000007_filter_stok.sql`, `migrations/20261120000008_pesanan_toko.sql`, `migrations/20261120000009_minta_update.sql`, `migrations/20261122000010_opname_kantor.sql`, `migrations/20261123000011_riwayat_stok.sql`, `migrations/20261123000012_dokumen_batal.sql`, `migrations/20261123000013_kata_sandi.sql`, `migrations/20261123000014_laporan_mutasi.sql`, `migrations/20261123000015_mutasi_penjualan.sql`, `migrations/20261124000016_retur_barang.sql`, `migrations/20261124000017_penjualan_toko_item.sql`, `migrations/20261124000018_stok_penjualan_toko_item.sql`, lalu `seed.sql`
+   `migrations/20261119000006_pembatalan_nota.sql`, `migrations/20261120000007_filter_stok.sql`, `migrations/20261120000008_pesanan_toko.sql`, `migrations/20261120000009_minta_update.sql`, `migrations/20261122000010_opname_kantor.sql`, `migrations/20261123000011_riwayat_stok.sql`, `migrations/20261123000012_dokumen_batal.sql`, `migrations/20261123000013_kata_sandi.sql`, `migrations/20261123000014_laporan_mutasi.sql`, `migrations/20261123000015_mutasi_penjualan.sql`, `migrations/20261124000016_retur_barang.sql`, `migrations/20261124000017_penjualan_toko_item.sql`, `migrations/20261124000018_stok_penjualan_toko_item.sql`, `migrations/20261124000019_omzet_kategori_harian.sql`, lalu `seed.sql`
    (atau `supabase link` + `supabase db push`, lalu `seed.sql`).
 3. Markup harga jual ke toko (tidak disimpan di repo karena repo ini publik), mis. 6%:
    `insert into pengaturan values ('markup_jual_ke_toko', '0.06');`

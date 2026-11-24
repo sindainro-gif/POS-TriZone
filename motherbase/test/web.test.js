@@ -134,7 +134,16 @@ function fileAccurate() {
       await tunggu(250);
       assert.ok((await page.$$('#pjIsi tbody tr')).length > 0, `tab ${t} kosong`);
       if (t === 'tren') await shot('02-penjualan-tren');
-      if (t === 'harian') assert.match(await page.textContent('#pjIsi'), /Pembatalan[\s\S]*1 nota/);
+      if (t === 'harian') {
+        assert.match(await page.textContent('#pjIsi'), /Pembatalan[\s\S]*1 nota/);
+        // Demo: kategori Plastik / Rotan → semua masuk Omzet Lainnya; Special + Houseware + Lainnya = Total Omzet
+        const kepalaHari = await page.$$eval('#pjIsi thead th', (x) => x.map((th) => th.textContent.trim()));
+        assert.deepStrictEqual(kepalaHari, ['Tanggal', 'Transaksi', 'Pembatalan', 'Omzet Special', 'Omzet Houseware', 'Omzet Lainnya', 'Total Omzet']);
+        const angkaRp = (x) => Number(x.replace(/[^\d-]/g, '') || 0);
+        const barisHari = await page.$$eval('#pjIsi tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+        assert.ok(barisHari.every((r) => angkaRp(r[3]) + angkaRp(r[4]) + angkaRp(r[5]) === angkaRp(r[6])), barisHari.map((r) => r.join('|')).join('\n'));
+        await shot('02c-penjualan-per-hari');
+      }
     }
     // Pembatalan: Malang (5 hari lalu), Tropodo (2 hari lalu, shift tertutup) dan hari ini (shift berjalan)
     const batal = await page.$$eval('#pjIsi tbody tr', (x) => x.map((tr) => tr.textContent));
