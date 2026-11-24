@@ -1099,7 +1099,9 @@ async function hLaporan(el) {
         <label class="row small" style="gap:6px">Dari<input type="date" id="lmDari" value="${esc(f.dari)}"></label>
         <label class="row small" style="gap:6px">Sampai<input type="date" id="lmSampai" value="${esc(f.sampai)}"></label>
         <button class="btn sm" id="lmLihat">Lihat</button><button class="btn sm primary" id="lmUnduh">Unduh Excel</button></div>
-      <div id="lmIsi" style="margin-top:12px"></div></div>`;
+      <div id="lmIsi" style="margin-top:12px"></div></div>
+    <div class="card" id="lpKartu" style="margin-top:14px"></div>`;
+  kartuPenjualanTokoItem($('#lpKartu', el));
   const isi = $('#lmIsi', el);
   const labelGudang = () => (GUDANG_LAPORAN.find(([v]) => v === f.zona) || GUDANG_LAPORAN[0])[1];
   function baca() {
@@ -1141,6 +1143,69 @@ async function hLaporan(el) {
     }
     if (!wb.SheetNames.length) { toast('Tidak ada data mutasi untuk periode ini.', 'bad'); return; }
     XLSX.writeFile(wb, `Mutasi_Item_${f.toko || 'Semua'}_${f.dari}_${f.sampai}.xlsx`);
+  }));
+}
+
+// Penjualan per Toko per Item: SKU, Nama Barang, Total Terjual, lalu satu kolom per toko (urutan toko dari menu Toko)
+const BATAS_LAYAR_PENJUALAN = 300;
+function kartuPenjualanTokoItem(kartu) {
+  const f = S.laporanPenjualan || (S.laporanPenjualan = { kategori: '', dari: `${hariIni().slice(0, 8)}01`, sampai: hariIni() });
+  kartu.innerHTML = `<div class="card-head"><div><h2>Penjualan per Toko per Item</h2>
+      <div class="muted small">Jumlah terjual tiap barang (Biji) di setiap toko dalam periode, diurutkan dari yang paling laku.
+      <b>Terjual</b>: jual di kasir (dikurangi pembatalan nota) + terjual di Shopee, sama dengan kolom Penjualan di Mutasi Item.</div></div></div>
+    <div class="row" style="flex-wrap:wrap">
+      <select id="lpKategori" aria-label="Kategori"><option value="">Semua kategori</option></select>
+      <label class="row small" style="gap:6px">Dari<input type="date" id="lpDari" value="${esc(f.dari)}"></label>
+      <label class="row small" style="gap:6px">Sampai<input type="date" id="lpSampai" value="${esc(f.sampai)}"></label>
+      <button class="btn sm" id="lpLihat">Lihat</button><button class="btn sm primary" id="lpUnduh">Unduh Excel</button></div>
+    <div id="lpIsi" style="margin-top:12px"></div>`;
+  rpc('pilihan_filter_stok', { p_kode_toko: null }).then((p) => {
+    const ada = new Map(p.kategori.map((k) => [String(k).toUpperCase(), k]));
+    if (f.kategori && !ada.has(f.kategori.toUpperCase())) f.kategori = '';
+    $('#lpKategori', kartu).innerHTML = `<option value="">Semua kategori</option>${[...ada.values()].map((k) =>
+      `<option value="${esc(k)}" ${k.toUpperCase() === f.kategori.toUpperCase() ? 'selected' : ''}>${esc(k)}</option>`).join('')}`;
+  }).catch(() => {});
+  const isi = $('#lpIsi', kartu);
+  const labelKategori = () => f.kategori || 'Semua kategori';
+  async function ambil() {
+    Object.assign(f, { kategori: $('#lpKategori', kartu).value, dari: $('#lpDari', kartu).value, sampai: $('#lpSampai', kartu).value });
+    if (!f.dari || !f.sampai || f.sampai < f.dari) throw new Error('Periode tidak valid: tanggal Dari harus sebelum atau sama dengan Sampai.');
+    return rpc('laporan_penjualan_toko_item', { p_dari: f.dari, p_sampai: f.sampai, p_kategori: f.kategori || null });
+  }
+  const totalToko = (r) => Object.fromEntries(r.toko.map((t) => [t.kode, r.baris.reduce((a, b) => a + Number(b.toko[t.kode] || 0), 0)]));
+
+  $('#lpLihat', kartu).addEventListener('click', (e) => sibuk(e.currentTarget, async () => {
+    isi.innerHTML = '<div class="kosong">Memuat…</div>';
+    const r = await ambil();
+    const tt = totalToko(r);
+    const semua = r.baris.reduce((a, b) => a + Number(b.total), 0);
+    const tampil = r.baris.slice(0, BATAS_LAYAR_PENJUALAN);
+    isi.innerHTML = `<div class="muted small" id="lpRingkas" style="margin-bottom:8px">${esc(labelKategori())} · ${esc(fmtTgl(f.dari))} s/d ${esc(fmtTgl(f.sampai))} ·
+        ${num(r.baris.length)} barang · ${num(semua)} terjual${r.baris.length > tampil.length ? ` · layar menampilkan ${num(tampil.length)} teratas, semua barang ada di Excel` : ''}</div>
+      ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama Barang' },
+        { k: 'total', judul: 'Total Terjual', num: true, fmt: (v) => `<b>${num(v)}</b>` },
+        ...r.toko.map((t) => ({ k: t.kode, judul: t.nama, num: true, fmt: (v, b) => num(b.toko ? b.toko[t.kode] || 0 : v) }))],
+      [...tampil, ...(tampil.length ? [{ sku: '', nama: 'Total', total: semua, toko: tt }] : [])], { kosong: 'Tidak ada penjualan pada periode ini.' })}`;
+  }));
+
+  $('#lpUnduh', kartu).addEventListener('click', (e) => sibuk(e.currentTarget, async () => {
+    const r = await ambil();
+    if (!r.baris.length) { toast('Tidak ada penjualan pada periode ini.', 'bad'); return; }
+    const tt = totalToko(r);
+    const n = r.toko.length;
+    const aoa = [['Laporan Penjualan per Toko per Item'], ['Periode', `${fmtTgl(f.dari)} s/d ${fmtTgl(f.sampai)}`], ['Kategori', labelKategori()], [],
+      ['SKU', 'Nama Barang', 'Total Terjual', 'Toko', ...Array(Math.max(n - 1, 0)).fill('')],
+      ['', '', '', ...r.toko.map((t) => t.nama)],
+      ...r.baris.map((b) => [b.sku, b.nama, Number(b.total), ...r.toko.map((t) => Number(b.toko[t.kode] || 0))]),
+      ['Total', '', r.baris.reduce((a, b) => a + Number(b.total), 0), ...r.toko.map((t) => tt[t.kode])]];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!merges'] = [{ s: { r: 4, c: 0 }, e: { r: 5, c: 0 } }, { s: { r: 4, c: 1 }, e: { r: 5, c: 1 } }, { s: { r: 4, c: 2 }, e: { r: 5, c: 2 } },
+      ...(n > 1 ? [{ s: { r: 4, c: 3 }, e: { r: 4, c: 2 + n } }] : [])];
+    ws['!cols'] = [{ wch: 14 }, { wch: 40 }, { wch: 12 }, ...r.toko.map(() => ({ wch: 11 }))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Penjualan per Toko');
+    const kat = f.kategori ? `_${f.kategori.replace(/[^\w-]+/g, '_')}` : '';
+    XLSX.writeFile(wb, `Penjualan_per_Toko_per_Item${kat}_${f.dari}_${f.sampai}.xlsx`);
   }));
 }
 
@@ -1743,9 +1808,11 @@ async function hToko(el) {
         const t = S.toko.find((x) => x.kode === u.dataset.ubah);
         modal({ judul: `Ubah toko ${t.kode}`, isi: `<form class="form" onsubmit="return false"><label class="f">Nama<input id="tNama" value="${esc(t.nama)}"></label>
           <div class="grid g2"><label class="f">Kota<input id="tKota" value="${esc(t.kota)}"></label><label class="f">Batas input surat jalan (hari)<input id="tBatas" type="number" min="1" value="${esc(t.batas_hari_sj)}"></label></div>
-          <label class="f">Status<select id="tAktif"><option value="1" ${t.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${t.aktif ? '' : 'selected'}>Nonaktif</option></select></label></form>`,
+          <div class="grid g2"><label class="f">Status<select id="tAktif"><option value="1" ${t.aktif ? 'selected' : ''}>Aktif</option><option value="0" ${t.aktif ? '' : 'selected'}>Nonaktif</option></select></label>
+          <label class="f">Urutan<input id="tUrutan" type="number" min="1" value="${esc(t.urutan ?? '')}" placeholder="kosong = paling belakang"><span class="muted small">Urutan toko di daftar & kolom laporan</span></label></div></form>`,
         aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
-          await q(sb.from('toko').update({ nama: $('#tNama', m).value.trim(), kota: $('#tKota', m).value.trim(), batas_hari_sj: Number($('#tBatas', m).value) || 1, aktif: $('#tAktif', m).value === '1' }).eq('kode', t.kode));
+          await q(sb.from('toko').update({ nama: $('#tNama', m).value.trim(), kota: $('#tKota', m).value.trim(), batas_hari_sj: Number($('#tBatas', m).value) || 1, aktif: $('#tAktif', m).value === '1',
+            urutan: $('#tUrutan', m).value === '' ? null : Number($('#tUrutan', m).value) }).eq('kode', t.kode));
           tutup(); toast('Toko disimpan.'); muat();
         } }] });
       }

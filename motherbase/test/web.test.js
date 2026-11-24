@@ -376,6 +376,41 @@ function fileAccurate() {
     assert.ok(sheetSemua.includes('TRP') && sheetSemua.includes('MLG') && sheetSemua.length > 2, sheetSemua.join(','));
     ok('laporan: menu Laporan, Mutasi Item per toko (akhir = stok Trizone, total), unduh Excel satu toko & semua toko (sheet per toko)');
 
+    // Laporan → Penjualan per Toko per Item (periode & kategori)
+    await page.fill('#lpDari', '2000-01-01');
+    await page.waitForFunction(() => document.querySelectorAll('#lpKategori option').length > 1);
+    await page.click('#lpLihat');
+    await page.waitForSelector('#lpRingkas');
+    const kepalaPti = await page.$$eval('#lpIsi thead th', (x) => x.map((th) => th.textContent.trim()));
+    assert.deepStrictEqual(kepalaPti.slice(0, 7), ['SKU', 'Nama Barang', 'Total Terjual', 'Krampung', 'Manukan', 'Sidoarjo', 'Tropodo']);
+    const barisPti = await page.$$eval('#lpIsi tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+    const iTrp = kepalaPti.indexOf('Tropodo');
+    const harapPti = async (sku, kode) => Number((await db(`select coalesce(sum(qty), 0) as n from penjualan where kode_toko = '${kode}' and sku = '${sku}'`))[0].n)
+      + Number((await db(`select coalesce(sum(b.qty), 0) as n from mutasi_toko m join mutasi_toko_baris b using (kode_toko, no_dok)
+                          where m.kode_toko = '${kode}' and b.sku = '${sku}' and m.ke = 'shopee_sold' and m.dibatalkan_at is null`))[0].n);
+    const isiPti = barisPti.slice(0, -1);
+    assert.ok(isiPti.length > 0);
+    for (const r of isiPti.slice(0, 3)) assert.strictEqual(r[iTrp], String(await harapPti(r[0], 'TRP')), r.join('|'));
+    assert.strictEqual(barisPti[barisPti.length - 1][1], 'Total');
+    await shot('03g-laporan-penjualan-toko-item');
+    const katPti = await page.$$eval('#lpKategori option', (x) => x.map((o) => o.value).filter(Boolean));
+    await page.selectOption('#lpKategori', katPti[0]);
+    const [xlsPti] = await Promise.all([page.waitForEvent('download'), page.click('#lpUnduh')]);
+    assert.match(xlsPti.suggestedFilename(), /^Penjualan_per_Toko_per_Item_.+_2000-01-01_\d{4}-\d\d-\d\d\.xlsx$/);
+    const bukuPti = XLSX.readFile(await xlsPti.path());
+    const aoaPti = XLSX.utils.sheet_to_json(bukuPti.Sheets[bukuPti.SheetNames[0]], { header: 1, defval: '' });
+    assert.strictEqual(aoaPti[0][0], 'Laporan Penjualan per Toko per Item');
+    assert.deepStrictEqual(aoaPti[2], ['Kategori', katPti[0], ...Array(aoaPti[2].length - 2).fill('')]);
+    assert.deepStrictEqual(aoaPti[4].slice(0, 4), ['SKU', 'Nama Barang', 'Total Terjual', 'Toko']);
+    assert.deepStrictEqual(aoaPti[5].slice(3, 7), ['Krampung', 'Manukan', 'Sidoarjo', 'Tropodo']);
+    const dataPti = aoaPti.slice(6, -1);
+    assert.ok(dataPti.length > 0);
+    assert.ok(dataPti.every((r) => r[2] === r.slice(3).reduce((a, v) => a + Number(v || 0), 0)), 'Total Terjual = jumlah semua toko');
+    const katDb = await db(`select p.sku from produk p where upper(p.kategori) = upper('${katPti[0]}')`);
+    assert.ok(dataPti.every((r) => katDb.some((x) => x.sku === r[0])), 'hanya kategori terpilih');
+    assert.strictEqual(aoaPti[aoaPti.length - 1][2], dataPti.reduce((a, r) => a + r[2], 0));
+    ok('laporan: Penjualan per Toko per Item (kolom toko berurutan, jumlah per toko = kasir − batal + Shopee), filter kategori, unduh Excel');
+
     // Retur barang: retur toko (BS → Supplier) vs Retur Penjualan Accurate
     await buka('retur');
     await page.waitForSelector('#rtDaftar tbody tr');

@@ -13,6 +13,9 @@ insert into toko (kode, nama, kota, batas_hari_sj) values
   ('SPJ','Sepanjang','Sidoarjo', 1),
   ('PAM','Pamulang','Tangerang Selatan', 7)
 on conflict (kode) do nothing;
+update toko t set urutan = u.n
+from (values ('KRP', 1), ('MNK', 2), ('SDA', 3), ('TRP', 4), ('MLG', 5), ('SPJ', 6), ('BKS', 7), ('DPK', 8), ('CLD', 9), ('PAM', 10)) u(kode, n)
+where t.kode = u.kode and t.urutan is null;
 
 -- Pelanggan di Accurate. "X Special" = toko yang sama dengan "X".
 -- Utama dan Jago belum dipetakan; isi kode_toko-nya setelah diputuskan.
