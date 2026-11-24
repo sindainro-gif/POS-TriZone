@@ -290,13 +290,17 @@ async function hRingkasan(el) {
   let tokoRows = [];
   const kolomToko = [
     { k: 'kode_toko', judul: 'Toko', fmt: (v) => `<b>${esc(v)}</b> <span class="muted">${esc(namaToko(v))}</span>` },
-    { k: 'omzet', judul: 'Omzet', num: true, fmt: rp },
     { k: 'jumlah_transaksi', judul: 'Transaksi', num: true, fmt: (v) => num(v) },
-    { k: 'tunai', judul: 'Tunai', num: true, fmt: rp }, { k: 'qris', judul: 'QRIS', num: true, fmt: rp }, { k: 'transfer', judul: 'Transfer', num: true, fmt: rp },
+    { k: 'tunai', judul: 'Tunai', num: true, fmt: rp },
     { k: 'pembatalan', judul: 'Pembatalan', num: true, fmt: fmtBatal },
+    { k: 'omzet_special', judul: 'Omzet Special', num: true, fmt: rp }, { k: 'omzet_houseware', judul: 'Omzet Houseware', num: true, fmt: rp },
+    { k: 'omzet_lain', judul: 'Omzet Lainnya', num: true, fmt: rp },
+    { k: 'omzet', judul: 'Total Omzet', num: true, fmt: (v) => `<b>${rp(v)}</b>` },
     { k: 'kiriman', judul: 'Data terakhir masuk', fmt: (v) => esc(relatif(v)) },
   ];
-  $('#rkCsv', el).addEventListener('click', () => unduhCsv(`ringkasan_${periode().dari}_${periode().sampai}.csv`, kolomToko, tokoRows));
+  // Kolom Omzet Lainnya hanya bila ada penjualan di luar SPECIAL / HOUSEWARE
+  const kolomTokoTampil = () => kolomToko.filter((c) => c.k !== 'omzet_lain' || tokoRows.some((r) => Number(r.omzet_lain || 0) !== 0));
+  $('#rkCsv', el).addEventListener('click', () => unduhCsv(`ringkasan_${periode().dari}_${periode().sampai}.csv`, kolomTokoTampil(), tokoRows));
   $('#rkTarik', el).addEventListener('click', (e) => tarikData(null, () => Promise.all([muat(), perhatian()]), e.currentTarget));
 
   async function muat() {
@@ -318,9 +322,10 @@ async function hRingkasan(el) {
     $('#rkChartKet', el).textContent = 'semua toko';
     const status = Object.fromEntries(S.toko.map((t) => [t.kode, t]));
     tokoRows = S.toko.map((t) => ({ kode_toko: t.kode, omzet: 0, jumlah_transaksi: 0, tunai: 0, qris: 0, transfer: 0, pembatalan: 0, jumlah_pembatalan: 0,
+      omzet_special: 0, omzet_houseware: 0, omzet_lain: 0,
       ...(rk.find((r) => r.kode_toko === t.kode) || {}),
       kiriman: status[t.kode] && status[t.kode].kiriman_terakhir_at }));
-    $('#rkToko', el).innerHTML = tabel(kolomToko, tokoRows);
+    $('#rkToko', el).innerHTML = tabel(kolomTokoTampil(), tokoRows);
   }
 
   async function perhatian() {

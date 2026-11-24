@@ -121,6 +121,12 @@ function fileAccurate() {
     assert.match(perhatian, /3 nota dibatalkan dalam 7 hari terakhir/);
     assert.match(perhatian, /1 pesanan pelanggan lewat tanggal ambil/);
     assert.strictEqual((await page.$$('#rkToko tbody tr')).length, 10);
+    // Per toko: tanpa QRIS & Transfer; Omzet Special + Houseware (+ Lainnya) = Total Omzet
+    const kepalaToko = await page.$$eval('#rkToko thead th', (x) => x.map((th) => th.textContent.trim()));
+    assert.deepStrictEqual(kepalaToko, ['Toko', 'Transaksi', 'Tunai', 'Pembatalan', 'Omzet Special', 'Omzet Houseware', 'Omzet Lainnya', 'Total Omzet', 'Data terakhir masuk']);
+    const rpAngka = (x) => Number(x.replace(/[^0-9-]/g, '') || 0);
+    const barisToko = await page.$$eval('#rkToko tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+    assert.ok(barisToko.every((r) => rpAngka(r[4]) + rpAngka(r[5]) + rpAngka(r[6]) === rpAngka(r[7])), barisToko.map((r) => r.join('|')).join('; '));
     await shot('01-ringkasan');
     await page.selectOption('#perPilih', '30');
     await page.waitForTimeout(600);
