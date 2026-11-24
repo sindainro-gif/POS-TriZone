@@ -318,10 +318,12 @@ function createServer({ pool, jwtSecret, anonKey, anthropicFactory, log = () => 
   const CDN_LOKAL = [
     [/https:\/\/cdn\.jsdelivr\.net\/npm\/@supabase\/supabase-js@[\d.]+\/dist\/umd\/supabase\.js/g, '/_vendor/supabase.js'],
     [/https:\/\/cdn\.jsdelivr\.net\/npm\/xlsx@[\d.]+\/dist\/xlsx\.full\.min\.js/g, '/_vendor/xlsx.full.min.js'],
+    [/https:\/\/cdn\.jsdelivr\.net\/npm\/xlsx-js-style@[\d.]+\/dist\/xlsx\.min\.js/g, '/_vendor/xlsx-js-style.min.js'],
   ];
   const VENDOR = {
     '/_vendor/supabase.js': require.resolve('@supabase/supabase-js/dist/umd/supabase.js'),
     '/_vendor/xlsx.full.min.js': path.join(path.dirname(require.resolve('xlsx/package.json')), 'dist/xlsx.full.min.js'),
+    '/_vendor/xlsx-js-style.min.js': path.join(path.dirname(require.resolve('xlsx-js-style/package.json')), 'dist/xlsx.min.js'),
   };
   const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 

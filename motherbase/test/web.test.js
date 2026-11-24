@@ -411,6 +411,56 @@ function fileAccurate() {
     assert.strictEqual(aoaPti[aoaPti.length - 1][2], dataPti.reduce((a, r) => a + r[2], 0));
     ok('laporan: Penjualan per Toko per Item (kolom toko berurutan, jumlah per toko = kasir − batal + Shopee), filter kategori, unduh Excel');
 
+    // Stok menipis: angka merah bila stok bisa dijual di toko < 10 (HOUSEWARE) / < 5 (SPECIAL)
+    await db("update produk set kategori = case kategori when 'Plastik' then 'HOUSEWARE' when 'Rotan' then 'SPECIAL' else kategori end");
+    const stokAsli = await db("select kode_toko, sku, display, gudang, shopee from stok_toko where kode_toko = 'MLG' and sku in ('PLJ-002', 'RTN-002')");
+    await db("update stok_toko set display = case sku when 'PLJ-002' then 6 else 3 end, gudang = 2, shopee = 1 where kode_toko = 'MLG' and sku in ('PLJ-002', 'RTN-002')");
+    try {
+      await page.selectOption('#lpKategori', '');
+      await page.click('#lpLihat');
+      await page.waitForFunction(() => /semua kategori/i.test(document.querySelector('#lpRingkas')?.textContent || ''));
+      const sel = await page.$$eval('#lpIsi tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => ({ t: td.textContent.trim(), merah: !!td.querySelector('.stok-menipis') }))));
+      const kepala = await page.$$eval('#lpIsi thead th', (x) => x.map((th) => th.textContent.trim()));
+      const stokDb = Object.fromEntries((await db("select kode_toko || '|' || sku as k, display + gudang + shopee as n from stok_toko")).map((x) => [x.k, Number(x.n)]));
+      const adaStok = new Set((await db('select distinct kode_toko from stok_toko')).map((x) => x.kode_toko));
+      const kodeToko = Object.fromEntries((await db('select kode, nama from toko')).map((x) => [x.nama, x.kode]));
+      const katSku = Object.fromEntries((await db('select sku, kategori from produk')).map((x) => [x.sku, x.kategori]));
+      let merah = 0;
+      for (const baris of sel.slice(0, -1)) {
+        for (let c = 3; c < kepala.length; c++) {
+          const kode = kodeToko[kepala[c]];
+          const batas = { HOUSEWARE: 10, SPECIAL: 5 }[katSku[baris[0].t]];
+          const harap = adaStok.has(kode) && (stokDb[`${kode}|${baris[0].t}`] || 0) < batas;
+          assert.strictEqual(baris[c].merah, harap, `${baris[0].t} ${kode} stok ${stokDb[`${kode}|${baris[0].t}`]}`);
+          if (harap) merah++;
+        }
+      }
+      assert.ok(merah >= 1, 'ada angka merah');
+      assert.ok(sel.find((b) => b[0].t === 'PLJ-002')[kepala.indexOf('Malang')].merah, 'PLJ-002 Malang stok 9 < 10');
+      assert.ok(!sel.find((b) => b[0].t === 'RTN-002')[kepala.indexOf('Malang')].merah, 'RTN-002 Malang stok 6 ≥ 5');
+      assert.ok(sel[sel.length - 1].every((x) => !x.merah), 'baris Total tidak merah');
+      await shot('03h-laporan-penjualan-stok-menipis');
+      const [xlsMerah] = await Promise.all([page.waitForEvent('download'), page.click('#lpUnduh')]);
+      const fileMerah = await xlsMerah.path();
+      const bukuMerah = XLSX.readFile(fileMerah);
+      assert.deepStrictEqual(bukuMerah.SheetNames, ['Penjualan per Toko', 'Keterangan']);
+      const { execFileSync } = require('child_process');
+      const gaya = execFileSync('unzip', ['-p', fileMerah, 'xl/styles.xml']).toString();
+      const lembar = execFileSync('unzip', ['-p', fileMerah, 'xl/worksheets/sheet1.xml']).toString();
+      // Indeks font merah → indeks gaya sel (cellXfs) → jumlah sel dengan gaya itu = jumlah angka merah di layar
+      const fonts = [...gaya.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/)[1].matchAll(/<font>([\s\S]*?)<\/font>|<font\/>/g)].map((m) => m[0]);
+      const fontMerah = fonts.findIndex((f) => /FF0000/i.test(f));
+      assert.ok(fontMerah >= 0, 'font merah ada di styles.xml');
+      const xfs = [...gaya.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)[1].matchAll(/<xf [^>]*>/g)].map((m) => m[0]);
+      const xfMerah = new Set(xfs.map((x, i) => (new RegExp(`fontId="${fontMerah}"`).test(x) ? i : -1)).filter((i) => i >= 0));
+      const selMerah = [...lembar.matchAll(/<c r="[A-Z]+\d+"[^>]* s="(\d+)"/g)].filter((m) => xfMerah.has(Number(m[1]))).length;
+      assert.strictEqual(selMerah, merah, 'jumlah sel merah di Excel = di layar');
+    } finally {
+      await db("update produk set kategori = case kategori when 'HOUSEWARE' then 'Plastik' when 'SPECIAL' then 'Rotan' else kategori end");
+      for (const x of stokAsli) await db('update stok_toko set display = $3, gudang = $4, shopee = $5 where kode_toko = $1 and sku = $2', [x.kode_toko, x.sku, x.display, x.gudang, x.shopee]);
+    }
+    ok('laporan: Penjualan per Toko per Item — angka merah bila stok bisa dijual di toko < 10 (HOUSEWARE) / < 5 (SPECIAL), di layar & Excel');
+
     // Retur barang: retur toko (BS → Supplier) vs Retur Penjualan Accurate
     await buka('retur');
     await page.waitForSelector('#rtDaftar tbody tr');

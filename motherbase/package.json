@@ -11,5 +11,8 @@
     "@anthropic-ai/sdk": "1.4.0",
     "@supabase/supabase-js": "2.118.0",
     "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "xlsx-js-style": "^1.2.0"
   }
 }

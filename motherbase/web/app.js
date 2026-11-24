@@ -1148,11 +1148,35 @@ async function hLaporan(el) {
 
 // Penjualan per Toko per Item: SKU, Nama Barang, Total Terjual, lalu satu kolom per toko (urutan toko dari menu Toko)
 const BATAS_LAYAR_PENJUALAN = 300;
+// Stok menipis di toko: stok yang bisa dijual (Display + Gudang Utama + Gudang Shopee) di bawah batas kategori → angka merah
+const BATAS_STOK_MENIPIS = { HOUSEWARE: 10, SPECIAL: 5 };
+const stokMenipis = (b, t) => {
+  const batas = BATAS_STOK_MENIPIS[String(b.kategori || '').toUpperCase()];
+  return Boolean(batas && t.stok_per && b.stok && Number(b.stok[t.kode] || 0) < batas);
+};
+// Pustaka Excel dengan gaya (warna font), dimuat sekali saat dibutuhkan; XLSX biasa tetap dipakai di tempat lain.
+let janjiXlsxGaya = null;
+function muatXlsxGaya() {
+  if (!janjiXlsxGaya) {
+    janjiXlsxGaya = new Promise((ok, gagal) => {
+      const lama = window.XLSX;
+      const s = document.createElement('script');
+      s.src = $('#xlsxGaya').href;
+      s.onload = () => { const X = window.XLSX; window.XLSX = lama; X && X !== lama ? ok(X) : gagal(new Error('Pustaka Excel berwarna tidak terbaca.')); };
+      s.onerror = () => { window.XLSX = lama; gagal(new Error('Pustaka Excel berwarna gagal dimuat.')); };
+      document.head.appendChild(s);
+    }).catch((e) => { janjiXlsxGaya = null; throw e; });
+  }
+  return janjiXlsxGaya;
+}
+
 function kartuPenjualanTokoItem(kartu) {
   const f = S.laporanPenjualan || (S.laporanPenjualan = { kategori: '', dari: `${hariIni().slice(0, 8)}01`, sampai: hariIni() });
   kartu.innerHTML = `<div class="card-head"><div><h2>Penjualan per Toko per Item</h2>
       <div class="muted small">Jumlah terjual tiap barang (Biji) di setiap toko dalam periode, diurutkan dari yang paling laku.
-      <b>Terjual</b>: jual di kasir (dikurangi pembatalan nota) + terjual di Shopee, sama dengan kolom Penjualan di Mutasi Item.</div></div></div>
+      <b>Terjual</b>: jual di kasir (dikurangi pembatalan nota) + terjual di Shopee, sama dengan kolom Penjualan di Mutasi Item.
+      Angka <span class="stok-menipis">merah</span>: stok yang bisa dijual di toko itu sekarang (Display + Gudang Utama + Gudang Shopee, kiriman stok terakhir toko)
+      kurang dari ${Object.entries(BATAS_STOK_MENIPIS).map(([k, n]) => `${n} (${k})`).join(' / ')}. Arahkan kursor ke angka untuk melihat stoknya.</div></div></div>
     <div class="row" style="flex-wrap:wrap">
       <select id="lpKategori" aria-label="Kategori"><option value="">Semua kategori</option></select>
       <label class="row small" style="gap:6px">Dari<input type="date" id="lpDari" value="${esc(f.dari)}"></label>
@@ -1184,7 +1208,11 @@ function kartuPenjualanTokoItem(kartu) {
         ${num(r.baris.length)} barang · ${num(semua)} terjual${r.baris.length > tampil.length ? ` · layar menampilkan ${num(tampil.length)} teratas, semua barang ada di Excel` : ''}</div>
       ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama Barang' },
         { k: 'total', judul: 'Total Terjual', num: true, fmt: (v) => `<b>${num(v)}</b>` },
-        ...r.toko.map((t) => ({ k: t.kode, judul: t.nama, num: true, fmt: (v, b) => num(b.toko ? b.toko[t.kode] || 0 : v) }))],
+        ...r.toko.map((t) => ({ k: t.kode, judul: t.nama, num: true, fmt: (v, b) => {
+          const n = num(b.toko[t.kode] || 0);
+          if (!b.stok || !t.stok_per) return n;
+          return `<span class="${stokMenipis(b, t) ? 'stok-menipis' : ''}" title="Stok bisa dijual: ${esc(num(b.stok[t.kode] || 0))}">${n}</span>`;
+        } }))],
       [...tampil, ...(tampil.length ? [{ sku: '', nama: 'Total', total: semua, toko: tt }] : [])], { kosong: 'Tidak ada penjualan pada periode ini.' })}`;
   }));
 
@@ -1198,14 +1226,30 @@ function kartuPenjualanTokoItem(kartu) {
       ['', '', '', ...r.toko.map((t) => t.nama)],
       ...r.baris.map((b) => [b.sku, b.nama, Number(b.total), ...r.toko.map((t) => Number(b.toko[t.kode] || 0))]),
       ['Total', '', r.baris.reduce((a, b) => a + Number(b.total), 0), ...r.toko.map((t) => tt[t.kode])]];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    let X = XLSX;
+    try { X = await muatXlsxGaya(); } catch (_) { toast('Excel diunduh tanpa warna merah (pustaka Excel berwarna gagal dimuat).', 'bad'); }
+    const ws = X.utils.aoa_to_sheet(aoa);
+    if (X !== XLSX) {
+      const tebal = { font: { bold: true } };
+      for (let c = 0; c < 3 + n; c++) for (const r of [4, 5]) { const a = X.utils.encode_cell({ r, c }); if (ws[a]) ws[a].s = { ...tebal, alignment: { horizontal: 'center', vertical: 'center' } }; }
+      ws.A1.s = tebal;
+      r.baris.forEach((b, i) => r.toko.forEach((t, j) => {
+        if (stokMenipis(b, t)) ws[X.utils.encode_cell({ r: 6 + i, c: 3 + j })].s = { font: { color: { rgb: 'FF0000' } } };
+      }));
+      const akhir = 6 + r.baris.length;
+      for (let c = 0; c < 3 + n; c++) { const a = X.utils.encode_cell({ r: akhir, c }); if (ws[a]) ws[a].s = tebal; }
+    }
     ws['!merges'] = [{ s: { r: 4, c: 0 }, e: { r: 5, c: 0 } }, { s: { r: 4, c: 1 }, e: { r: 5, c: 1 } }, { s: { r: 4, c: 2 }, e: { r: 5, c: 2 } },
       ...(n > 1 ? [{ s: { r: 4, c: 3 }, e: { r: 4, c: 2 + n } }] : [])];
     ws['!cols'] = [{ wch: 14 }, { wch: 40 }, { wch: 12 }, ...r.toko.map(() => ({ wch: 11 }))];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Penjualan per Toko');
+    const wb = X.utils.book_new();
+    X.utils.book_append_sheet(wb, ws, 'Penjualan per Toko');
+    if (X !== XLSX) X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([['Keterangan'],
+      ['Angka merah = stok yang bisa dijual di toko itu (Display + Gudang Utama + Gudang Shopee) kurang dari batas kategori:'],
+      ...Object.entries(BATAS_STOK_MENIPIS).map(([k, v]) => [`${k}: kurang dari ${v}`]),
+      ['Stok dari kiriman stok terakhir tiap toko:'], ...r.toko.map((t) => [`${t.nama}: ${t.stok_per ? fmtWaktu(t.stok_per) : 'belum ada data stok (tidak diwarnai)'}`])]), 'Keterangan');
     const kat = f.kategori ? `_${f.kategori.replace(/[^\w-]+/g, '_')}` : '';
-    XLSX.writeFile(wb, `Penjualan_per_Toko_per_Item${kat}_${f.dari}_${f.sampai}.xlsx`);
+    X.writeFile(wb, `Penjualan_per_Toko_per_Item${kat}_${f.dari}_${f.sampai}.xlsx`);
   }));
 }
 

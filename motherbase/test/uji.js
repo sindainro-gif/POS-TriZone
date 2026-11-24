@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'migrations/20261124000016_retur_barang.sql', 'migrations/20261124000017_penjualan_toko_item.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'migrations/20261124000016_retur_barang.sql', 'migrations/20261124000017_penjualan_toko_item.sql', 'migrations/20261124000018_stok_penjualan_toko_item.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -694,6 +694,15 @@ function fileAccurate() {
   const ptiKat = jualTokoItem(ADMIN, '2000-01-01', '2100-12-31', katUji.toLowerCase());
   assert.deepStrictEqual(ptiKat.baris.map((b) => b.sku), pti.baris.filter((b) => (b.kategori || '').toUpperCase() === katUji.toUpperCase()).map((b) => b.sku));
   assert.strictEqual(jualTokoItem(ADMIN, '2000-01-01', '2100-12-31', 'TIDAK-ADA').baris.length, 0);
+  // Stok bisa dijual per toko (Display + Gudang Utama + Gudang Shopee) & waktu stok
+  for (const b of pti.baris) {
+    for (const kode of ['KRP', 'TRP']) {
+      const s = q(`select display + gudang + shopee from stok_toko where kode_toko = '${kode}' and sku = '${b.sku}'`);
+      assert.strictEqual(b.stok[kode] === undefined ? '' : String(Number(b.stok[kode])), s === '' ? '' : String(Number(s)), `stok ${b.sku} ${kode}`);
+    }
+  }
+  assert.ok(pti.toko.find((x) => x.kode === 'TRP').stok_per);
+  assert.strictEqual(pti.toko.find((x) => x.kode === 'MNK').stok_per, null);
   // Pemilik toko: hanya tokonya
   const ptiP = jualTokoItem(PTRP, '2000-01-01', '2100-12-31', null);
   assert.deepStrictEqual(ptiP.toko.map((x) => x.kode), ['TRP']);
