@@ -147,6 +147,80 @@
     return out;
   }
 
+  /**
+   * Laporan Accurate "Rincian Retur Penjualan" (retur barang dari toko ke kantor, ekspor Excel).
+   * Bentuknya tabel per baris barang: Nomor # | Kode # | Nama Barang | Kuantitas | @Harga | Total Harga |
+   * Pelanggan | Keterangan Retur Penjualan. Tidak ada tanggal per dokumen; periode laporan dari kepala
+   * "Dari 01 Nov 2026 s/d 24 Nov 2026". Baris satu dokumen boleh terpisah-pisah. Kuantitas dalam Biji.
+   * Hasil: { perusahaan, dari, sampai, dokumen: [{ no, pelanggan, items: [{ kode, nama, qty, harga, keterangan }] }],
+   *          baris, masalah: [] }
+   */
+  function bacaRincianRetur(rows) {
+    const out = { perusahaan: null, dari: null, sampai: null, dokumen: [], baris: 0, masalah: [] };
+    const peta = new Map();
+    let judul = false;
+    let kol = null;
+    rows.forEach((raw, i) => {
+      const row = Array.isArray(raw) ? raw : [];
+      const baris = i + 1;
+      const sel = row.map(norm);
+      const isi = sel.filter(Boolean);
+      if (!isi.length) return;
+      if (isi.length === 1 && /^rincian retur penjualan$/i.test(isi[0])) { judul = true; return; }
+      const periode = isi.length === 1 && /^dari\s+(.+?)\s+s\/d\s+(.+)$/i.exec(isi[0]);
+      if (periode) {
+        out.dari = out.dari || keTanggal(periode[1]);
+        out.sampai = out.sampai || keTanggal(periode[2]);
+        if (!out.dari || !out.sampai) out.masalah.push(`Periode laporan tidak terbaca: ${isi[0]}`);
+        return;
+      }
+      if (isi.length <= 2 && (KAKI.test(isi[0]) || /^cabang\s*:/i.test(isi[0]))) return;
+      if (!judul && !kol && isi.length === 1) { out.perusahaan = out.perusahaan || isi[0]; return; }
+      if (sel.some((v) => /^nomor\s*#?$/i.test(v)) && sel.some((v) => /^kuantitas$/i.test(v))) {
+        kol = {
+          no: sel.findIndex((v) => /^nomor\s*#?$/i.test(v)),
+          kode: sel.findIndex((v) => /^kode\s*#?$/i.test(v)),
+          nama: sel.findIndex((v) => /^nama barang$/i.test(v)),
+          qty: sel.findIndex((v) => /^kuantitas$/i.test(v)),
+          harga: sel.findIndex((v) => /^@\s*harga$/i.test(v)),
+          pelanggan: sel.findIndex((v) => /^pelanggan$/i.test(v)),
+          keterangan: sel.findIndex((v) => /^keterangan/i.test(v)),
+        };
+        if (kol.kode < 0 || kol.pelanggan < 0) { out.masalah.push(`Baris ${baris}: kolom Kode # atau Pelanggan tidak ditemukan.`); kol = null; }
+        return;
+      }
+      if (!kol) { if (judul) out.masalah.push(`Baris ${baris} tidak dikenali: ${isi.join(' | ')}`); return; }
+      const no = sel[kol.no];
+      const kode = sel[kol.kode];
+      const qty = keAngka(row[kol.qty]);
+      if (!no && !kode) return; // baris jumlah / kosong
+      if (!no || !kode || qty === null) { out.masalah.push(`Baris ${baris} tidak lengkap: ${isi.join(' | ')}`); return; }
+      if (!(qty > 0)) out.masalah.push(`${no} ${kode}: kuantitas ${qty} tidak valid.`);
+      const pelanggan = sel[kol.pelanggan];
+      let d = peta.get(no);
+      if (!d) { d = { no, pelanggan, items: [] }; peta.set(no, d); out.dokumen.push(d); }
+      else if (pelanggan && d.pelanggan !== pelanggan) out.masalah.push(`${no}: pelanggan berbeda (${d.pelanggan} / ${pelanggan}).`);
+      if (!pelanggan) out.masalah.push(`${no}: pelanggan kosong (baris ${baris}).`);
+      d.items.push({ kode, nama: kol.nama >= 0 ? sel[kol.nama] : '', qty, harga: kol.harga >= 0 ? keAngka(row[kol.harga]) : null,
+        keterangan: kol.keterangan >= 0 ? sel[kol.keterangan] : '' });
+      out.baris++;
+    });
+    if (!judul) out.masalah.unshift('Bukan laporan "Rincian Retur Penjualan" Accurate.');
+    else if (!out.baris) out.masalah.push('Tidak ada baris retur di file ini.');
+    if (judul && (!out.dari || !out.sampai)) out.masalah.push('Periode laporan ("Dari … s/d …") tidak ditemukan.');
+    return out;
+  }
+
+  function bacaFileRetur(buf) {
+    const wb = XLSX.read(buf, { type: buf instanceof ArrayBuffer ? 'array' : 'buffer', cellDates: false });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return bacaRincianRetur(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true }));
+  }
+
+  function payloadRetur(hasil, file) {
+    return { file, dari: hasil.dari, sampai: hasil.sampai, dokumen: hasil.dokumen };
+  }
+
   // buf: Buffer (Node) atau ArrayBuffer / Uint8Array (browser)
   function bacaFile(buf) {
     const wb = XLSX.read(buf, { type: buf instanceof ArrayBuffer ? 'array' : 'buffer', cellDates: false });
@@ -187,5 +261,5 @@
     return { file, do: hasil.do.map(({ no, tanggal, pelanggan, items }) => ({ no, tanggal, pelanggan, items })) };
   }
 
-  return { bacaRincianPengiriman, bacaFile, barisImportTrizone, payloadMotherBase, satuanTrizone, keTanggal };
+  return { bacaRincianPengiriman, bacaFile, barisImportTrizone, payloadMotherBase, satuanTrizone, keTanggal, bacaRincianRetur, bacaFileRetur, payloadRetur };
 }));

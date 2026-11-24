@@ -376,6 +376,52 @@ function fileAccurate() {
     assert.ok(sheetSemua.includes('TRP') && sheetSemua.includes('MLG') && sheetSemua.length > 2, sheetSemua.join(','));
     ok('laporan: menu Laporan, Mutasi Item per toko (akhir = stok Trizone, total), unduh Excel satu toko & semua toko (sheet per toko)');
 
+    // Retur barang: retur toko (BS → Supplier) vs Retur Penjualan Accurate
+    await buka('retur');
+    await page.waitForSelector('#rtDaftar tbody tr');
+    assert.match(await page.textContent('#rtDaftar'), /TRP[\s\S]*Retur BS ke kantor[\s\S]*Belum di Accurate/);
+    await page.click('#rtTab [data-t="cocok"]');
+    await page.waitForSelector('#rtFile');
+    const fileReturWeb = (() => {
+      const r = (isi) => { const x = new Array(19).fill(''); for (const [k, v] of Object.entries(isi)) x[k] = v; return x; };
+      const aoa = [r({ 1: 'PT CONTOH KANTOR' }), r({ 1: 'Rincian Retur Penjualan' }), r({ 1: 'Dari 01 Nov 2026 s/d 30 Nov 2026' }), r({ 1: 'Cabang : [Semua Cabang]' }),
+        r({ 1: 'Nomor #', 3: 'Kode #', 5: 'Nama Barang', 7: 'Kuantitas', 9: '@Harga', 11: 'Total Harga', 13: 'Pelanggan', 15: 'Keterangan Retur Penjualan' }),
+        r({ 1: 'SRT.WEB.0001', 3: 'RTN-004', 5: 'Pail Ukir 40', 7: 3, 9: 1000, 11: 3000, 13: 'Tropodo', 15: 'BS rotan' }),
+        r({ 1: 'SRT.WEB.0001', 3: 'PLJ-005', 5: 'Rak Sepatu', 7: 1, 9: 1000, 11: 1000, 13: 'Tropodo', 15: 'BS rotan' }),
+        r({ 1: 'SRT.WEB.0002', 3: 'RTN-001', 5: 'Kursi Rotan', 7: 2, 9: 1000, 11: 2000, 13: 'Malang', 15: 'BS' }),
+        r({}), r({ 1: 'ACCURATE Accounting System Report' }), r({ 1: 'Halaman 1', 2: ' dari 1' })];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Rincian Retur Penjualan');
+      const f = path.join(OUT, 'Rincian_Retur_uji.xlsx');
+      XLSX.writeFile(wb, f);
+      return f;
+    })();
+    await page.setInputFiles('#rtFile', fileReturWeb);
+    await page.waitForSelector('#rtSimpan');
+    assert.match(await page.textContent('#rtPratinjau'), /2 retur, 3 baris barang/);
+    await shot('04c-retur-pratinjau');
+    await page.click('#rtSimpan');
+    await toastCocok(/2 retur baru/);
+    await page.waitForFunction(() => /Rak Sepatu|PLJ-005/.test(document.querySelector('#rtCocok')?.textContent || ''));
+    const cocokRows = await page.$$eval('#rtCocok tbody tr', (x) => x.map((tr) => tr.textContent));
+    assert.ok(cocokRows.some((t) => /PLJ-005/.test(t) && /Belum diinput Accurate/.test(t)), cocokRows.join('|'));
+    assert.ok(cocokRows.some((t) => /RTN-001/.test(t) && /Lebih di Accurate/.test(t)), cocokRows.join('|'));
+    assert.ok(!cocokRows.some((t) => /RTN-004/.test(t)), 'yang cocok tidak tampil di Perlu dicek');
+    await page.selectOption('#rtStatusC', 'COCOK');
+    await page.waitForFunction(() => /RTN-004/.test(document.querySelector('#rtCocok')?.textContent || ''));
+    await shot('04d-retur-pencocokan');
+    const [xlsRetur] = await Promise.all([page.waitForEvent('download'), page.click('#rtExcel')]);
+    assert.match(xlsRetur.suggestedFilename(), /^Pencocokan_Retur_Semua_/);
+    await page.selectOption('#rtStatusC', 'masalah');
+    await page.click('#rtTab [data-t="toko"]');
+    await page.waitForFunction(() => /Sebagian di Accurate/.test(document.querySelector('#rtDaftar')?.textContent || ''));
+    await page.click('#rtDaftar tr.klik');
+    await page.waitForSelector('.modal');
+    assert.match(await page.textContent('.modal'), /PLJ-005[\s\S]*2[\s\S]*1[\s\S]*1/);
+    await page.click('.modal .tutup');
+    assert.strictEqual((await db("select count(*)::int n from retur_accurate"))[0].n, 2);
+    ok('retur barang: daftar retur toko, upload Rincian Retur Penjualan Accurate, pencocokan per barang (cocok, belum diinput, lebih), status dokumen, Excel');
+
     await buka('stok');
     assert.deepStrictEqual(await page.$$eval('#stTab [data-t]', (b) => b.map((x) => x.dataset.t)), ['cari', 'lambat', 'dok']);
     await page.click('#stTab [data-t="cari"]');
@@ -617,7 +663,12 @@ function fileAccurate() {
       await page.fill('#lgPass', sandi);
       await page.click('#lgBtn');
     };
-    const keluar = async () => { await page.click('#btnKeluar'); await page.waitForSelector('#lgEmail'); };
+    // Tunggu daftar "perlu perhatian" di Ringkasan selesai dimuat, supaya tidak ada permintaan yang terkirim setelah keluar
+    const keluar = async () => {
+      await page.waitForFunction(() => !/Memuat/.test(document.querySelector('#rkPerhatian')?.textContent || ''));
+      await page.click('#btnKeluar');
+      await page.waitForSelector('#lgEmail');
+    };
     await page.click('#pgTambah');
     assert.match(await page.inputValue('#uSandi'), /^[a-z2-9]{10}$/);
     await page.fill('#uEmail', 'Gudang.Baru@contoh.local');

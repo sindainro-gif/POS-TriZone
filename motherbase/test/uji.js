@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'migrations/20261124000016_retur_barang.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -671,6 +671,80 @@ function fileAccurate() {
   assert.throws(() => mutasiItem(ADMIN, '2026-11-01', '2026-11-10', 'kasir'), /tidak dikenal/);
   assert.throws(() => q("set role anon; select public.laporan_mutasi_item('TRP', '2026-11-01', '2026-11-10', null)"), /permission denied/);
   ok('laporan mutasi item: Awal = stok import & Akhir = stok Trizone per zona dan semua zona, penjualan (kasir − batal + Shopee) terpisah dari barang keluar, mutasi antar zona tidak dihitung di semua zona, hak akses');
+
+  // ---------------------------------------------------------------- Retur barang ke supplier vs Retur Penjualan Accurate
+  const AR = require('../web/lib/accurate.js');
+  // File tiruan "Rincian Retur Penjualan" (tata letak sama dengan ekspor Accurate; kepala tabel berulang di halaman 2)
+  const fileRetur = (dari, sampai, baris) => {
+    const W = 19;
+    const r = (isi) => { const x = new Array(W).fill(''); for (const [i, v] of Object.entries(isi)) x[i] = v; return x; };
+    const kepalaTabel = r({ 1: 'Nomor #', 3: 'Kode #', 5: 'Nama Barang', 7: 'Kuantitas', 9: '@Harga', 11: 'Total Harga', 13: 'Pelanggan', 15: 'Keterangan Retur Penjualan' });
+    const isi = baris.map(([no, kode, qty, pel, ket]) => r({ 1: no, 3: kode, 5: `Barang ${kode}`, 7: qty, 9: 1000, 11: qty * 1000, 13: pel, 15: ket || 'BS' }));
+    const aoa = [r({ 1: 'PT CONTOH KANTOR' }), r({ 1: 'Rincian Retur Penjualan' }), r({ 1: `Dari ${dari} s/d ${sampai}` }), r({ 1: 'Cabang : [Semua Cabang]' }),
+      kepalaTabel, ...isi.slice(0, 2), r({}), r({ 1: 'ACCURATE Accounting System Report' }), r({ 1: 'Halaman 1', 2: ' dari 2' }), kepalaTabel, ...isi.slice(2),
+      r({}), r({ 1: 'ACCURATE Accounting System Report' }), r({}), r({ 1: 'Tercetak pada 24 November 2026 - 13:08' }), r({ 1: 'Halaman 2', 2: ' dari 2' })];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Rincian Retur Penjualan');
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  };
+  const tglId = (iso) => { const [y, m, d] = iso.split('-'); return `${d} ${['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'][Number(m) - 1]} ${y}`; };
+  const awalRetur = q('select mb.tgl_wib(now()) - 10');
+  const akhirRetur = q('select mb.tgl_wib(now())');
+
+  // Toko: BS diisi lewat opname, lalu 3 retur ke supplier (yang ketiga dibatalkan)
+  T.createOpname({ zone: 'damaged', notes: 'Hitung BS', items: [{ sku: 'UJ-KESET', counted: 10 }, { sku: 'UJ-EMBER', counted: 5 }] });
+  T.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', reason: 'Retur BS 1', items: [{ sku: 'UJ-KESET', qty: 2 }, { sku: 'UJ-EMBER', qty: 2 }] });
+  tidur(1100);
+  T.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', reason: 'Retur BS 2', items: [{ sku: 'UJ-KESET', qty: 1 }] });
+  tidur(1100);
+  T.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', reason: 'Retur BS salah', items: [{ sku: 'UJ-KESET', qty: 1 }] });
+  batalMt('Retur BS salah', 'Salah catat');
+  await mb.kirim({ force: true });
+
+  const retur1 = AR.bacaFileRetur(fileRetur(tglId(awalRetur), tglId(akhirRetur), [
+    ['SRT.UJI.0001', 'UJ-KESET', 2, 'Tropodo'], ['SRT.UJI.0002', 'UJ-KURSI', 1, 'Tropodo Special'],
+    ['SRT.UJI.0001', 'UJ-EMBER', 1, 'Tropodo'], ['SRT.UJI.0002', 'TIDAK-ADA', 3, 'Tropodo Special'], ['SRT.UJI.0003', 'UJ-KESET', 1, 'Pelanggan Baru Uji'],
+  ]));
+  assert.deepStrictEqual([retur1.dari, retur1.sampai, retur1.dokumen.length, retur1.baris, retur1.masalah], [awalRetur, akhirRetur, 3, 5, []]);
+  assert.strictEqual(retur1.perusahaan, 'PT CONTOH KANTOR');
+  assert.deepStrictEqual(AR.bacaFileRetur(fileAccurate()).masalah.slice(0, 1), ['Bukan laporan "Rincian Retur Penjualan" Accurate.']);
+  const imporRetur = (uid, h) => JSON.parse(sebagai(uid, `select public.import_retur_accurate(${lit(AR.payloadRetur(h, 'retur.xlsx'))})`));
+  assert.throws(() => imporRetur(PMLG, retur1), /Hanya pengguna kantor/);
+  const hasilImpor = imporRetur(ADMIN, retur1);
+  assert.deepStrictEqual([hasilImpor.dokumen_baru, hasilImpor.dokumen_diganti, hasilImpor.baris, hasilImpor.pelanggan_belum_dipetakan, hasilImpor.mulai],
+    [3, 0, 5, ['Pelanggan Baru Uji'], awalRetur]);
+  const cocokRetur = (uid = ADMIN, toko = null) => JSON.parse(sebagai(uid, `select coalesce(json_agg(r), '[]') from public.laporan_pencocokan_retur(${toko ? `'${toko}'` : 'null'}) r`));
+  const ringkasCocok = (rows) => Object.fromEntries(rows.map((r) => [`${r.kode_toko || '-'}:${r.sku}`, [Number(r.qty_toko), Number(r.qty_accurate), r.status]]));
+  assert.deepStrictEqual(ringkasCocok(cocokRetur()), {
+    '-:UJ-KESET': [0, 1, 'PELANGGAN_BELUM_DIPETAKAN'],
+    'TRP:UJ-KESET': [3, 2, 'BELUM_DI_ACCURATE'], // retur yang dibatalkan tidak dihitung
+    'TRP:UJ-EMBER': [2, 1, 'BELUM_DI_ACCURATE'],
+    'TRP:UJ-KURSI': [0, 1, 'LEBIH_DI_ACCURATE'],
+    'TRP:TIDAK-ADA': [0, 3, 'BARANG_TIDAK_DIKENAL'],
+  });
+  const dokRetur = () => Object.fromEntries(JSON.parse(sebagai(ADMIN, "select coalesce(json_agg(r), '[]') from public.laporan_retur_toko(null, null) r"))
+    .map((r) => [r.alasan, [Number(r.qty), Number(r.qty_accurate), r.status]]));
+  assert.deepStrictEqual(dokRetur(), { 'Retur BS 1': [4, 3, 'SEBAGIAN'], 'Retur BS 2': [1, 0, 'BELUM'] }); // FIFO: yang lama dulu
+  assert.strictEqual(sebagai(ADMIN, "select count(*) from public.laporan_retur_toko('TRP', 'BELUM')"), '1');
+
+  // Kantor menginput sisanya; impor ulang file yang sama tidak dobel
+  const retur2 = AR.bacaFileRetur(fileRetur(tglId(awalRetur), tglId(akhirRetur), [
+    ['SRT.UJI.0001', 'UJ-KESET', 2, 'Tropodo'], ['SRT.UJI.0001', 'UJ-EMBER', 1, 'Tropodo'], ['SRT.UJI.0004', 'UJ-KESET', 1, 'Tropodo'],
+    ['SRT.UJI.0004', 'UJ-EMBER', 1, 'Tropodo'],
+  ]));
+  assert.deepStrictEqual([imporRetur(ADMIN, retur2).dokumen_diganti, imporRetur(ADMIN, retur2).dokumen_diganti], [1, 2]);
+  const cocok2 = ringkasCocok(cocokRetur(ADMIN, 'TRP'));
+  assert.deepStrictEqual([cocok2['TRP:UJ-KESET'], cocok2['TRP:UJ-EMBER']], [[3, 3, 'COCOK'], [2, 2, 'COCOK']]);
+  assert.deepStrictEqual(dokRetur(), { 'Retur BS 1': [4, 4, 'SUDAH'], 'Retur BS 2': [1, 1, 'SUDAH'] });
+  // Tanggal mulai: retur toko sebelum tanggal itu tidak dihitung
+  sebagai(ADMIN, `select public.atur_mulai_pencocokan_retur('${q('select mb.tgl_wib(now()) + 1')}')`);
+  assert.deepStrictEqual(dokRetur(), {});
+  sebagai(ADMIN, `select public.atur_mulai_pencocokan_retur('${awalRetur}')`);
+  assert.throws(() => sebagai(PMLG, `select public.atur_mulai_pencocokan_retur('${awalRetur}')`), /Hanya pengguna kantor/);
+  assert.strictEqual(cocokRetur(PMLG).length, 0);
+  assert.strictEqual(sebagai(PMLG, 'select count(*) from retur_accurate'), '0');
+  assert.throws(() => q("set role anon; select count(*) from public.laporan_pencocokan_retur(null)"), /permission denied/);
+  ok('retur barang: retur toko (BS → Supplier) vs Retur Penjualan Accurate per barang (cocok, belum diinput, lebih, barang tak dikenal, pelanggan belum dipetakan), status dokumen FIFO, retur batal tidak dihitung, impor ulang tidak dobel, tanggal mulai, hak akses');
 
   console.log(`\n${lulus} uji lulus`);
 })().catch((e) => { console.error('\n✗', e && (e.stack || e.message)); process.exit(1); });

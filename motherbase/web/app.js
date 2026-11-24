@@ -222,6 +222,7 @@ const HALAMAN = [
   { id: 'opname', judul: 'Stock Opname', ikon: '▣', untuk: 'kantor' },
   { id: 'laporan', judul: 'Laporan', ikon: '⇩', untuk: 'semua' },
   { id: 'kiriman', judul: 'Surat Jalan', ikon: '⇄', untuk: 'kantor' },
+  { id: 'retur', judul: 'Retur Barang', ikon: '↩', untuk: 'kantor' },
   { id: 'pembelian', judul: 'Pembelian', ikon: '⊕', untuk: 'kantor' },
   { id: 'barang', judul: 'Master Barang', ikon: '☰', untuk: 'kantor' },
   { id: 'toko', judul: 'Toko', ikon: '⌂', untuk: 'kantor' },
@@ -325,30 +326,33 @@ async function hRingkasan(el) {
 
   async function perhatian() {
     const li = [];
-    if (isKantor()) {
-      const kemarin = geser(hariIni(), -1);
-      const [belum, sj, so, po] = await Promise.all([
-        rpc('laporan_belum_masuk', { p_tanggal: kemarin }),
-        q(sb.from('v_pencocokan_sj').select('status').in('status', ['BELUM_DIINPUT', 'SELISIH_QTY', 'BARANG_SALAH', 'SATUAN_BELUM_JELAS', 'PELANGGAN_BELUM_DIPETAKAN']).limit(2000)),
-        q(sb.from('stok_opname_review').select('no_op').eq('status', 'BARU').limit(2000)),
-        q(sb.from('po').select('no_po').eq('status', 'USULAN').limit(500)),
-      ]);
-      if (belum.length) li.push(['bad', `${belum.length} toko belum menutup shift ${fmtTgl(kemarin)}`, belum.map((b) => b.kode).join(', '), 'toko']);
-      if (sj.length) li.push(['warn', `${sj.length} surat jalan perlu dicek`, '', 'kiriman']);
-      if (so.length) li.push(['warn', `${so.length} stok opname menunggu review`, '', 'opname']);
-      if (po.length) li.push([isOwner() ? 'warn' : 'info', `${po.length} usulan PO ${isOwner() ? 'menunggu persetujuan Anda' : 'menunggu persetujuan owner'}`, '', 'pembelian']);
-      const opk = await q(sb.from('opname_kantor').select('no_dok,kode_toko').eq('status', 'dikirim').lt('dibuat_at', new Date(Date.now() - 3600e3).toISOString()).limit(500)).catch(() => []);
-      if (opk.length) li.push(['warn', `${opk.length} opname kantor belum diterapkan toko (lebih dari 1 jam)`, [...new Set(opk.map((o) => o.kode_toko))].join(', '), 'opname']);
-    }
+    const kemarin = geser(hariIni(), -1);
+    const kosong = () => [];
+    // Semua permintaan sekaligus (bukan berurutan); yang gagal (mis. migrasi belum dipasang) tidak menyembunyikan butir lain
+    const [belum, sj, so, po, returBelum, opk, batal, pesanan] = await Promise.all([
+      isKantor() ? rpc('laporan_belum_masuk', { p_tanggal: kemarin }) : [],
+      isKantor() ? q(sb.from('v_pencocokan_sj').select('status').in('status', ['BELUM_DIINPUT', 'SELISIH_QTY', 'BARANG_SALAH', 'SATUAN_BELUM_JELAS', 'PELANGGAN_BELUM_DIPETAKAN']).limit(2000)) : [],
+      isKantor() ? q(sb.from('stok_opname_review').select('no_op').eq('status', 'BARU').limit(2000)) : [],
+      isKantor() ? q(sb.from('po').select('no_po').eq('status', 'USULAN').limit(500)) : [],
+      isKantor() ? rpc('laporan_retur_toko', { p_kode_toko: null, p_status: 'BELUM' }).catch(kosong) : [],
+      isKantor() ? q(sb.from('opname_kantor').select('no_dok,kode_toko').eq('status', 'dikirim').lt('dibuat_at', new Date(Date.now() - 3600e3).toISOString()).limit(500)).catch(kosong) : [],
+      rpc('laporan_pembatalan', { p_dari: geser(hariIni(), -6), p_sampai: hariIni(), p_batas: 2000 }).catch(kosong),
+      rpc('laporan_pesanan', { p_status: 'baru', p_batas: 5000 }).catch(kosong),
+    ]);
+    if (belum.length) li.push(['bad', `${belum.length} toko belum menutup shift ${fmtTgl(kemarin)}`, belum.map((b) => b.kode).join(', '), 'toko']);
+    if (sj.length) li.push(['warn', `${sj.length} surat jalan perlu dicek`, '', 'kiriman']);
+    if (so.length) li.push(['warn', `${so.length} stok opname menunggu review`, '', 'opname']);
+    if (po.length) li.push([isOwner() ? 'warn' : 'info', `${po.length} usulan PO ${isOwner() ? 'menunggu persetujuan Anda' : 'menunggu persetujuan owner'}`, '', 'pembelian']);
+    if (returBelum.length) li.push(['warn', `${returBelum.length} retur toko ke supplier belum diinput di Accurate`, [...new Set(returBelum.map((r) => r.kode_toko))].join(', '), 'retur']);
+    if (opk.length) li.push(['warn', `${opk.length} opname kantor belum diterapkan toko (lebih dari 1 jam)`, [...new Set(opk.map((o) => o.kode_toko))].join(', '), 'opname']);
     const lambat = S.toko.filter((t) => !t.kiriman_terakhir_at || Date.now() - new Date(t.kiriman_terakhir_at) > 26 * 3600e3);
     if (lambat.length && isKantor()) li.push(['info', `${lambat.length} toko belum mengirim data lebih dari sehari`, lambat.map((t) => t.kode).join(', '), 'toko']);
-    // Gagal (mis. migrasi pembatalan belum dijalankan) tidak menyembunyikan butir lain
-    const batal = await rpc('laporan_pembatalan', { p_dari: geser(hariIni(), -6), p_sampai: hariIni(), p_batas: 2000 }).catch(() => []);
     if (batal.length) li.push(['info', `${batal.length} nota dibatalkan dalam 7 hari terakhir`, [...new Set(batal.map((b) => b.kode_toko))].join(', '), 'pembatalan']);
-    const pesananLewat = (await rpc('laporan_pesanan', { p_status: 'baru', p_batas: 5000 }).catch(() => [])).filter((r) => r.lewat);
+    const pesananLewat = pesanan.filter((r) => r.lewat);
     if (pesananLewat.length) {
       li.push(['warn', `${pesananLewat.length} pesanan pelanggan lewat tanggal ambil`, [...new Set(pesananLewat.map((r) => r.kode_toko))].join(', '), 'pesanan']);
     }
+    if (!$('#rkPerhatian', el)) return; // halaman sudah ditinggalkan
     $('#rkPerhatian', el).innerHTML = li.length ? li.map(([k, t, s, hal, tab]) =>
       `<li><span class="pill ${k}">${k === 'bad' ? 'Penting' : k === 'warn' ? 'Cek' : 'Info'}</span><span>${esc(t)}${s ? ` <span class="muted small">${esc(s)}</span>` : ''}</span><a href="#${hal}" class="small"${tab ? ` data-tab="${tab}"` : ''}>Buka</a></li>`).join('')
       : '<li class="muted">Tidak ada yang perlu ditindaklanjuti.</li>';
@@ -1138,6 +1142,167 @@ async function hLaporan(el) {
   }));
 }
 
+// ---------------------------------------------------------------- Retur barang (toko → supplier) vs Accurate
+const STATUS_RETUR = { COCOK: ['ok', 'Cocok'], BELUM_DI_ACCURATE: ['warn', 'Belum diinput Accurate'], LEBIH_DI_ACCURATE: ['bad', 'Lebih di Accurate'],
+  BARANG_TIDAK_DIKENAL: ['bad', 'Barang tidak dikenal'], PELANGGAN_BELUM_DIPETAKAN: ['warn', 'Pelanggan belum dipetakan'] };
+const STATUS_DOK_RETUR = { SUDAH: ['ok', 'Sudah di Accurate'], SEBAGIAN: ['warn', 'Sebagian di Accurate'], BELUM: ['bad', 'Belum di Accurate'] };
+
+async function hRetur(el) {
+  const f = S.retur || (S.retur = { tab: 'toko', toko: '', statusDok: '', statusCocok: 'masalah' });
+  el.innerHTML = `${head('Retur Barang', 'Retur barang dari toko ke supplier (di Trizone: mutasi <b>Gudang BS → Supplier</b>) dan pencocokannya dengan <b>Retur Penjualan</b> yang diinput di Accurate.')}
+    ${tabs('rtTab', [['toko', 'Retur dari toko'], ['cocok', 'Pencocokan Accurate']], f.tab)}<div id="rtIsi"></div>`;
+  pasangTabs(el, 'rtTab', (t) => { f.tab = t; tampil(); });
+  const isi = $('#rtIsi', el);
+  const mulai = async () => {
+    const [r] = await q(sb.from('pengaturan').select('nilai').eq('kunci', 'mulai_pencocokan_retur').limit(1));
+    return r ? r.nilai : null;
+  };
+
+  async function tampil() {
+    isi.innerHTML = '<div class="card"><div class="kosong">Memuat…</div></div>';
+    try {
+      if (f.tab === 'toko') await returToko();
+      else await pencocokan();
+    } catch (e) { isi.innerHTML = `<div class="card"><div class="kosong">${esc(pesanError(e))}</div></div>`; }
+  }
+
+  async function returToko() {
+    const tgl = await mulai();
+    isi.innerHTML = `<div class="card"><div class="card-head"><div><h2>Retur dari toko</h2>
+        <div class="muted small">Status di Accurate: jumlah retur per barang di Accurate dipakai untuk retur toko yang paling lama dulu.
+        ${tgl ? `Dihitung sejak ${esc(fmtTgl(tgl))}.` : 'Dihitung sejak laporan retur Accurate pertama diunggah.'}</div></div>
+      <div class="row">${pilihToko('rtToko', f.toko)}<select id="rtStatus" aria-label="Status">${[['', 'Semua status'], ...Object.entries(STATUS_DOK_RETUR).map(([k, [, l]]) => [k, l])]
+        .map(([v, l]) => `<option value="${v}" ${v === f.statusDok ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div></div>
+      <div id="rtDaftar"><div class="kosong">Memuat…</div></div></div>`;
+    const muat = async () => {
+      const box = $('#rtDaftar', isi);
+      const rows = await rpc('laporan_retur_toko', { p_kode_toko: f.toko || null, p_status: f.statusDok || null });
+      if (!box.isConnected) return;
+      box.innerHTML = tabel([{ k: 'kode_toko', judul: 'Toko', fmt: (v) => `<b>${esc(v)}</b> <span class="muted">${esc(namaToko(v))}</span>` },
+        { k: 'no_dok', judul: 'No. retur', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'waktu', judul: 'Tanggal', fmt: (v) => esc(fmtWaktu(v)) },
+        { k: 'alasan', judul: 'Alasan' }, { k: 'jumlah_barang', judul: 'Barang', num: true, fmt: (v) => num(v) }, { k: 'qty', judul: 'Qty (Biji)', num: true, fmt: (v) => num(v) },
+        { k: 'qty_accurate', judul: 'Di Accurate', num: true, fmt: (v) => num(v) }, { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_DOK_RETUR, v) }],
+      rows, { klik: true, kosong: 'Belum ada retur ke supplier dari toko (di Trizone: Mutasi Gudang BS → Supplier).' });
+      onBaris(box, rows, detail);
+    };
+    $('#rtToko', isi).addEventListener('change', (e) => { f.toko = e.target.value; muat(); });
+    $('#rtStatus', isi).addEventListener('change', (e) => { f.statusDok = e.target.value; muat(); });
+    await muat();
+  }
+
+  async function detail(d) {
+    const baris = await q(sb.from('v_retur_toko_alokasi').select('baris_ke,sku,qty,qty_accurate').eq('kode_toko', d.kode_toko).eq('no_dok', d.no_dok).order('baris_ke'));
+    const nama = baris.length ? Object.fromEntries((await q(sb.from('produk_toko').select('sku,nama').eq('kode_toko', d.kode_toko).in('sku', baris.map((b) => b.sku)))).map((p) => [p.sku, p.nama])) : {};
+    modal({
+      judul: `Retur ${d.no_dok}`, lebar: true,
+      isi: `<p style="margin-top:0">${esc(d.kode_toko)} · ${esc(namaToko(d.kode_toko))} · ${esc(fmtWaktu(d.waktu))} · ${esc(d.alasan || '-')} · ${pill(STATUS_DOK_RETUR, d.status)}</p>
+        ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+          { k: 'qty', judul: 'Qty retur (Biji)', num: true, fmt: (v) => num(v) }, { k: 'qty_accurate', judul: 'Sudah di Accurate', num: true, fmt: (v) => num(v) },
+          { k: 'kurang', judul: 'Belum', num: true, fmt: (v) => (v ? `<span class="pill warn">${num(v)}</span>` : '0') }],
+        baris.map((b) => ({ ...b, nama: nama[b.sku] || '', kurang: Number(b.qty) - Number(b.qty_accurate) })))}`,
+      aksi: [{ label: 'Tutup', kelas: 'primary' }],
+    });
+  }
+
+  async function pencocokan() {
+    const tgl = await mulai();
+    isi.innerHTML = `<div class="card"><div class="card-head"><h2>Upload laporan retur Accurate</h2></div>
+        <div class="row"><input type="file" id="rtFile" accept=".xlsx,.xls" aria-label="File Excel retur Accurate"><span class="muted small">Ekspor laporan <b>Rincian Retur Penjualan</b> dari Accurate ke Excel.
+          Unggah laporan sejak tanggal mulai; periode yang bertumpuk tidak dihitung dua kali (nomor retur yang sama diganti).</span></div>
+        <div id="rtPratinjau"></div></div>
+      <div class="card"><div class="card-head"><div><h2>Pencocokan per barang</h2>
+          <div class="muted small">Jumlah retur toko (Biji) dibanding jumlah di Accurate, kumulatif sejak <b id="rtMulaiTgl">${esc(tgl ? fmtTgl(tgl) : 'laporan pertama')}</b>
+          <button class="btn sm" id="rtUbahMulai">Ubah</button></div></div>
+        <div class="row">${pilihToko('rtTokoC', f.toko)}<select id="rtStatusC" aria-label="Status">${[['masalah', 'Perlu dicek'], ['', 'Semua status'], ...Object.entries(STATUS_RETUR).map(([k, [, l]]) => [k, l])]
+          .map(([v, l]) => `<option value="${v}" ${v === f.statusCocok ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><button class="btn sm" id="rtExcel">Unduh Excel</button></div></div>
+        <div id="rtRingkas"></div><div id="rtCocok"><div class="kosong">Memuat…</div></div></div>`;
+    let semua = [];
+    const pilih = () => semua.filter((r) => (!f.toko || r.kode_toko === f.toko) && (f.statusCocok === 'masalah' ? r.status !== 'COCOK' : !f.statusCocok || r.status === f.statusCocok));
+    const kolom = [{ k: 'kode_toko', judul: 'Toko', fmt: (v, r) => (v ? `<b>${esc(v)}</b>` : `<span class="muted">${esc(r.pelanggan || '-')}</span>`) },
+      { k: 'sku', judul: 'Kode', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
+      { k: 'qty_toko', judul: 'Retur toko', num: true, fmt: (v) => num(v) }, { k: 'qty_accurate', judul: 'Di Accurate', num: true, fmt: (v) => num(v) },
+      { k: 'selisih', judul: 'Selisih', num: true, fmt: (v) => (Number(v) ? `<b>${Number(v) > 0 ? '+' : ''}${num(v)}</b>` : '0') },
+      { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_RETUR, v) }];
+    function render() {
+      const rows = pilih();
+      const perToko = new Map();
+      for (const r of semua) {
+        const k = r.kode_toko || `?${r.pelanggan}`;
+        const t = perToko.get(k) || { toko: r.kode_toko, pelanggan: r.pelanggan, cocok: 0, belum: 0, belumQty: 0, lebih: 0, lain: 0 };
+        if (r.status === 'COCOK') t.cocok++;
+        else if (r.status === 'BELUM_DI_ACCURATE') { t.belum++; t.belumQty += Number(r.selisih); } else if (r.status === 'LEBIH_DI_ACCURATE') t.lebih++;
+        else t.lain++;
+        perToko.set(k, t);
+      }
+      $('#rtRingkas', isi).innerHTML = perToko.size ? tabel([{ k: 'toko', judul: 'Toko', fmt: (v, r) => (v ? `<b>${esc(v)}</b> ${esc(namaToko(v))}` : `<span class="pill warn">Belum dipetakan</span> ${esc(r.pelanggan)}`) },
+        { k: 'cocok', judul: 'Barang cocok', num: true }, { k: 'belum', judul: 'Belum diinput Accurate', num: true, fmt: (v, r) => (v ? `${num(v)} barang · ${num(r.belumQty)} Biji` : '0') },
+        { k: 'lebih', judul: 'Lebih di Accurate', num: true }, { k: 'lain', judul: 'Perlu dicek lain', num: true }], [...perToko.values()]) + '<div style="height:12px"></div>' : '';
+      $('#rtCocok', isi).innerHTML = tabel(kolom, rows, { kosong: semua.length ? 'Tidak ada yang perlu dicek.' : 'Belum ada retur dari toko maupun dari Accurate.' });
+    }
+    async function muat() { semua = await rpc('laporan_pencocokan_retur', { p_kode_toko: null }); if ($('#rtCocok', isi)) render(); }
+    $('#rtTokoC', isi).addEventListener('change', (e) => { f.toko = e.target.value; render(); });
+    $('#rtStatusC', isi).addEventListener('change', (e) => { f.statusCocok = e.target.value; render(); });
+    $('#rtExcel', isi).addEventListener('click', () => {
+      const rows = pilih();
+      if (!rows.length) return toast('Tidak ada baris untuk diunduh.', 'bad');
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([['Pencocokan Retur Barang (toko vs Accurate)'], ['Sejak', tgl || '-'], [],
+        ['Toko', 'Pelanggan Accurate', 'Kode', 'Nama', 'Retur toko', 'Di Accurate', 'Selisih', 'Status'],
+        ...rows.map((r) => [r.kode_toko || '', r.pelanggan || '', r.sku, r.nama || '', Number(r.qty_toko), Number(r.qty_accurate), Number(r.selisih), (STATUS_RETUR[r.status] || [])[1] || r.status])]);
+      ws['!cols'] = [{ wch: 6 }, { wch: 22 }, { wch: 12 }, { wch: 40 }, { wch: 11 }, { wch: 11 }, { wch: 9 }, { wch: 24 }];
+      XLSX.utils.book_append_sheet(wb, ws, 'Pencocokan Retur');
+      XLSX.writeFile(wb, `Pencocokan_Retur_${f.toko || 'Semua'}_${hariIni()}.xlsx`);
+      return undefined;
+    });
+    $('#rtUbahMulai', isi).addEventListener('click', () => modal({
+      judul: 'Tanggal mulai pencocokan retur',
+      isi: `<p style="margin-top:0">Retur toko sebelum tanggal ini tidak dihitung. Laporan Accurate yang periodenya berakhir sebelum tanggal ini juga tidak dihitung.</p>
+        <label class="f">Mulai<input type="date" id="rtMulaiBaru" value="${esc(tgl || hariIni())}"></label>`,
+      aksi: [{ label: 'Batal' }, { label: 'Simpan', kelas: 'primary', onClick: async ({ tutup, el: m }) => {
+        await rpc('atur_mulai_pencocokan_retur', { p_tanggal: $('#rtMulaiBaru', m).value });
+        tutup(); toast('Tanggal mulai disimpan.'); tampil();
+      } }],
+    }));
+    $('#rtFile', isi).addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      const box = $('#rtPratinjau', isi);
+      box.innerHTML = '<div class="kosong">Membaca file…</div>';
+      try {
+        const h = MbAccurate.bacaFileRetur(await file.arrayBuffer());
+        const petaPel = Object.fromEntries((await q(sb.from('pelanggan_accurate').select('*'))).map((p) => [p.nama, p.kode_toko]));
+        const grup = new Map();
+        for (const d of h.dokumen) {
+          const kode = petaPel[d.pelanggan] || null;
+          const k = kode || `?${d.pelanggan}`;
+          const g = grup.get(k) || { kode, pelanggan: new Set(), dok: 0, baris: 0, qty: 0 };
+          g.pelanggan.add(d.pelanggan); g.dok++; g.baris += d.items.length; g.qty += d.items.reduce((a, i) => a + i.qty, 0);
+          grup.set(k, g);
+        }
+        box.innerHTML = `<div style="margin-top:12px" class="grid">
+          <div class="${h.masalah.length ? 'alert bad' : 'alert ok'}"><b>${esc(file.name)}</b>: ${esc(h.perusahaan || '')} · ${esc(h.dari ? `${fmtTgl(h.dari)} s/d ${fmtTgl(h.sampai)}` : '')} ·
+            ${num(h.dokumen.length)} retur, ${num(h.baris)} baris barang${h.masalah.length ? `<br><b>${num(h.masalah.length)} masalah:</b><br>${h.masalah.slice(0, 20).map(esc).join('<br>')}` : ''}</div>
+          ${tabel([{ k: 'kode', judul: 'Toko', fmt: (v) => (v ? `<b>${esc(v)}</b> ${esc(namaToko(v))}` : '<span class="pill warn">Belum dipetakan</span>') },
+            { k: 'pel', judul: 'Pelanggan Accurate' }, { k: 'dok', judul: 'Retur', num: true }, { k: 'baris', judul: 'Baris', num: true }, { k: 'qty', judul: 'Qty (Biji)', num: true, fmt: (v) => num(v) }],
+          [...grup.values()].map((g) => ({ ...g, pel: [...g.pelanggan].join(', ') })))}
+          <div class="row end"><span class="muted small">Pelanggan yang belum dipetakan bisa diatur di halaman Toko.</span>
+            <button class="btn primary" id="rtSimpan" ${h.masalah.length ? 'disabled' : ''}>Simpan ${num(h.dokumen.length)} retur ke mother base</button></div></div>`;
+        $('#rtSimpan', box).addEventListener('click', (ev) => sibuk(ev.target, async () => {
+          const r = await rpc('import_retur_accurate', { p: MbAccurate.payloadRetur(h, file.name) });
+          toast(`${num(r.dokumen_baru)} retur baru, ${num(r.dokumen_diganti)} diperbarui.${r.pelanggan_belum_dipetakan.length ? ` Belum dipetakan: ${r.pelanggan_belum_dipetakan.join(', ')}` : ''}`);
+          box.innerHTML = '';
+          if (!tgl && r.mulai) $('#rtMulaiTgl', isi).textContent = fmtTgl(r.mulai);
+          muat();
+        }));
+      } catch (err) { box.innerHTML = `<div class="alert bad" style="margin-top:12px">${esc(pesanError(err))}</div>`; }
+    });
+    await muat();
+  }
+
+  await tampil();
+}
+
 // ---------------------------------------------------------------- Surat jalan (Accurate)
 async function hKiriman(el) {
   el.innerHTML = `${head('Surat Jalan', 'Upload laporan Accurate <b>Rincian Pengiriman Pesanan</b>, kirim file import penerimaan ke toko, lalu pantau pencocokannya.')}
@@ -1845,7 +2010,7 @@ async function hAsisten(el) {
 }
 
 // ================================================================ Kerangka aplikasi
-const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, pesanan: hPesanan, stok: hStok, opname: hOpname, laporan: hLaporan, kiriman: hKiriman, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
+const RENDER = { ringkasan: hRingkasan, penjualan: hPenjualan, pembatalan: hPembatalan, pesanan: hPesanan, stok: hStok, opname: hOpname, laporan: hLaporan, kiriman: hKiriman, retur: hRetur, pembelian: hPembelian, barang: hBarang, toko: hToko, pengguna: hPengguna, asisten: hAsisten };
 
 function tampilLogin(pesan = '') {
   $('#root').innerHTML = `<div class="login"><div class="card"><div class="brand" style="padding:0"><div class="brand-mark">MB</div><div><div class="brand-name">Mother Base</div><div class="brand-sub">Pusat data kantor</div></div></div>

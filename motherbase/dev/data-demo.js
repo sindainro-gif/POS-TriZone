@@ -77,7 +77,7 @@ async function buatDatabase(dbUrl) {
   await c.connect();
   for (const f of ['supabase/tests/stub_supabase.sql', 'supabase/migrations/20261116000001_mother_base.sql',
     'supabase/migrations/20261116000002_aplikasi.sql', 'supabase/migrations/20261116000003_import_barang.sql', 'supabase/migrations/20261119000004_satuan_masuk.sql', 'supabase/migrations/20261119000005_tanpa_principal.sql',
-    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/migrations/20261120000009_minta_update.sql', 'supabase/migrations/20261122000010_opname_kantor.sql', 'supabase/migrations/20261123000011_riwayat_stok.sql', 'supabase/migrations/20261123000012_dokumen_batal.sql', 'supabase/migrations/20261123000013_kata_sandi.sql', 'supabase/migrations/20261123000014_laporan_mutasi.sql', 'supabase/migrations/20261123000015_mutasi_penjualan.sql', 'supabase/seed.sql']) {
+    'supabase/migrations/20261119000006_pembatalan_nota.sql', 'supabase/migrations/20261120000007_filter_stok.sql', 'supabase/migrations/20261120000008_pesanan_toko.sql', 'supabase/migrations/20261120000009_minta_update.sql', 'supabase/migrations/20261122000010_opname_kantor.sql', 'supabase/migrations/20261123000011_riwayat_stok.sql', 'supabase/migrations/20261123000012_dokumen_batal.sql', 'supabase/migrations/20261123000013_kata_sandi.sql', 'supabase/migrations/20261123000014_laporan_mutasi.sql', 'supabase/migrations/20261123000015_mutasi_penjualan.sql', 'supabase/migrations/20261124000016_retur_barang.sql', 'supabase/seed.sql']) {
     await c.query(fs.readFileSync(path.join(MB, f), 'utf8'));
   }
   return c;
@@ -229,6 +229,9 @@ async function buatDataDemo(dbUrl, opsi = {}) {
     { sku: 'PLJ-002', counted: p['PLJ-002'].floor_stock - 2 }] });
   trp.createTransferDoc({ from_zone: 'warehouse', to_zone: 'shopee', reason: 'Stok online', items: [{ sku: 'RTN-002', qty: 5 }] });
   trp.createTransferDoc({ from_zone: 'shopee', to_zone: 'shopee_sold', reason: 'Pesanan Shopee', items: [{ sku: 'RTN-002', qty: 2 }] });
+  // Retur ke supplier (kantor): barang rusak dipindah ke Gudang BS, lalu dikirim balik
+  trp.createTransferDoc({ from_zone: 'floor', to_zone: 'damaged', reason: 'Pecah di rak', items: [{ sku: 'RTN-004', qty: 3 }, { sku: 'PLJ-005', qty: 2 }] });
+  trp.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', reason: 'Retur BS ke kantor', items: [{ sku: 'RTN-004', qty: 3 }, { sku: 'PLJ-005', qty: 2 }] });
   for (const t of TOKO) {
     const svc = tokoSvc[t.kode].svc;
     svc.openShift({ cashier_name: 'Rina' });
