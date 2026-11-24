@@ -1110,7 +1110,9 @@ async function hLaporan(el) {
         <label class="row small" style="gap:6px">Sampai<input type="date" id="lmSampai" value="${esc(f.sampai)}"></label>
         <button class="btn sm" id="lmLihat">Lihat</button><button class="btn sm primary" id="lmUnduh">Unduh Excel</button></div>
       <div id="lmIsi" style="margin-top:12px"></div></div>
+    <div class="card" id="loKartu" style="margin-top:14px"></div>
     <div class="card" id="lpKartu" style="margin-top:14px"></div>`;
+  kartuOmzetToko($('#loKartu', el));
   kartuPenjualanTokoItem($('#lpKartu', el));
   const isi = $('#lmIsi', el);
   const labelGudang = () => (GUDANG_LAPORAN.find(([v]) => v === f.zona) || GUDANG_LAPORAN[0])[1];
@@ -1178,6 +1180,84 @@ function muatXlsxGaya() {
     }).catch((e) => { janjiXlsxGaya = null; throw e; });
   }
   return janjiXlsxGaya;
+}
+
+// Penjualan (omzet) per toko: Houseware, Special, Total, % dari total semua toko; hari / periode bisa dipilih
+function kartuOmzetToko(kartu) {
+  const f = S.laporanOmzet || (S.laporanOmzet = { dari: hariIni(), sampai: hariIni() });
+  kartu.innerHTML = `<div class="card-head"><div><h2>Penjualan</h2>
+      <div class="muted small">Omzet tiap toko per kategori (Houseware, Special) dan totalnya, sudah dikurangi pembatalan nota. <b>%</b> = bagian toko dari total semua toko.
+      Untuk satu hari, isi Dari dan Sampai dengan tanggal yang sama.</div></div></div>
+    <div class="row" style="flex-wrap:wrap">
+      <label class="row small" style="gap:6px">Dari<input type="date" id="loDari" value="${esc(f.dari)}"></label>
+      <label class="row small" style="gap:6px">Sampai<input type="date" id="loSampai" value="${esc(f.sampai)}"></label>
+      <button class="btn sm" id="loLihat">Lihat</button><button class="btn sm primary" id="loUnduh">Unduh Excel</button></div>
+    <div id="loIsi" style="margin-top:12px"></div>`;
+  const isi = $('#loIsi', kartu);
+  $('#loDari', kartu).addEventListener('change', (e) => { if (e.target.value && $('#loSampai', kartu).value < e.target.value) $('#loSampai', kartu).value = e.target.value; });
+  const periodeTeks = () => (f.dari === f.sampai ? fmtTgl(f.dari) : `${fmtTgl(f.dari)} s/d ${fmtTgl(f.sampai)}`);
+
+  async function ambil() {
+    Object.assign(f, { dari: $('#loDari', kartu).value, sampai: $('#loSampai', kartu).value });
+    if (!f.dari || !f.sampai || f.sampai < f.dari) throw new Error('Periode tidak valid: tanggal Dari harus sebelum atau sama dengan Sampai.');
+    const rk = await rpc('laporan_ringkasan', { p_dari: f.dari, p_sampai: f.sampai });
+    const per = Object.fromEntries(rk.map((r) => [r.kode_toko, r]));
+    // Semua toko aktif (urutan toko dari menu Toko), ditambah toko nonaktif yang masih punya penjualan di periode ini
+    const toko = S.toko.filter((t) => t.aktif || per[t.kode]);
+    const baris = toko.map((t) => {
+      const r = per[t.kode] || {};
+      return { kode: t.kode, toko: t.nama, houseware: Number(r.omzet_houseware || 0), special: Number(r.omzet_special || 0),
+        lain: Number(r.omzet_lain || 0), total: Number(r.omzet || 0) };
+    });
+    const jumlah = { toko: 'Total', houseware: 0, special: 0, lain: 0, total: 0 };
+    for (const b of baris) for (const k of ['houseware', 'special', 'lain', 'total']) jumlah[k] += b[k];
+    for (const b of [...baris, jumlah]) b.persen = jumlah.total ? b.total / jumlah.total : 0;
+    return { baris, jumlah, adaLain: baris.some((b) => b.lain !== 0) };
+  }
+  const kolom = (adaLain) => [['toko', 'TOKO'], ['houseware', 'Houseware'], ['special', 'Special'], ...(adaLain ? [['lain', 'Lainnya']] : []), ['total', 'Total'], ['persen', '%']];
+  const persen = (v) => `${Math.round(v * 100)}%`;
+
+  $('#loLihat', kartu).addEventListener('click', (e) => sibuk(e.currentTarget, async () => {
+    isi.innerHTML = '<div class="kosong">Memuat…</div>';
+    const r = await ambil();
+    isi.innerHTML = `<div class="muted small" id="loRingkas" style="margin-bottom:8px">${esc(periodeTeks())} · total ${esc(rp(r.jumlah.total))}</div>
+      ${tabel(kolom(r.adaLain).map(([k, judul]) => ({ k, judul, num: k !== 'toko',
+        fmt: k === 'toko' ? (v, b) => (b.kode ? esc(v) : `<b>${esc(v)}</b>`) : (v, b) => { const t = k === 'persen' ? persen(v) : num(v); return b.kode && k !== 'total' ? esc(t) : `<b>${esc(t)}</b>`; } })),
+      [...r.baris, r.jumlah])}`;
+  }));
+
+  $('#loUnduh', kartu).addEventListener('click', (e) => sibuk(e.currentTarget, async () => {
+    const r = await ambil();
+    const kol = kolom(r.adaLain);
+    const aoa = [['Laporan Penjualan'], ['Periode', periodeTeks()], [], kol.map(([, j]) => j),
+      ...[...r.baris, r.jumlah].map((b) => kol.map(([k]) => b[k]))];
+    let X = XLSX;
+    try { X = await muatXlsxGaya(); } catch (_) { /* tanpa gaya: angka & format tetap benar */ }
+    const ws = X.utils.aoa_to_sheet(aoa);
+    const awal = 3;
+    const akhir = awal + r.baris.length + 1;
+    for (let rr = awal + 1; rr <= akhir; rr++) {
+      kol.forEach(([k], c) => { const a = X.utils.encode_cell({ r: rr, c }); if (ws[a] && k !== 'toko') ws[a].z = k === 'persen' ? '0%' : '#,##0'; });
+    }
+    if (X !== XLSX) {
+      const garis = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+      ws.A1.s = { font: { bold: true } };
+      for (let rr = awal; rr <= akhir; rr++) {
+        kol.forEach(([k], c) => {
+          const a = X.utils.encode_cell({ r: rr, c });
+          if (!ws[a]) return;
+          const tebal = rr === awal || rr === akhir || k === 'total';
+          ws[a].s = { border: garis, font: { bold: tebal },
+            alignment: { horizontal: rr === awal ? 'center' : k === 'toko' ? 'left' : 'right' },
+            ...(ws[a].z ? { numFmt: ws[a].z } : {}) };
+        });
+      }
+    }
+    ws['!cols'] = kol.map(([k]) => ({ wch: k === 'toko' ? 16 : k === 'persen' ? 7 : 14 }));
+    const wb = X.utils.book_new();
+    X.utils.book_append_sheet(wb, ws, 'Penjualan');
+    X.writeFile(wb, f.dari === f.sampai ? `Penjualan_${f.dari}.xlsx` : `Penjualan_${f.dari}_${f.sampai}.xlsx`);
+  }));
 }
 
 function kartuPenjualanTokoItem(kartu) {

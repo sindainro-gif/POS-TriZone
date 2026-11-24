@@ -391,6 +391,41 @@ function fileAccurate() {
     assert.ok(sheetSemua.includes('TRP') && sheetSemua.includes('MLG') && sheetSemua.length > 2, sheetSemua.join(','));
     ok('laporan: menu Laporan, Mutasi Item per toko (akhir = stok Trizone, total), unduh Excel satu toko & semua toko (sheet per toko)');
 
+    // Laporan → Penjualan (omzet per toko: Houseware, Special, Total, %)
+    await db("update produk set kategori = case kategori when 'Plastik' then 'HOUSEWARE' when 'Rotan' then 'SPECIAL' else kategori end");
+    try {
+      await page.fill('#loDari', '2000-01-01');
+      await page.click('#loLihat');
+      await page.waitForSelector('#loRingkas');
+      const kepalaLo = await page.$$eval('#loIsi thead th', (x) => x.map((th) => th.textContent.trim()));
+      assert.deepStrictEqual(kepalaLo, ['TOKO', 'Houseware', 'Special', 'Total', '%']);
+      const barisLo = await page.$$eval('#loIsi tbody tr', (x) => x.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+      const angkaLo = (x) => Number(x.replace(/[^0-9-]/g, '') || 0);
+      assert.deepStrictEqual(barisLo.map((r) => r[0]), ['Krampung', 'Manukan', 'Sidoarjo', 'Tropodo', 'Malang', 'Sepanjang', 'Bekasi', 'Depok', 'Ciledug', 'Pamulang', 'Total']);
+      assert.ok(barisLo.every((r) => angkaLo(r[1]) + angkaLo(r[2]) === angkaLo(r[3])), barisLo.map((r) => r.join('|')).join('; '));
+      const totalLo = barisLo[barisLo.length - 1];
+      assert.strictEqual(angkaLo(totalLo[3]), barisLo.slice(0, -1).reduce((a, r) => a + angkaLo(r[3]), 0));
+      assert.strictEqual(totalLo[4], '100%');
+      const omzetDb = Number((await db('select coalesce(sum(subtotal), 0) as n from penjualan'))[0].n);
+      assert.strictEqual(angkaLo(totalLo[3]), omzetDb);
+      await shot('03f2-laporan-penjualan-omzet-toko');
+      const [xlsLo] = await Promise.all([page.waitForEvent('download'), page.click('#loUnduh')]);
+      assert.match(xlsLo.suggestedFilename(), /^Penjualan_2000-01-01_\d{4}-\d\d-\d\d\.xlsx$/);
+      const bukuLo = XLSX.readFile(await xlsLo.path(), { cellNF: true });
+      const wsLo = bukuLo.Sheets.Penjualan;
+      const aoaLo = XLSX.utils.sheet_to_json(wsLo, { header: 1, defval: '' });
+      assert.strictEqual(aoaLo[0][0], 'Laporan Penjualan');
+      assert.deepStrictEqual(aoaLo[3], ['TOKO', 'Houseware', 'Special', 'Total', '%']);
+      const akhirLo = aoaLo[aoaLo.length - 1];
+      assert.deepStrictEqual([akhirLo[0], akhirLo[3], akhirLo[4]], ['Total', omzetDb, 1]);
+      assert.ok(aoaLo.slice(4, -1).every((r) => r[1] + r[2] === r[3]));
+      assert.strictEqual(wsLo.D5.z, '#,##0');
+      assert.strictEqual(wsLo.E5.z, '0%');
+    } finally {
+      await db("update produk set kategori = case kategori when 'HOUSEWARE' then 'Plastik' when 'SPECIAL' then 'Rotan' else kategori end");
+    }
+    ok('laporan: Penjualan per toko (Houseware, Special, Total, %), urutan toko, total = omzet bersih, unduh Excel (format angka & persen)');
+
     // Laporan → Penjualan per Toko per Item (periode & kategori)
     await page.fill('#lpDari', '2000-01-01');
     await page.waitForFunction(() => document.querySelectorAll('#lpKategori option').length > 1);
