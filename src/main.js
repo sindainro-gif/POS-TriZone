@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const { seedDemo, DEMO_ACCOUNTS } = require('./demo');
 const { createDraftStore } = require('./drafts');
 const { createMotherbase } = require('./motherbase');
-const { openDrawer } = require('./drawer');
+const { openDrawer, createDrawerWorker } = require('./drawer');
 const reportCrypt = require('./reportcrypt');
 // Versi POS dari package.json (sama di aplikasi terpasang, saat dijalankan dari folder, dan saat uji otomatis)
 const APP_VERSION = require('../package.json').version;
@@ -178,14 +178,27 @@ async function printShiftRecap(recap, { reprint = false } = {}) {
 
 // Buka laci lewat printer nota KOMPUTER INI (PC Kasir tidak lewat PC Server, jadi tetap jalan saat MODE DARURAT).
 // Printer nota kosong = printer default Windows. Mode uji (POS_PRINT_TO_PDF): perintahnya ditulis ke file.
+// Pekerja PowerShell yang tetap menyala: laci terbuka seketika (cara lama: ±0,3–3 detik per buka)
+let drawerWorker = null;
+const getDrawerWorker = () => (drawerWorker ||= createDrawerWorker({ dataDir: DATA_DIR }));
+let defaultPrinterCache = null; // nama printer default Windows (dibuang saat pengaturan printer disimpan)
 async function openDrawerHere() {
   const testDir = process.env.POS_PRINT_TO_PDF || '';
+  if (testDir) return openDrawer({ testDir });
   let printerName = (await getSettings()).printer_name;
-  if (!printerName && !testDir) {
-    const def = (await win.webContents.getPrintersAsync()).find((p) => p.isDefault);
-    printerName = def ? def.name : '';
+  if (!printerName) {
+    if (defaultPrinterCache === null) {
+      const def = (await win.webContents.getPrintersAsync()).find((p) => p.isDefault);
+      defaultPrinterCache = def ? def.name : '';
+    }
+    printerName = defaultPrinterCache;
   }
-  return openDrawer({ printerName, dataDir: DATA_DIR, testDir });
+  return getDrawerWorker().open({ printerName });
+}
+// Dinyalakan lebih dulu agar transaksi pertama pun langsung cepat
+function warmDrawer() {
+  if (process.platform !== 'win32' || process.env.POS_PRINT_TO_PDF) return;
+  try { getDrawerWorker().warm(); } catch (err) { console.error('[laci] pemanasan', err.message); }
 }
 // Transaksi tunai: laci terbuka otomatis (Pengaturan → "Buka laci otomatis"). Tidak menunggu, gagal tidak mengganggu transaksi.
 function autoDrawer() {
@@ -890,6 +903,7 @@ const handlers = {
   'settings:setVoidPin': (a) => svc.setVoidPin(a),
   'settings:clearVoidPin': () => svc.clearVoidPin(),
   'settings:save': async (a) => {
+    defaultPrinterCache = null;
     const own = {};
     for (const k of PRINTER_KEYS) if (a[k] !== undefined) own[k] = ['auto_print', 'drawer_auto'].includes(k) ? (a[k] === true || a[k] === '1' ? '1' : '0') : String(a[k]);
     if (own.paper_width && !['58', '80'].includes(own.paper_width)) throw userError('Lebar kertas harus 58 mm atau 80 mm.');
@@ -1209,9 +1223,11 @@ if (!app.requestSingleInstanceLock()) {
     }
     Menu.setApplicationMenu(null);
     createWindow();
+    setTimeout(warmDrawer, 3000);
   });
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => {
+    if (drawerWorker) drawerWorker.stop();
     if (server) server.close();
     clearOpenDir();
   });

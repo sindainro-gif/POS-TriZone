@@ -4,7 +4,7 @@
 // Laci yang terbuka otomatis saat Bayar tetap diatur oleh driver printer, bukan dari sini.
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 // ESC p m t1 t2: pulsa ke pin 2 (m=0) lalu pin 5 (m=1) agar cocok untuk semua jenis laci; pin yang tidak tersambung diabaikan
 const KICK = Buffer.from([0x1b, 0x70, 0x00, 0x19, 0xfa, 0x1b, 0x70, 0x01, 0x19, 0xfa]);
@@ -101,7 +101,11 @@ async function openDrawer({ printerName, dataDir, testDir, platform = process.pl
     console.error('[laci]', err.message, err.stderr || '');
     throw userErr('Laci tidak bisa dibuka: perintah ke printer gagal dijalankan. Coba lagi, atau buka laci dengan kunci.');
   }
-  const res = String(out).split(/\r?\n/).pop().trim();
+  return interpret(String(out).split(/\r?\n/).pop().trim(), name);
+}
+
+// Balasan kelas C# → hasil / pesan untuk kasir
+function interpret(res, name) {
   if (res === 'ok') return { ok: true, printer: name };
   console.error('[laci]', name, res);
   throw userErr(/^open:/.test(res)
@@ -109,4 +113,107 @@ async function openDrawer({ printerName, dataDir, testDir, platform = process.pl
     : `Laci tidak bisa dibuka: printer nota "${name}" tidak merespons (mati / kabel lepas). Periksa printer, lalu coba lagi.`);
 }
 
-module.exports = { openDrawer, KICK, RAW_PRINT_PS, DLL_NAME, encodePs };
+// ---------------------------------------------------------------- Pekerja yang tetap menyala
+// Menyalakan PowerShell + memuat kelas C# makan ±1–3 detik. Supaya laci terbuka seketika saat Bayar,
+// satu proses PowerShell dibiarkan menyala dan menunggu perintah lewat stdin:
+//   kirim  "id|nama printer (base64 UTF-8)|data (base64)"   balas  "id|ok" / "id|open:1801" / ...
+// Bila pekerja mati / macet, perintah dicoba sekali dengan cara lama (openDrawer) dan pekerja dinyalakan lagi nanti.
+const LOADER_PS = `${RAW_PRINT_PS.split('\nWrite-Output ([PosRawPrint]')[0]}\n`;
+const WORKER_PS = `${LOADER_PS}${String.raw`[Console]::Out.WriteLine('ready')
+[Console]::Out.Flush()
+while ($true) {
+  $line = [Console]::In.ReadLine()
+  if ($line -eq $null) { break }
+  $p = $line.Split('|')
+  if ($p.Length -lt 3) { continue }
+  try {
+    $name = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[1]))
+    $r = [PosRawPrint]::Send($name, [Convert]::FromBase64String($p[2]))
+  } catch { $r = 'err:' + ($_.Exception.Message -replace '[\r\n|]', ' ') }
+  [Console]::Out.WriteLine($p[0] + '|' + $r)
+  [Console]::Out.Flush()
+}
+`}`;
+
+function createDrawerWorker({ dataDir, spawnFn = spawn, oneShot = openDrawer, platform = process.platform, readyTimeout = 20000, timeout = 5000 } = {}) {
+  let child = null;
+  let ready = false;
+  let buf = '';
+  let seq = 0;
+  const pending = new Map();
+
+  function failAll(why) {
+    for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new Error(why)); }
+    pending.clear();
+  }
+  function stop() {
+    const c = child;
+    child = null;
+    ready = false;
+    buf = '';
+    if (c) { try { c.stdin.end(); } catch (_) { /* sudah tertutup */ } try { c.kill(); } catch (_) { /* sudah mati */ } }
+    failAll('pekerja laci dihentikan');
+  }
+  function onLine(line) {
+    if (line === 'ready') { ready = true; return; }
+    const k = line.indexOf('|');
+    if (k < 0) return;
+    const p = pending.get(line.slice(0, k));
+    if (!p) return;
+    pending.delete(line.slice(0, k));
+    clearTimeout(p.timer);
+    p.resolve(line.slice(k + 1).trim());
+  }
+  function start() {
+    if (child || platform !== 'win32') return;
+    const c = spawnFn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodePs(WORKER_PS)], {
+      env: { ...process.env, POS_RAW_DLL: dataDir ? path.join(dataDir, DLL_NAME) : '' },
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    child = c;
+    ready = false;
+    buf = '';
+    c.stdout.setEncoding('utf8');
+    c.stdout.on('data', (d) => {
+      if (child !== c) return;
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) onLine(line); }
+    });
+    c.stderr.on('data', (d) => console.error('[laci pekerja]', String(d).trim()));
+    c.stdin.on('error', () => { /* pekerja sudah mati: ditangani di exit */ });
+    const gone = () => { if (child === c) { child = null; ready = false; failAll('pekerja laci berhenti'); } };
+    c.on('exit', gone);
+    c.on('error', gone);
+  }
+  function send(name) {
+    start();
+    return new Promise((resolve, reject) => {
+      const id = String(++seq);
+      // Panggilan pertama ikut menunggu PowerShell menyala & kelas C# dimuat
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error('pekerja laci tidak menjawab')); stop(); }, ready ? timeout : readyTimeout);
+      pending.set(id, { resolve, reject, timer });
+      try {
+        child.stdin.write(`${id}|${Buffer.from(name, 'utf8').toString('base64')}|${KICK.toString('base64')}\n`);
+      } catch (err) { clearTimeout(timer); pending.delete(id); reject(err); }
+    });
+  }
+  async function open({ printerName } = {}) {
+    if (platform !== 'win32') throw userErr('Buka laci hanya tersedia di Windows.');
+    const name = String(printerName || '').trim();
+    if (!name) throw userErr('Printer nota belum dipilih. Atur printer nota di Pengaturan, lalu coba lagi.');
+    let res;
+    try {
+      res = await send(name);
+    } catch (err) {
+      console.error('[laci] pekerja gagal, pakai cara biasa:', err.message);
+      stop();
+      return oneShot({ printerName: name, dataDir, platform });
+    }
+    return interpret(res, name);
+  }
+  return { open, warm: start, stop, get running() { return !!child; }, get ready() { return ready; } };
+}
+
+module.exports = { openDrawer, createDrawerWorker, KICK, RAW_PRINT_PS, WORKER_PS, DLL_NAME, encodePs };
