@@ -231,7 +231,7 @@ const boleh = (h) => h.untuk === 'semua' || (h.untuk === 'kantor' && isKantor())
 // Homebase tidak bisa menghubungi PC toko langsung: tombol "Tarik data terbaru" membuat permintaan, Trizone (1.23.0)
 // memeriksanya tiap 5 menit lalu langsung mengirim penjualan & stok. Halaman memantau sampai datanya masuk.
 const PANTAU = { ms: 10000, batas: 10 * 60 * 1000 };
-const tombolTarik = (id, label = 'Tarik data terbaru') => `<button class="btn sm" id="${id}" title="Minta toko mengirim penjualan & stok sekarang (biasanya tiap 3 jam / tutup shift)">${esc(label)}</button>`;
+const tombolTarik = (id, label = 'Tarik data terbaru') => `<button class="btn sm" id="${id}" title="Minta toko mengirim penjualan & stok sekarang (biasanya tiap 30 menit / tutup shift)">${esc(label)}</button>`;
 
 async function tarikData(kode, onMasuk, btn) {
   if (btn) btn.disabled = true;
@@ -1878,7 +1878,7 @@ async function hToko(el) {
         <ol style="margin:0;padding-left:18px;display:grid;gap:6px">
           <li>Di PC Gudang toko, login Admin lalu buka <b>Pengaturan → Mother Base</b>.</li>
           <li>Isi alamat dan anon key di bawah, kode toko, dan <b>kunci toko</b> (dibuat owner di tabel atas).</li>
-          <li>Tekan <b>Simpan</b> lalu <b>Tes Koneksi</b>. Data terkirim otomatis saat aplikasi toko dibuka, tiap 3 jam, dan setiap tutup shift.</li>
+          <li>Tekan <b>Simpan</b> lalu <b>Tes Koneksi</b>. Data terkirim otomatis saat aplikasi toko dibuka, tiap 30 menit, dan setiap tutup shift.</li>
         </ol>
         <label class="f" style="margin-top:12px">Alamat mother base<div class="row"><input readonly value="${esc(CFG.url)}" style="flex:1"><button class="btn sm" data-salin="${esc(CFG.url)}">Salin</button></div></label>
         <label class="f" style="margin-top:8px">Anon key<div class="row"><input readonly value="${esc(CFG.anonKey)}" style="flex:1"><button class="btn sm" data-salin="${esc(CFG.anonKey)}">Salin</button></div></label></div>

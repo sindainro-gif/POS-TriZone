@@ -310,7 +310,7 @@ async function closeShiftLocal({ notes } = {}) {
   pruneReportsNow();
 
   // Kirim ke mother base SEKARANG dan tunggu jawabannya (bukan hanya dijadwalkan). Gagal = shift tetap tertutup,
-  // datanya aman di antrean dan dicoba lagi otomatis tiap 3 jam (atau Kirim Sekarang di Pengaturan).
+  // datanya aman di antrean dan dicoba lagi otomatis tiap 30 menit (atau Kirim Sekarang di Pengaturan).
   const motherbase = await sendShiftToMotherbase(uid);
 
   // Lokasi file laporan sengaja TIDAK dikirim ke layar (tersimpan di shift_history.report_dir)
@@ -345,7 +345,7 @@ async function sendShiftToMotherbase(uid) {
 
 // Ambil master barang dari mother base sekarang (tombol Perbarui Daftar Barang, semua peran, juga dari PC kasir).
 // Pesannya netral: pegawai tidak perlu tahu ada mother base. Detail error tersimpan di status untuk Admin.
-const MB_SEND_EVERY_MS = 3 * 60 * 60 * 1000; // kiriman berkala ke mother base: tiap 3 jam
+const MB_SEND_EVERY_MS = 30 * 60 * 1000; // kiriman berkala ke mother base: tiap 30 menit
 const MB_CEK_PERMINTAAN_MS = 5 * 60 * 1000; // cek tombol "Update penjualan" di homebase: tiap 5 menit
 
 // Tombol "Kirim Penjualan ke Kantor" (Kasir & Admin, juga dari PC kasir): kirim keadaan terkini sekarang.
@@ -1155,7 +1155,7 @@ async function startup() {
   };
   pruneHistory();
   setInterval(pruneHistory, 60 * 60 * 1000);
-  // Mother base: kirim data yang menunggu / berubah sekali setelah aplikasi dibuka, lalu tiap 3 jam
+  // Mother base: kirim data yang menunggu / berubah sekali setelah aplikasi dibuka, lalu tiap 30 menit
   // (tutup shift mengirim langsung). Master barang TIDAK diambil berkala: hanya saat buka shift
   // (pullMasterOnShiftOpen) atau tombol manual. Semua berjalan di latar dan tidak menghentikan kasir.
   const mbTick = () => mb.tick({ pullMaster: false }).catch((err) => console.error('[mother base]', err));
