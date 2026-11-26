@@ -236,7 +236,42 @@ app.on('browser-window-created', (_e, win) => {
       if (!/Transaksi Berhasil/.test(receiptTitle)) throw new Error('Enter di Uang Diterima tidak membayar');
       if (await run(`document.querySelector('#coQty').textContent + '/' + document.querySelector('#coKinds').textContent`) !== '0/0') throw new Error('jumlah barang tidak kembali 0 setelah bayar');
       await shot('03-kasir-struk');
-      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      // Scanner (ketikan sangat cepat + Enter) saat jendela Transaksi Berhasil masih terbuka: jendela tertutup dan barang
+      // langsung masuk (dulu scan pertama hanya menutup jendela, barang baru masuk di scan kedua)
+      const key = (keyCode, ch) => {
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode });
+        if (ch) win.webContents.sendInputEvent({ type: 'char', keyCode: ch });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode });
+      };
+      const scanKeys = async (code) => { for (const ch of code) { key(ch, ch); await wait(2); } key('Return', '\r'); await wait(700); };
+      const coState = () => run(`({ cart: [...document.querySelectorAll('#cartBody tr')].map((t) => t.dataset.sku + 'x' + t.querySelector('[data-act=qty]').value).join(','),
+        focus: document.activeElement.id, modal: (document.querySelector('#modalRoot .modal-head') || {}).innerText || '',
+        qty: document.querySelector('#qtyInput').value, cash: document.querySelector('#cashInput').value })`);
+      win.focus();
+      await scanKeys('8990001112223');
+      const scanModal = await coState();
+      // Barcode yang jatuh ke kolom Jumlah / Uang Diterima: pindah ke kolom scan, isi kolom tetap, tidak langsung dibayar
+      await run(`document.querySelector('#qtyInput').focus()`);
+      await scanKeys('8990001112223');
+      const scanQty = await coState();
+      await run(`(() => { const c = document.querySelector('#cashInput'); c.value = '50.000'; c.dispatchEvent(new Event('input')); c.focus(); })()`);
+      await scanKeys('8991234567890');
+      const scanCash = await coState();
+      console.log('scan di luar kolom scan:', JSON.stringify({ scanModal, scanQty, scanCash }));
+      if (scanModal.cart !== 'SBN-005x1' || scanModal.modal || scanModal.focus !== 'scanInput') throw new Error('scan saat jendela Transaksi Berhasil terbuka tidak masuk keranjang');
+      if (scanQty.cart !== 'SBN-005x2' || scanQty.qty !== '1' || scanQty.focus !== 'scanInput') throw new Error('barcode yang ter-scan ke kolom Jumlah tidak dipindah ke kolom scan');
+      if (scanCash.cart !== 'MNM-001x1,SBN-005x2' || scanCash.cash !== '50.000' || scanCash.modal) throw new Error('barcode yang ter-scan ke Uang Diterima tidak dipindah ke kolom scan');
+      // Uang Diterima tidak wajar (kembalian > Rp 1 juta) → dialog periksa dulu, kursor di Batal
+      await run(`(() => { const c = document.querySelector('#cashInput'); c.value = '8.990.001.112.223'; c.dispatchEvent(new Event('input'));
+        c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await wait(300);
+      const bigCash = await run(`({ title: (document.querySelector('#modalRoot .modal-head') || {}).innerText || '', focus: document.activeElement.innerText })`);
+      await run(`document.querySelector('#modalRoot .modal-foot .btn.ghost').click()`);
+      await wait(300);
+      console.log('uang tidak wajar:', JSON.stringify(bigCash));
+      if (!/Periksa Uang Diterima/.test(bigCash.title) || bigCash.focus !== 'Batal' || (await coState()).cart !== 'MNM-001x1,SBN-005x2') throw new Error('uang diterima tidak wajar seharusnya ditanyakan dulu');
+      await run(`(() => { while (document.querySelector('#cartBody [data-act=del]')) document.querySelector('#cartBody [data-act=del]').click();
+        const c = document.querySelector('#cashInput'); c.value = ''; c.dispatchEvent(new Event('input')); })()`);
 
       svc.createTransfer({ sku: 'MNM-001', from_zone: 'floor', to_zone: 'damaged', qty: 1, reason: 'Pecah terinjak' });
       if (svc.getProduct('SNK-010').floor_stock !== -7) throw new Error(`display toko Keripik seharusnya -7: ${svc.getProduct('SNK-010').floor_stock}`);

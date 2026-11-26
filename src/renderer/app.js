@@ -338,25 +338,38 @@ const voice = (() => {
 views.checkout = (() => {
   const cart = []; // {sku, name, barcode, unit_price, qty, floor_stock, warehouse_stock, damaged_stock, min_floor_alert}
   const METHOD = 'Tunai'; // satu-satunya metode pembayaran di kasir
+  const BIG_CHANGE = 1000000; // kembalian di atas ini perlu dipastikan kasir
   let busy = false;
   const scan = $('#scanInput');
   const qtyInput = $('#qtyInput');
   const cashInput = $('#cashInput');
 
   // Kolom Jumlah: isi → Enter → pindah ke kolom barcode; kembali ke 1 setelah barang masuk
+  const MAX_QTY = 9999; // lebih dari ini hampir pasti barcode yang ter-scan ke kolom Jumlah
   const resetQty = () => { qtyInput.value = '1'; };
   function readQty() {
     const n = Number(String(qtyInput.value).trim());
-    if (Number.isInteger(n) && n >= 1) return n;
+    if (Number.isInteger(n) && n >= 1 && n <= MAX_QTY) return n;
     sound('err');
-    toast('Jumlah minimal 1.', 'err');
+    toast(n > MAX_QTY ? `Jumlah terlalu besar (maksimal ${num(MAX_QTY)}).` : 'Jumlah minimal 1.', 'err');
     qtyInput.focus();
     return 0;
   }
+  // Proses isi kolom scan seperti scanner menekan Enter
+  const submitScan = () => scan.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   qtyInput.addEventListener('focus', () => qtyInput.select());
   qtyInput.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
+    const v = String(qtyInput.value).trim();
+    // Barcode ter-scan ke kolom Jumlah (scanner yang mengetik lambat): diproses sebagai scan dengan Jumlah 1
+    if (v.length > String(MAX_QTY).length) {
+      resetQty();
+      scan.value = v;
+      scan.focus();
+      submitScan();
+      return;
+    }
     if (!readQty()) return;
     scan.focus();
     scan.select();
@@ -483,7 +496,11 @@ views.checkout = (() => {
   function setQty(sku, qty) {
     const line = cart.find((l) => l.sku === sku);
     if (!line) return;
-    if (!Number.isInteger(qty) || qty < 1) { render(); return; }
+    if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY) {
+      if (qty > MAX_QTY) { sound('err'); toast(`Jumlah terlalu besar (maksimal ${num(MAX_QTY)}).`, 'err'); }
+      render();
+      return;
+    }
     if (qty > line.floor_stock) showAlert(oversellMsg(line, qty), 'warn');
     else hideAlert();
     line.qty = qty;
@@ -584,6 +601,17 @@ views.checkout = (() => {
       cashInput.focus();
       return;
     }
+    // Kembalian tidak wajar (mis. barcode ter-scan ke kolom Uang Diterima): minta kasir memastikan dulu
+    const cash = moneyVal(cashInput);
+    if (cash - total() > BIG_CHANGE) {
+      busy = true; // F9 / Enter berulang selama dialog terbuka tidak membuka dialog kedua
+      const asked = confirmDialog('Periksa Uang Diterima', `Uang diterima <b>${rp(cash)}</b> untuk total belanja <b>${rp(total())}</b>,
+        kembalian <b>${rp(cash - total())}</b>. Sudah benar?`, { okLabel: 'Ya, Bayar' });
+      $('#modalRoot .modal-foot .btn.ghost')?.focus(); // Enter = Batal (aman bila tidak sengaja)
+      const ok = await asked;
+      busy = false;
+      if (!ok) { cashInput.focus(); cashInput.select(); return; }
+    }
     busy = true;
     updateChange();
     try {
@@ -639,6 +667,7 @@ views.checkout = (() => {
         { label: state.settings.auto_print !== '0' ? 'Cetak Ulang Nota' : 'Cetak Nota', kind: 'ghost', onClick: ({ close }) => printNota(r, close) },
         { label: 'Transaksi Baru <kbd>Enter</kbd>', kind: 'primary', onClick: ({ close }) => close() },
       ],
+      onOpen: (el) => el.classList.add('scan-through'), // scan barang berikutnya = Transaksi Baru + barang masuk
     });
   }
 
@@ -872,6 +901,7 @@ views.checkout = (() => {
         },
         { label: 'Transaksi Baru <kbd>Enter</kbd>', kind: 'primary' },
       ],
+      onOpen: (el) => el.classList.add('scan-through'),
     });
   }
 
@@ -898,6 +928,52 @@ views.checkout = (() => {
   function focusScan() {
     if (state.view === 'checkout' && state.shift && !$('#modalRoot').children.length) scan.focus();
   }
+
+  // ---- Hasil scan yang jatuh di luar kolom scan tetap masuk keranjang.
+  // Scanner = "keyboard" yang mengetik sangat cepat lalu Enter. Tanpa ini, scan pertama setelah Bayar hilang
+  // (hanya menutup jendela Transaksi Berhasil), dan barcode yang masuk ke kolom Jumlah / Uang Diterima jadi angka.
+  //  - Kursor di tombol / area kosong / jendela Transaksi Berhasil: ketikan langsung dipindah ke kolom scan.
+  //  - Kursor di kolom angka (Jumlah, Uang Diterima, jumlah di keranjang): bila ≥ SCAN_MIN karakter datang
+  //    beruntun < SCAN_GAP_MS (jauh lebih cepat dari tangan manusia), isi kolom dikembalikan dan barcode pindah ke kolom scan.
+  const SCAN_GAP_MS = 50;
+  const SCAN_MIN = 4;
+  let burst = null; // { el, before, chars, last }
+  const isNumberField = (el) => el === qtyInput || el === cashInput || !!(el && el.matches && el.matches('#cartBody [data-act=qty]'));
+  const isTypingField = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+  function toScan(chars) {
+    scan.focus();
+    scan.value = chars;
+    scan.dispatchEvent(new Event('input'));
+  }
+  window.addEventListener('keydown', (e) => {
+    if (state.view !== 'checkout' || !state.shift || !canView('checkout')) return;
+    if (/^(Shift|CapsLock)$/.test(e.key)) return; // huruf besar dari scanner
+    if (e.key.length !== 1 || e.ctrlKey || e.altKey || e.metaKey || e.repeat || e.isComposing) { burst = null; return; }
+    const el = document.activeElement;
+    if (el === scan) { burst = null; return; }
+    const open = $('#modalRoot .modal-back');
+    if (open && !open.classList.contains('scan-through')) { burst = null; return; } // dialog lain (PIN, konfirmasi): biarkan
+    if (open || !isTypingField(el)) {
+      if (e.key === ' ') return; // Spasi = tekan tombol yang sedang terpilih
+      e.preventDefault();
+      e.stopPropagation();
+      if (open) open.querySelector('.modal-foot .btn.primary').click(); // = Transaksi Baru
+      toScan(e.key);
+      return;
+    }
+    if (!isNumberField(el)) { burst = null; return; }
+    if (!burst || burst.el !== el || e.timeStamp - burst.last > SCAN_GAP_MS) burst = { el, before: el.value, chars: '' };
+    burst.chars += e.key;
+    burst.last = e.timeStamp;
+    if (burst.chars.length < SCAN_MIN) return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.value = burst.before; // kembalikan isi kolom sebelum scan
+    el.dispatchEvent(new Event('input'));
+    const chars = burst.chars;
+    burst = null;
+    toScan(chars);
+  }, true);
 
   // Kolom scan selalu kembali fokus bila kasir mengklik area kosong
   $('#view-checkout').addEventListener('mouseup', (e) => {
