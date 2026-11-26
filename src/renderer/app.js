@@ -1478,6 +1478,8 @@ views.returns = (() => {
       loadHistory();
       loadSuppliers();
       loadShorts();
+      if (await confirmDialog('Unduh PDF Surat Retur', `Retur <b>${esc(d.doc_no)}</b> tersimpan. Unduh PDF Surat Retur untuk dicetak dan diserahkan ke supplier?`, { okLabel: 'Unduh PDF' })) await downloadPdf(d.id);
+      picker.focus();
     } catch (e) { toast(e.message, 'err', 6000); }
   });
 
@@ -1490,10 +1492,20 @@ views.returns = (() => {
         <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b>${cancelledTag(d)}${d.short_count ? ` <span class="badge bs" title="Stok asal tidak cukup saat retur">Stok kurang ${num(d.short_count)}</span>` : ''}${d.ref_no ? `<div class="psub">${esc(d.ref_no)}</div>` : ''}</td>
         <td>${esc(d.supplier_name || '-')}</td><td>${zoneTag(d.from_zone)}</td>
         <td class="r">${num(d.line_count)}</td><td class="r"><b>${num(d.total_qty)}</b></td><td>${esc(d.reason || '-')}</td>
-        <td><button class="btn sm ghost" data-id="${d.id}">Detail</button></td></tr>`).join('')
+        <td><div class="btn-row"><button class="btn sm ghost" data-pdf="${d.id}" title="Unduh PDF Surat Retur untuk dicetak">PDF</button><button class="btn sm ghost" data-id="${d.id}">Detail</button></div></td></tr>`).join('')
       : '<tr><td colspan="8" class="empty-row">Belum ada retur barang.</td></tr>';
   }
+  // PDF Surat Retur Barang (A4): disimpan lalu dibuka, siap dicetak toko
+  async function downloadPdf(id) {
+    try {
+      const r = await api('returns:pdf', { id });
+      if (r) toast(`PDF Surat Retur ${r.doc_no} tersimpan: ${r.path}`, 'ok', 7000);
+    } catch (err) { sound('err'); toast(err.message, 'err', 8000); }
+  }
+
   $('#rtHistory').addEventListener('click', async (e) => {
+    const pdf = e.target.closest('[data-pdf]');
+    if (pdf) { downloadPdf(Number(pdf.dataset.pdf)); return; }
     const b = e.target.closest('[data-id]');
     if (!b) return;
     const d = await api('transfers:get', { id: Number(b.dataset.id) });
@@ -1513,6 +1525,7 @@ views.returns = (() => {
           ${d.short.map((s) => `${esc(s.name || s.sku)}: stok sebelum ${num(s.stock)}, diretur ${num(s.qty)}, kurang ${num(s.short)}`).join('<br>')}</div>` : ''}
         ${!d.cancelled_at && d.cancel_block ? `<p class="muted small">${esc(d.cancel_block)}</p>` : ''}`,
       actions: [
+        { label: 'Unduh PDF', kind: 'ghost', onClick: () => downloadPdf(d.id) },
         ...(!d.cancel_block ? [{ label: 'Batalkan Retur', kind: 'danger', onClick: ({ close }) => { close(); cancelDoc(d); } }] : []),
         { label: 'Tutup', kind: 'primary' },
       ],

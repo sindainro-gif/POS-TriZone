@@ -26,6 +26,16 @@ for (const dirName of [LEGACY_REPORT, OLD_REPORT]) {
 
 const { getServices } = require('../src/main.js');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Teks di dalam file PDF (untuk memeriksa isi PDF yang dibuat aplikasi)
+function pdfText(file) {
+  const PDFParser = require('pdf2json');
+  return new Promise((resolve, reject) => {
+    const p = new PDFParser(null, true);
+    p.on('pdfParser_dataError', (e) => reject(e.parserError || e));
+    p.on('pdfParser_dataReady', () => resolve(p.getRawTextContent().replace(/\s+/g, ' ')));
+    p.parseBuffer(fs.readFileSync(file));
+  });
+}
 
 let started = false;
 app.on('browser-window-created', (_e, win) => {
@@ -419,6 +429,16 @@ app.on('browser-window-created', (_e, win) => {
       await wait(300);
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
       await wait(800);
+      // Setelah tersimpan: tawaran Unduh PDF Surat Retur → PDF A4 tersimpan (uji: folder unduhan, tanpa dialog)
+      process.env.POS_SAVE_DIR = path.join(out, 'unduhan');
+      const rtPdfAsk = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(2500);
+      const rtPdfFile = fs.readdirSync(process.env.POS_SAVE_DIR).find((n) => /^Surat_Retur_RB-\d{8}-001\.pdf$/.test(n));
+      const rtPdfText = rtPdfFile ? await pdfText(path.join(process.env.POS_SAVE_DIR, rtPdfFile)) : '';
+      console.log('PDF Surat Retur:', rtPdfAsk, rtPdfFile, JSON.stringify(rtPdfText.slice(0, 300)));
+      if (!/Unduh PDF Surat Retur/.test(rtPdfAsk) || !rtPdfFile || !/SURAT RETUR BARANG/.test(rtPdfText) || !/PT Renyah Abadi/.test(rtPdfText) || !/SR-0001/.test(rtPdfText)
+        || !/Keripik Kentang 68g/.test(rtPdfText) || !/Diterima oleh/.test(rtPdfText)) throw new Error('PDF Surat Retur tidak terbentuk / isinya tidak sesuai');
       const rtDoc = await run(`({ first: document.querySelector('#rtHistory tr').innerText.replace(/\\s+/g, ' '), left: document.querySelectorAll('#rtItems tr[data-i]').length })`);
       console.log('riwayat Retur teratas:', JSON.stringify(rtDoc));
       if (!/RB-\d{8}-001/.test(rtDoc.first) || !/PT Renyah Abadi/.test(rtDoc.first) || !/SR-0001/.test(rtDoc.first) || !/Cacat pabrik/.test(rtDoc.first) || rtDoc.left !== 0
@@ -444,6 +464,8 @@ app.on('browser-window-created', (_e, win) => {
       await shot('04h-retur-stok-kurang');
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
       await wait(900);
+      await run(`document.querySelector('#modalRoot .btn.ghost').click()`); // tidak unduh PDF
+      await wait(300);
       const rtShort = await run(`({ first: document.querySelector('#rtHistory tr').innerText.replace(/\\s+/g, ' '), shorts: [...document.querySelectorAll('#rtShorts tr')].map((r) => r.innerText.replace(/\\s+/g, ' ')) })`);
       console.log('retur stok kurang:', JSON.stringify({ rtShortForm, rtShortConfirm, rtShort }));
       if (!/1 barang stok Gudang BS-nya tidak cukup/.test(rtShortForm.note) || !/KURANG/.test(rtShortForm.cell) || !/Sabun Mandi 85g: stok 3, diretur 5/.test(rtShortConfirm.text)

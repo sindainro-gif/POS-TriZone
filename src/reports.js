@@ -93,4 +93,55 @@ ${off.checks.map((c) => `<tr><td>${esc(c.receipt_no)}</td><td>${esc(c.created_at
 </body></html>`;
 }
 
-module.exports = { salesCsv, stockCsv, summaryHtml, SALES_HEADERS };
+// Surat Retur Barang (A4) untuk dicetak toko dan diserahkan ke supplier bersama barangnya.
+// doc = dokumen retur (getTransferDoc): doc_no, created_at, supplier_name, ref_no, from_zone, reason, items, cancelled_at
+const RETURN_FROM_LABEL = { damaged: 'Gudang BS', warehouse: 'Gudang Utama' };
+function returnDocHtml({ store = {}, doc, printedAt = '' }) {
+  const items = doc.items || [];
+  const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+  const unit = (i) => (i.pack_type === 'Coly' && i.pack_qty
+    ? `${num(i.pack_qty)} Coly <span class="muted">(isi ${num(i.qty / i.pack_qty)})</span>` : `${num(i.qty)} Biji`);
+  const tgl = String(doc.created_at || '').replace(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}).*$/, '$3-$2-$1 $4');
+  return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Surat Retur ${esc(doc.doc_no)}</title>
+<style>
+  body{font-family:"Segoe UI",Arial,sans-serif;color:#111;font-size:12px;margin:0}
+  .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:8px}
+  .store b{font-size:16px} .title{text-align:right} .title h1{font-size:20px;margin:0;letter-spacing:.5px} .title .no{font-size:14px;font-weight:700;margin-top:2px}
+  .muted{color:#555} .info{display:grid;grid-template-columns:1fr 1fr;gap:4px 28px;margin:12px 0}
+  .info div{display:flex;gap:8px;border-bottom:1px dotted #bbb;padding:3px 0} .info span{min-width:120px;color:#444}
+  table{width:100%;border-collapse:collapse;margin-top:6px} th,td{border:1px solid #999;padding:5px 6px;text-align:left;vertical-align:top}
+  th{background:#eee} .r{text-align:right} .c{text-align:center} .mono{font-family:Consolas,monospace}
+  .tot td{font-weight:700;background:#f6f6f6}
+  .sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;margin-top:36px;text-align:center}
+  .sign .line{margin-top:64px;border-top:1px solid #111;padding-top:3px}
+  .batal{border:3px solid #c00;color:#c00;font-size:20px;font-weight:800;text-align:center;padding:6px;margin:10px 0}
+  .foot{margin-top:24px;font-size:10px;color:#666}
+</style></head><body>
+<div class="head">
+  <div class="store"><b>${esc(store.store_name || 'Toko')}</b><div class="muted">${esc(store.store_address || '').replace(/\n/g, '<br>')}</div></div>
+  <div class="title"><h1>SURAT RETUR BARANG</h1><div class="no mono">${esc(doc.doc_no)}</div></div>
+</div>
+${doc.cancelled_at ? `<div class="batal">DIBATALKAN — retur ini tidak berlaku${doc.cancel_reason ? ` (${esc(doc.cancel_reason)})` : ''}</div>` : ''}
+<div class="info">
+  <div><span>Tanggal</span><b>${esc(tgl)}</b></div>
+  <div><span>Kepada (Supplier)</span><b>${esc(doc.supplier_name || '-')}</b></div>
+  <div><span>No. Dokumen Retur</span><b>${esc(doc.ref_no || '-')}</b></div>
+  <div><span>Diambil dari</span><b>${esc(RETURN_FROM_LABEL[doc.from_zone] || doc.from_zone || '-')}</b></div>
+  <div style="grid-column:1 / span 2"><span>Alasan retur</span><b>${esc(doc.reason || '-')}</b></div>
+</div>
+<table>
+  <tr><th class="c" style="width:32px">No</th><th style="width:110px">Kode Item</th><th style="width:120px">Barcode</th><th>Nama Barang</th><th class="r" style="width:120px">Jumlah</th><th class="r" style="width:80px">Total Biji</th></tr>
+  ${items.map((i, n) => `<tr><td class="c">${n + 1}</td><td class="mono">${esc(i.sku)}</td><td class="mono">${esc(i.barcode || '')}</td><td>${esc(i.name || i.sku)}</td>
+    <td class="r">${unit(i)}</td><td class="r">${num(i.qty)}</td></tr>`).join('')}
+  <tr class="tot"><td colspan="5">${num(items.length)} jenis barang</td><td class="r">${num(totalQty)}</td></tr>
+</table>
+<div class="sign">
+  <div>Dibuat oleh<div class="line">Nama &amp; tanda tangan</div></div>
+  <div>Diserahkan oleh<div class="line">Nama &amp; tanda tangan</div></div>
+  <div>Diterima oleh (Supplier)<div class="line">Nama, tanda tangan &amp; cap</div></div>
+</div>
+<div class="foot">Dicetak ${esc(printedAt)} · POS Tri-Zone</div>
+</body></html>`;
+}
+
+module.exports = { salesCsv, stockCsv, summaryHtml, returnDocHtml, SALES_HEADERS };

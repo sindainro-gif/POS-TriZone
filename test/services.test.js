@@ -218,6 +218,13 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     // Retur yang dibatalkan tidak ikut di catatan
     d3.tx(() => d3.run("UPDATE stock_transfer_docs SET cancelled_at = '2026-01-01 10:00:00' WHERE id = ?", [r4.id]));
     assert.deepStrictEqual(s.listReturnShorts().map((x) => x.doc_no), [r5.doc_no, r3.doc_no]);
+    // PDF Surat Retur (HTML A4): kop toko, supplier, barang, satuan Coly, tanda dibatalkan
+    const { returnDocHtml } = require('../src/reports');
+    const rc = s.createReturnDoc({ from_zone: 'warehouse', supplier_name: 'PT <Coly>', items: [{ sku: 'RB-A', qty: 24, pack_type: 'Coly', pack_qty: 2 }] });
+    const html = returnDocHtml({ store: { store_name: 'Toko Uji', store_address: 'Jl. A\nKota B' }, doc: s.getTransferDoc({ id: rc.id }) });
+    for (const re of [/SURAT RETUR BARANG/, /Toko Uji/, /Jl\. A<br>Kota B/, new RegExp(rc.doc_no), /PT &lt;Coly&gt;/, /Gudang Utama/, /Retur Uji/, /2 Coly/, /isi 12/, /Diterima oleh/]) assert.match(html, re);
+    assert.doesNotMatch(html, /DIBATALKAN/);
+    assert.match(returnDocHtml({ doc: { ...s.getTransferDoc({ id: rc.id }), cancelled_at: '2026-01-01 10:00:00', cancel_reason: 'salah' } }), /DIBATALKAN/);
   });
 
   await t('batal mutasi & penerimaan: PIN Admin / Pembatalan, stok dikembalikan (boleh minus), 7 hari, dokumen otomatis ditolak', async () => {

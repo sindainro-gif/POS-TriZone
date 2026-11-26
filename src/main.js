@@ -599,6 +599,36 @@ async function saveWorkbook({ title, fileName, sheets, csv = true }) {
   return filePath;
 }
 
+// Unduh PDF Surat Retur Barang (A4) untuk dicetak toko. Setelah disimpan, PDF langsung dibuka (siap dicetak).
+// POS_SAVE_DIR = uji otomatis tanpa dialog; POS_NO_SHELL_OPEN = tidak membuka program lain.
+async function saveReturnPdf({ id } = {}) {
+  const doc = await svc.getTransferDoc({ id: Number(id) || 0 });
+  if (!doc || doc.to_zone !== 'supplier') throw userError('Dokumen retur tidak ditemukan.');
+  const fileName = `Surat_Retur_${doc.doc_no}.pdf`;
+  let filePath;
+  if (process.env.POS_SAVE_DIR) {
+    fs.mkdirSync(process.env.POS_SAVE_DIR, { recursive: true });
+    filePath = path.join(process.env.POS_SAVE_DIR, fileName);
+  } else {
+    const r = await dialog.showSaveDialog(win, {
+      title: `Simpan PDF Surat Retur ${doc.doc_no}`,
+      defaultPath: path.join(app.getPath('documents'), fileName),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (r.canceled || !r.filePath) return null;
+    filePath = r.filePath;
+  }
+  const store = await getSettings();
+  const pdf = await htmlToPdf(reports.returnDocHtml({ store, doc, printedAt: localNow().slice(0, 16) }));
+  try {
+    fs.writeFileSync(filePath, pdf);
+  } catch (err) {
+    throw userError(`PDF tidak bisa disimpan (${err.code === 'EBUSY' || err.code === 'EPERM' ? 'file sedang dibuka program lain' : err.message}). Tutup file itu atau pilih nama lain.`);
+  }
+  if (process.env.POS_NO_SHELL_OPEN !== '1') shell.openPath(filePath).catch(() => {});
+  return { path: filePath, doc_no: doc.doc_no };
+}
+
 function saveTemplate({ title, fileName, sheet, headers, sample, textCols }) {
   return saveWorkbook({ title, fileName, sheets: [{ name: sheet, headers, rows: sample, textCols }] });
 }
@@ -847,7 +877,7 @@ const ACCESS = {
   // Tambah / ubah / hapus barang & unduh template: hanya Admin (tidak tercantum = Admin). Gudang hanya lewat Import
   'products:import': GUDANG,
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
-  'returns:create': RETUR, 'returns:list': RETUR, 'returns:suppliers': RETUR, 'returns:shorts': RETUR, // Retur Barang ke supplier
+  'returns:create': RETUR, 'returns:list': RETUR, 'returns:suppliers': RETUR, 'returns:shorts': RETUR, 'returns:pdf': RETUR, // Retur Barang ke supplier
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
   'transfers:cancel': GUDANG, 'receptions:cancel': GUDANG, // batal dokumen dengan PIN Admin / PIN Pembatalan
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
@@ -1081,6 +1111,7 @@ const handlers = {
   'returns:list': (a = {}) => svc.listTransferDocs({ ...a, returns: true }),
   'returns:suppliers': () => svc.returnSuppliers(),
   'returns:shorts': (a) => svc.listReturnShorts(a),
+  'returns:pdf': (a) => saveReturnPdf(a), // PDF Surat Retur Barang (A4) untuk dicetak
   'transfers:cancel': (a = {}) => withPinDelay(() => svc.cancelTransferDoc({ ...a, requested_by: session.name })),
   'receptions:cancel': (a = {}) => withPinDelay(() => svc.cancelReception({ ...a, requested_by: session.name })),
 
