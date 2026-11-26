@@ -1020,7 +1020,9 @@ const handlers = {
   },
   'orders:cancel': async (a = {}) => {
     try {
-      return await svc.cancelOrder({ ...a, requested_by: session.name });
+      const o = await svc.cancelOrder({ ...a, requested_by: session.name });
+      if (o && o.cancel_deposit === 'kembali') autoDrawer(); // deposit dikembalikan dari laci
+      return o;
     } catch (err) {
       if (/PIN Admin \/ PIN Pembatalan salah/.test(err.message)) await new Promise((r) => setTimeout(r, 800)); // memperlambat tebak-tebakan PIN
       throw err;

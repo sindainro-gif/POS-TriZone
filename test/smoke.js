@@ -273,6 +273,17 @@ app.on('browser-window-created', (_e, win) => {
       await wait(300);
       console.log('uang tidak wajar:', JSON.stringify(bigCash));
       if (!/Periksa Uang Diterima/.test(bigCash.title) || bigCash.focus !== 'Batal' || (await coState()).cart !== 'MNM-001x1,SBN-005x2') throw new Error('uang diterima tidak wajar seharusnya ditanyakan dulu');
+      // Nama diketik cepat lalu langsung Enter (daftar saran belum muncul): satu hasil → langsung masuk, bukan "tidak ditemukan";
+      // barcode angka terbaca sebagian tetap "tidak ditemukan" (tidak memilih barang lain)
+      await run(`views.checkout.focusScan()`);
+      for (const ch of 'kerip') { key(ch, ch); await wait(30); }
+      key('Return', '\r');
+      await wait(900);
+      const typedName = await coState();
+      await scanKeys('89912345');
+      const partial = await run(`({ cart: [...document.querySelectorAll('#cartBody tr')].length, alert: document.querySelector('#stockAlert').innerText })`);
+      console.log('ketik nama + Enter:', JSON.stringify({ typedName, partial }));
+      if (typedName.cart !== 'SNK-010x1,MNM-001x1,SBN-005x2' || partial.cart !== 3 || !/tidak ditemukan/.test(partial.alert)) throw new Error('ketik nama lalu Enter / scan sebagian tidak sesuai');
       await run(`(() => { while (document.querySelector('#cartBody [data-act=del]')) document.querySelector('#cartBody [data-act=del]').click();
         const c = document.querySelector('#cashInput'); c.value = ''; c.dispatchEvent(new Event('input')); })()`);
 

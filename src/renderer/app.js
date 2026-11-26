@@ -214,16 +214,23 @@ function makePicker(input, { onPick, onEnter, onNotFound, queryOf = (v) => v, li
       const raw = input.value.trim();
       if (!raw) return;
       // Prioritas: kecocokan persis barcode/SKU (hasil scan) — baru kemudian pilihan di daftar
-      const exact = await api('products:findByCode', { code: queryOf(raw).trim() }).catch(() => null);
+      const q = queryOf(raw).trim();
+      const exact = await api('products:findByCode', { code: q }).catch(() => null);
       if (exact) { pick(exact); return; }
-      if (open && idx >= 0 && items[idx]) { pick(items[idx]); return; }
-      if (onEnter) { hide(); onEnter(raw); return; }
-      await load();
-      if (items.length === 1) pick(items[0]);
-      else if (!items.length) {
-        sound('err');
-        if (onNotFound) { hide(); onNotFound(queryOf(raw).trim()); } else toast(`Barang "${raw}" tidak ditemukan.`, 'err');
-      }
+      // Daftar yang tampil harus untuk teks yang sama (bukan sisa ketikan sebelumnya)
+      if (open && shownQ === q && idx >= 0 && items[idx]) { pick(items[idx]); return; }
+      // Nama diketik lalu Enter sebelum daftar saran sempat muncul: cari dulu. Satu hasil = langsung dipilih;
+      // beberapa hasil = daftar ditampilkan (pilih dengan panah lalu Enter); tidak ada = "tidak ditemukan".
+      // Kasir (onEnter): hanya teks berhuruf, supaya barcode angka yang tidak dikenal / terbaca sebagian tidak memilih barang lain.
+      const byName = q.length >= 2 && (!onEnter || /[a-z]/i.test(q));
+      if (byName) await load();
+      if (input.value.trim() !== raw) return; // kasir sudah mengetik lagi
+      if (byName && items.length === 1 && shownQ === q) { pick(items[0]); return; }
+      if (byName && items.length > 1 && shownQ === q) return;
+      hide();
+      if (onEnter) { onEnter(raw); return; }
+      sound('err');
+      if (onNotFound) onNotFound(q); else toast(`Barang "${raw}" tidak ditemukan.`, 'err');
     }
   });
   box.addEventListener('mousedown', (e) => {
