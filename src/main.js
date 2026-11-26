@@ -259,6 +259,30 @@ async function reprintReceipt({ receipt_no, approver_pin, receipt } = {}) {
   return { receipt_no: no, approved_by: approved.approved_by };
 }
 
+// Bukti pesanan: sama seperti nota. Cetak pertama (otomatis saat pesanan dibuat / tombol Cetak Bukti bila cetak
+// otomatis mati) bebas; cetak berikutnya = cetak ulang yang perlu PIN Admin / PIN Pembatalan, bertanda CETAK ULANG.
+const printedOrders = new Set();
+async function printOrderOnce(order) {
+  const no = String((order && order.order_no) || '');
+  if (!no) throw userError('Pesanan tidak ditemukan.');
+  if (printedOrders.has(no)) throw userError('Bukti pesanan ini sudah dicetak. Cetak ulang perlu PIN Admin / PIN Pembatalan.');
+  printedOrders.add(no);
+  try {
+    return await printOrder(order);
+  } catch (err) {
+    printedOrders.delete(no);
+    throw err;
+  }
+}
+async function reprintOrder({ order_no, approver_pin } = {}) {
+  const no = String(order_no || '').trim();
+  if (!no) throw userError('Nomor pesanan tidak ada.');
+  const approved = await withPinDelay(() => svc.checkApprover({ approver_pin }));
+  await printOrder(await svc.getOrder({ order_no: no }), { reprint: true });
+  printedOrders.add(no);
+  return { order_no: no, approved_by: approved.approved_by };
+}
+
 // ---------------------------------------------------------------- Cetak label barcode
 const SAMPLE_PRODUCT = { sku: 'MNM-001', barcode: '8991234567890', name: 'Air Mineral 600ml', brand: 'Segar', unit_price: 3500 };
 
@@ -834,7 +858,7 @@ const ACCESS = {
   'shift:open': KASIR, 'shift:summary': KASIR, 'shift:receipt': KASIR, 'shift:close': KASIR, 'shift:printRecap': KASIR,
   // Pesanan: semua peran boleh melihat (Gudang tahu barang yang perlu dipesan); membuat/mengambil/membatalkan = Kasir & Admin
   'orders:list': ALL, 'orders:get': ALL, 'orders:due': ALL,
-  'orders:create': KASIR, 'orders:complete': KASIR, 'orders:cancel': KASIR, 'orders:print': KASIR,
+  'orders:create': KASIR, 'orders:complete': KASIR, 'orders:cancel': KASIR, 'orders:print': KASIR, 'orders:reprint': KASIR,
   'sales:checkout': KASIR, 'receipt:print': KASIR, 'receipt:reprint': KASIR, 'receipt:void': KASIR,
   'drawer:open': KASIR, // buka laci kasir (tanpa transaksi, tidak dicatat)
 };
@@ -979,7 +1003,7 @@ const handlers = {
   'orders:create': async (a = {}) => {
     const o = await runMain('main.createOrder', { ...a, created_by: session.name });
     if ((await getSettings()).auto_print !== '0') {
-      try { await printOrder(o); } catch (err) { o.print_error = err.message; }
+      try { await printOrderOnce(o); } catch (err) { o.print_error = err.message; }
     }
     if (o.deposit > 0) autoDrawer(); // deposit masuk laci
     return o;
@@ -1000,7 +1024,8 @@ const handlers = {
       throw err;
     }
   },
-  'orders:print': async ({ order_no, reprint = true } = {}) => printOrder(await svc.getOrder({ order_no }), { reprint: reprint !== false }),
+  'orders:print': async ({ order_no } = {}) => printOrderOnce(await svc.getOrder({ order_no })), // cetak pertama saja
+  'orders:reprint': (a) => reprintOrder(a), // perlu PIN Admin / PIN Pembatalan
   'products:pullMaster': () => runMain('main.pullMaster'),
   'mb:sendSales': () => runMain('main.sendSales'),
   'sales:checkout': async (a) => {

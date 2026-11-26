@@ -1024,7 +1024,26 @@ app.on('browser-window-created', (_e, win) => {
           if (!fs.existsSync(path.join(out, `${ord.order_no}.pdf`))) throw new Error('bukti pesanan tidak tercetak');
           if (await run(`document.querySelectorAll('#cartBody tr').length`)) throw new Error('keranjang tidak dikosongkan setelah pesanan');
           await shot('13b-pesanan-tersimpan');
-          await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+          // Cetak ulang bukti pesanan (akun Kasir) perlu PIN: tombol → kotak PIN; PIN kasir ditolak; PIN Pembatalan menyetujui
+          const buktiPdf = path.join(out, `${ord.order_no}.pdf`);
+          const bk0 = fs.statSync(buktiPdf).mtimeMs;
+          await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Cetak Ulang Bukti').click()`);
+          await wait(800);
+          const bkTitle = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);
+          if (!/Cetak Ulang Bukti Pesanan/.test(bkTitle) || !(await run(`!!document.querySelector('#rpPin')`)) || fs.statSync(buktiPdf).mtimeMs !== bk0) {
+            throw new Error(`cetak ulang bukti pesanan tidak meminta PIN (${bkTitle})`);
+          }
+          await run(`(() => { document.querySelector('#rpPin').value = '222222'; document.querySelector('#modalRoot .modal-foot .btn.primary').click(); })()`);
+          await wait(1600);
+          if (fs.statSync(buktiPdf).mtimeMs !== bk0 || !(await run(`!!document.querySelector('#rpPin')`))) throw new Error('PIN kasir seharusnya tidak bisa menyetujui cetak ulang bukti pesanan');
+          await run(`(() => { document.querySelector('#rpPin').value = '765432'; document.querySelector('#modalRoot .modal-foot .btn.primary').click(); })()`);
+          await wait(1500);
+          if (fs.statSync(buktiPdf).mtimeMs === bk0 || await run(`!!document.querySelector('#modalRoot .modal-back')`)) throw new Error('cetak ulang bukti pesanan dengan PIN Pembatalan gagal');
+          // Perintah langsung juga ditolak tanpa PIN
+          const bkAgain = await run(`window.posBridge.call('orders:print', { order_no: ${JSON.stringify(ord.order_no)}, reprint: false })`);
+          const bkNoPin = await run(`window.posBridge.call('orders:reprint', { order_no: ${JSON.stringify(ord.order_no)} })`);
+          console.log('cetak ulang bukti tanpa PIN:', bkAgain.error, '·', bkNoPin.error);
+          if (bkAgain.ok || !/sudah dicetak/.test(bkAgain.error) || bkNoPin.ok || !/PIN Admin \/ PIN Pembatalan salah/.test(bkNoPin.error)) throw new Error('bukti pesanan bisa dicetak ulang tanpa PIN');
           // Pesanan lain jatuh tempo hari ini → angka di menu Pesanan
           const ord2 = svc.createOrder({ items: [{ sku: 'MNM-001', qty: 6 }], customer_name: 'Pak Joko', customer_phone: '0899', pickup_date: today, deposit: 10000, created_by: 'Rina' });
           await run(`go('orders')`);
@@ -1070,6 +1089,15 @@ app.on('browser-window-created', (_e, win) => {
           const noPin = await run(`window.posBridge.call('receipt:reprint', { receipt_no: ${JSON.stringify(done.receipt_no)} })`);
           console.log('cetak ulang tanpa PIN:', again.error, '·', noPin.error);
           if (again.ok || !/sudah dicetak/.test(again.error) || noPin.ok || !/PIN Admin \/ PIN Pembatalan salah/.test(noPin.error)) throw new Error('nota bisa dicetak ulang tanpa PIN');
+          await wait(300);
+          // Detail pesanan: tombol cetak bukti = cetak ulang (kotak PIN), tidak langsung mencetak
+          await run(`document.querySelector('#orBody tr[data-no="${ord2.order_no}"] [data-act=detail]').click()`);
+          await wait(800);
+          await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Cetak Ulang Bukti').click()`);
+          await wait(500);
+          const listBk = await run(`({ title: (document.querySelector('#modalRoot .modal-head') || {}).innerText || '', pin: !!document.querySelector('#rpPin') })`);
+          if (!/Cetak Ulang Bukti Pesanan/.test(listBk.title) || !listBk.pin || fs.existsSync(path.join(out, `${ord2.order_no}.pdf`))) throw new Error(`Cetak Ulang Bukti di daftar Pesanan tidak meminta PIN (${listBk.title})`);
+          await run(`document.querySelector('#modalRoot .modal-foot .btn.ghost').click()`);
           await wait(300);
           // Batalkan pesanan kedua: PIN kasir ditolak; PIN Pembatalan menyetujui; deposit dikembalikan dari laci
           await run(`document.querySelector('#orBody tr[data-no="${ord2.order_no}"] [data-act=detail]').click()`);

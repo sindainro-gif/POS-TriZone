@@ -60,13 +60,13 @@ const cancelInfo = (d) => (d.cancelled_at
   : '');
 const cancelledTag = (d) => (d.cancelled_at ? ' <span class="badge bs">Dibatalkan</span>' : '');
 
-// Cetak ulang nota: perlu PIN Admin / PIN Pembatalan (kepala toko); nota tercetak dengan tanda CETAK ULANG.
-// receipt (opsional) = data nota dari layar transaksi berhasil.
-function reprintNota(receipt_no, receipt) {
+// Cetak ulang nota / bukti pesanan: perlu PIN Admin / PIN Pembatalan (kepala toko), tercetak dengan tanda CETAK ULANG.
+// what = 'Nota' / 'Bukti pesanan'; submit(pin) → Promise.
+function reprintDialog({ title, what, submit, done }) {
   modal({
-    title: `Cetak Ulang Nota ${receipt_no}`,
-    body: `<p class="muted small" style="margin-top:0">Nota ini sudah pernah dicetak. Cetak ulang perlu persetujuan <b>PIN Admin</b> atau
-        <b>PIN Pembatalan</b> (kepala toko), dan nota tercetak dengan tanda <b>CETAK ULANG</b>.</p>
+    title,
+    body: `<p class="muted small" style="margin-top:0">${what} ini sudah pernah dicetak. Cetak ulang perlu persetujuan <b>PIN Admin</b> atau
+        <b>PIN Pembatalan</b> (kepala toko), dan ${what.toLowerCase()} tercetak dengan tanda <b>CETAK ULANG</b>.</p>
       <div class="field"><label>PIN Admin / PIN Pembatalan *</label><input id="rpPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>`,
     actions: [
       { label: 'Batal', kind: 'ghost' },
@@ -76,9 +76,9 @@ function reprintNota(receipt_no, receipt) {
         onClick: async ({ close, el, btn }) => {
           btn.disabled = true;
           try {
-            await api('receipt:reprint', { receipt_no, approver_pin: $('#rpPin', el).value, receipt });
+            await submit($('#rpPin', el).value);
             close();
-            toast(`Nota ${receipt_no} dicetak ulang.`, 'ok');
+            toast(done, 'ok');
           } catch (err) {
             btn.disabled = false;
             sound('err');
@@ -94,22 +94,38 @@ function reprintNota(receipt_no, receipt) {
   });
 }
 
-// Tombol cetak di layar transaksi berhasil: cetak pertama langsung (mis. cetak otomatis mati / printer tadi gagal);
-// bila nota sudah tercetak, minta PIN untuk cetak ulang.
-async function printNota(r, close) {
+// receipt (opsional) = data nota dari layar transaksi berhasil
+const reprintNota = (receipt_no, receipt) => reprintDialog({
+  title: `Cetak Ulang Nota ${receipt_no}`,
+  what: 'Nota',
+  submit: (approver_pin) => api('receipt:reprint', { receipt_no, approver_pin, receipt }),
+  done: `Nota ${receipt_no} dicetak ulang.`,
+});
+const reprintProof = (order_no) => reprintDialog({
+  title: `Cetak Ulang Bukti Pesanan ${order_no}`,
+  what: 'Bukti pesanan',
+  submit: (approver_pin) => api('orders:reprint', { order_no, approver_pin }),
+  done: `Bukti pesanan ${order_no} dicetak ulang.`,
+});
+
+// Tombol cetak di layar transaksi berhasil / pesanan tersimpan: cetak pertama langsung (mis. cetak otomatis mati /
+// printer tadi gagal); bila sudah tercetak, minta PIN untuk cetak ulang.
+async function printFirstOrPin(print, reprint, okMsg, close) {
   try {
-    await api('receipt:print', r);
-    toast('Nota dicetak.', 'ok');
+    await print();
+    toast(okMsg, 'ok');
   } catch (e) {
     if (/sudah dicetak/.test(e.message)) {
       if (close) close();
-      reprintNota(r.receipt_no, r);
+      reprint();
       return;
     }
     sound('err');
     toast(e.message, 'err', 8000);
   }
 }
+const printNota = (r, close) => printFirstOrPin(() => api('receipt:print', r), () => reprintNota(r.receipt_no, r), 'Nota dicetak.', close);
+const printProofFirst = (order_no, close) => printFirstOrPin(() => api('orders:print', { order_no }), () => reprintProof(order_no), 'Bukti pesanan dicetak.', close);
 
 // Tanggal lokal komputer ini (YYYY-MM-DD), bisa digeser beberapa hari
 function ymd(offsetDays = 0) {
@@ -895,9 +911,7 @@ views.checkout = (() => {
         {
           label: auto ? 'Cetak Ulang Bukti' : 'Cetak Bukti',
           kind: 'ghost',
-          onClick: () => api('orders:print', { order_no: o.order_no, reprint: auto })
-            .then(() => toast('Bukti pesanan dicetak.', 'ok'))
-            .catch((err) => { sound('err'); toast(err.message, 'err', 8000); }),
+          onClick: ({ close }) => printProofFirst(o.order_no, close), // sudah tercetak → perlu PIN
         },
         { label: 'Transaksi Baru <kbd>Enter</kbd>', kind: 'primary' },
       ],
@@ -2533,10 +2547,6 @@ views.orders = (() => {
     if (b.dataset.act === 'take') openTake(no);
   });
 
-  const printProof = (order_no, reprint = true) => api('orders:print', { order_no, reprint })
-    .then(() => toast('Bukti pesanan dicetak.', 'ok'))
-    .catch((err) => { sound('err'); toast(err.message, 'err', 8000); });
-
   function itemsTable(o) {
     return `<table class="receipt-lines">${o.items.map((l) => `<tr><td>${esc(l.name)}</td><td class="r muted">${num(l.qty)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>`;
   }
@@ -2570,7 +2580,8 @@ views.orders = (() => {
         <div class="kv"><span>Deposit</span><b>${rp(o.deposit)}</b></div>
         ${open ? `<div class="kv total-line"><span>Sisa bayar saat diambil</span><span>${rp(o.remaining)}</span></div>` : ''}`,
       actions: [
-        ...(canAct() ? [{ label: 'Cetak Bukti', kind: 'ghost', onClick: () => printProof(o.order_no) }] : []),
+        // Bukti sudah tercetak saat pesanan dibuat: cetak lagi dari daftar = cetak ulang (PIN)
+        ...(canAct() ? [{ label: 'Cetak Ulang Bukti', kind: 'ghost', onClick: ({ close }) => { close(); reprintProof(o.order_no); } }] : []),
         ...(canAct() && open ? [{ label: 'Batalkan Pesanan', kind: 'danger', onClick: ({ close }) => { close(); openCancel(o); } }] : []),
         ...(canAct() && open ? [{ label: 'Ambil Barang', kind: 'primary', onClick: ({ close }) => { close(); openTake(o.order_no); } }] : []),
         { label: 'Tutup', kind: canAct() && open ? 'ghost' : 'primary' },
