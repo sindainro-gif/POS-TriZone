@@ -236,6 +236,9 @@ app.on('browser-window-created', (_e, win) => {
       if (!/Transaksi Berhasil/.test(receiptTitle)) throw new Error('Enter di Uang Diterima tidak membayar');
       if (await run(`document.querySelector('#coQty').textContent + '/' + document.querySelector('#coKinds').textContent`) !== '0/0') throw new Error('jumlah barang tidak kembali 0 setelah bayar');
       await shot('03-kasir-struk');
+      // Nota sudah tercetak otomatis → jendela Transaksi Berhasil tanpa tombol Cetak Ulang Nota
+      const paidBtns = await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].map((b) => b.innerText.replace(/\\s+/g, ' ').trim())`);
+      if (JSON.stringify(paidBtns) !== JSON.stringify(['Transaksi Baru Enter'])) throw new Error(`jendela Transaksi Berhasil seharusnya tanpa tombol cetak: ${JSON.stringify(paidBtns)}`);
       // Scanner (ketikan sangat cepat + Enter) saat jendela Transaksi Berhasil masih terbuka: jendela tertutup dan barang
       // langsung masuk (dulu scan pertama hanya menutup jendela, barang baru masuk di scan kedua)
       const key = (keyCode, ch) => {
@@ -1024,9 +1027,18 @@ app.on('browser-window-created', (_e, win) => {
           if (!fs.existsSync(path.join(out, `${ord.order_no}.pdf`))) throw new Error('bukti pesanan tidak tercetak');
           if (await run(`document.querySelectorAll('#cartBody tr').length`)) throw new Error('keranjang tidak dikosongkan setelah pesanan');
           await shot('13b-pesanan-tersimpan');
-          // Cetak ulang bukti pesanan (akun Kasir) perlu PIN: tombol → kotak PIN; PIN kasir ditolak; PIN Pembatalan menyetujui
+          // Bukti sudah tercetak otomatis → jendela Pesanan Tersimpan tanpa tombol cetak
+          const savedBtns = await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].map((b) => b.innerText.replace(/\\s+/g, ' ').trim())`);
+          if (JSON.stringify(savedBtns) !== JSON.stringify(['Transaksi Baru Enter'])) throw new Error(`jendela Pesanan Tersimpan seharusnya tanpa tombol cetak: ${JSON.stringify(savedBtns)}`);
+          await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+          await wait(300);
+          // Cetak ulang bukti pesanan (akun Kasir) lewat menu Pesanan perlu PIN: tombol → kotak PIN; PIN kasir ditolak; PIN Pembatalan menyetujui
           const buktiPdf = path.join(out, `${ord.order_no}.pdf`);
           const bk0 = fs.statSync(buktiPdf).mtimeMs;
+          await run(`go('orders')`);
+          await wait(1000);
+          await run(`document.querySelector('#orBody tr[data-no="${ord.order_no}"] [data-act=detail]').click()`);
+          await wait(800);
           await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Cetak Ulang Bukti').click()`);
           await wait(800);
           const bkTitle = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);
@@ -1067,9 +1079,18 @@ app.on('browser-window-created', (_e, win) => {
             throw new Error('pengambilan pesanan dari Gudang Utama tidak sesuai');
           }
           if (!fs.existsSync(path.join(out, `${done.receipt_no}.pdf`))) throw new Error('nota pengambilan pesanan tidak tercetak');
-          // Cetak ulang nota perlu PIN: tombol di layar → kotak PIN; PIN kasir ditolak; PIN Pembatalan menyetujui
+          // Nota sudah tercetak otomatis → jendela Pesanan Diambil tanpa tombol cetak
+          const takenBtns = await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].map((b) => b.innerText.trim())`);
+          if (JSON.stringify(takenBtns) !== JSON.stringify(['Selesai'])) throw new Error(`jendela Pesanan Diambil seharusnya tanpa tombol cetak: ${JSON.stringify(takenBtns)}`);
+          await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+          await wait(300);
+          // Cetak ulang nota lewat Laporan Shift perlu PIN: tombol → kotak PIN; PIN kasir ditolak; PIN Pembatalan menyetujui
           const notaPdf = path.join(out, `${done.receipt_no}.pdf`);
           const mt0 = fs.statSync(notaPdf).mtimeMs;
+          await run(`go('shift')`);
+          await wait(1000);
+          await run(`[...document.querySelectorAll('#shReceipts [data-r]')].find((b) => b.dataset.r === ${JSON.stringify(done.receipt_no)}).click()`);
+          await wait(800);
           await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Cetak Ulang Nota').click()`);
           await wait(800);
           const rpTitle = await run(`(document.querySelector('#modalRoot .modal-head') || {}).innerText || ''`);
@@ -1091,6 +1112,8 @@ app.on('browser-window-created', (_e, win) => {
           if (again.ok || !/sudah dicetak/.test(again.error) || noPin.ok || !/PIN Admin \/ PIN Pembatalan salah/.test(noPin.error)) throw new Error('nota bisa dicetak ulang tanpa PIN');
           await wait(300);
           // Detail pesanan: tombol cetak bukti = cetak ulang (kotak PIN), tidak langsung mencetak
+          await run(`go('orders')`);
+          await wait(1000);
           await run(`document.querySelector('#orBody tr[data-no="${ord2.order_no}"] [data-act=detail]').click()`);
           await wait(800);
           await run(`[...document.querySelectorAll('#modalRoot .modal-foot .btn')].find((b) => b.textContent === 'Cetak Ulang Bukti').click()`);

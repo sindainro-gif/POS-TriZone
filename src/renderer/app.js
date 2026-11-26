@@ -109,11 +109,17 @@ const reprintProof = (order_no) => reprintDialog({
 });
 
 // Tombol cetak di layar transaksi berhasil / pesanan tersimpan: cetak pertama langsung (mis. cetak otomatis mati /
-// printer tadi gagal); bila sudah tercetak, minta PIN untuk cetak ulang.
-async function printFirstOrPin(print, reprint, okMsg, close) {
+// printer tadi gagal); setelah tercetak tombolnya hilang (cetak ulang lewat Laporan Shift / menu Pesanan, perlu PIN).
+async function printFirstOrPin(print, reprint, okMsg, close, btn) {
   try {
     await print();
     toast(okMsg, 'ok');
+    if (btn && btn.isConnected) {
+      const foot = btn.parentElement;
+      btn.remove();
+      const primary = foot.querySelector('.btn.primary');
+      if (primary) primary.focus();
+    }
   } catch (e) {
     if (/sudah dicetak/.test(e.message)) {
       if (close) close();
@@ -124,8 +130,20 @@ async function printFirstOrPin(print, reprint, okMsg, close) {
     toast(e.message, 'err', 8000);
   }
 }
-const printNota = (r, close) => printFirstOrPin(() => api('receipt:print', r), () => reprintNota(r.receipt_no, r), 'Nota dicetak.', close);
-const printProofFirst = (order_no, close) => printFirstOrPin(() => api('orders:print', { order_no }), () => reprintProof(order_no), 'Bukti pesanan dicetak.', close);
+// Cetak otomatis gagal setelah jendela transaksi tampil: tambahkan tombol cetak ke jendela itu (bila masih terbuka)
+function addPrintButton(m, label, onClick) {
+  if (!m || !m.el.isConnected) return;
+  const foot = $('.modal-foot', m.el);
+  if (!foot || foot.querySelector('[data-print-btn]')) return;
+  const b = document.createElement('button');
+  b.className = 'btn ghost';
+  b.dataset.printBtn = '1';
+  b.textContent = label;
+  b.addEventListener('click', () => onClick(m.close, b));
+  foot.insertBefore(b, foot.firstChild);
+}
+const printNota = (r, close, btn) => printFirstOrPin(() => api('receipt:print', r), () => reprintNota(r.receipt_no, r), 'Nota dicetak.', close, btn);
+const printProofFirst = (order_no, close, btn) => printFirstOrPin(() => api('orders:print', { order_no }), () => reprintProof(order_no), 'Bukti pesanan dicetak.', close, btn);
 
 // Tanggal lokal komputer ini (YYYY-MM-DD), bisa digeser beberapa hari
 function ymd(offsetDays = 0) {
@@ -641,8 +659,8 @@ views.checkout = (() => {
       cashInput.value = '';
       hideAlert();
       render();
-      showReceipt(res);
-      if (state.settings.auto_print !== '0') printReceipt(res);
+      const shown = showReceipt(res);
+      if (state.settings.auto_print !== '0') printReceipt(res, shown);
       if (res.short && res.short.length) {
         toast(`${res.short.length} barang display tokonya habis (${res.short.map((s) => `${s.name}: ${s.floor_stock}`).join(', ')}) — sudah masuk Saran Restock gudang.`, 'warn', 9000);
       }
@@ -665,14 +683,22 @@ views.checkout = (() => {
     render();
   }
 
-  // Cetak ke printer nota tanpa dialog; transaksi tetap sah walau printer bermasalah
-  async function printReceipt(r) {
-    try { await api('receipt:print', r); } catch (e) { sound('err'); toast(e.message, 'err', 8000); }
+  // Cetak ke printer nota tanpa dialog; transaksi tetap sah walau printer bermasalah.
+  // Gagal (printer mati / kertas habis) → tombol "Cetak Nota" muncul di jendela transaksi berhasil.
+  async function printReceipt(r, m) {
+    try {
+      await api('receipt:print', r);
+    } catch (e) {
+      sound('err');
+      toast(e.message, 'err', 8000);
+      addPrintButton(m, 'Cetak Nota', (close, btn) => printNota(r, close, btn));
+    }
   }
 
+  // Tombol cetak hanya bila cetak otomatis mati; nota yang sudah tercetak otomatis dicetak ulang lewat Laporan Shift (PIN)
   function showReceipt(r) {
     sound('ok');
-    modal({
+    return modal({
       title: r.offline ? `MODE DARURAT — Transaksi Disimpan — ${r.receipt_no}` : `Transaksi Berhasil — ${r.receipt_no}`,
       body: `${r.offline ? `<div class="alert warn" style="margin-bottom:10px"><b>MODE DARURAT.</b> Transaksi tersimpan di komputer ini dan dikirim otomatis ke PC Server saat koneksi kembali.${(r.warnings || []).length ? `<br>Perlu dicek: ${r.warnings.map(esc).join(' ')}` : ''}</div>` : ''}
         <div class="alert ok" style="text-align:center">
@@ -680,7 +706,7 @@ views.checkout = (() => {
           <div class="small">${esc(r.payment_method)} · Total ${rp(r.total)}${r.payment_method === 'Tunai' ? ` · Diterima ${rp(r.cash_received)}` : ''}</div></div>
         <table class="receipt-lines">${r.lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="r muted">${num(l.qty)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>`,
       actions: [
-        { label: state.settings.auto_print !== '0' ? 'Cetak Ulang Nota' : 'Cetak Nota', kind: 'ghost', onClick: ({ close }) => printNota(r, close) },
+        ...(state.settings.auto_print === '0' ? [{ label: 'Cetak Nota', kind: 'ghost', onClick: ({ close, btn }) => printNota(r, close, btn) }] : []),
         { label: 'Transaksi Baru <kbd>Enter</kbd>', kind: 'primary', onClick: ({ close }) => close() },
       ],
       onOpen: (el) => el.classList.add('scan-through'), // scan barang berikutnya = Transaksi Baru + barang masuk
@@ -898,7 +924,8 @@ views.checkout = (() => {
 
   function showOrderSaved(o) {
     sound('ok');
-    const auto = state.settings.auto_print !== '0';
+    // Bukti sudah tercetak otomatis → tanpa tombol cetak (cetak ulang lewat menu Pesanan, perlu PIN)
+    const needPrint = state.settings.auto_print === '0' || !!o.print_error;
     modal({
       title: `Pesanan Tersimpan — ${o.order_no}`,
       body: `<div class="alert ok or-big"><div class="muted small">No. Pesanan</div><div class="no mono">${esc(o.order_no)}</div>
@@ -908,11 +935,7 @@ views.checkout = (() => {
         <div class="kv total-line"><span>Sisa bayar saat diambil</span><span>${rp(o.remaining)}</span></div>
         <p class="muted small">Stok belum dipotong. Pesanan bisa dilihat di menu <b>Pesanan Pelanggan</b>.</p>`,
       actions: [
-        {
-          label: auto ? 'Cetak Ulang Bukti' : 'Cetak Bukti',
-          kind: 'ghost',
-          onClick: ({ close }) => printProofFirst(o.order_no, close), // sudah tercetak → perlu PIN
-        },
+        ...(needPrint ? [{ label: 'Cetak Bukti', kind: 'ghost', onClick: ({ close, btn }) => printProofFirst(o.order_no, close, btn) }] : []),
         { label: 'Transaksi Baru <kbd>Enter</kbd>', kind: 'primary' },
       ],
       onOpen: (el) => el.classList.add('scan-through'),
@@ -2706,7 +2729,8 @@ views.orders = (() => {
           <div class="small">Total ${rp(rc.total)} · Deposit ${rp(rc.deposit)} · Diterima ${rp(rc.cash_received)}</div></div>
         <table class="receipt-lines">${rc.lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="r muted">${num(l.qty)} × ${rp(l.unit_price)}</td><td class="r">${rp(l.line_total)}</td></tr>`).join('')}</table>`,
       actions: [
-        { label: state.settings.auto_print !== '0' ? 'Cetak Ulang Nota' : 'Cetak Nota', kind: 'ghost', onClick: ({ close }) => printNota(rc, close) },
+        // Nota sudah tercetak otomatis → tanpa tombol cetak (cetak ulang lewat Laporan Shift, perlu PIN)
+        ...(state.settings.auto_print === '0' || r.print_error ? [{ label: 'Cetak Nota', kind: 'ghost', onClick: ({ close, btn }) => printNota(rc, close, btn) }] : []),
         { label: 'Selesai', kind: 'primary' },
       ],
     });
