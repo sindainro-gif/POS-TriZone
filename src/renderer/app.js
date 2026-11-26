@@ -1394,6 +1394,22 @@ views.returns = (() => {
     }).join('')
       : '<tr><td colspan="7" class="empty-row">Belum ada barang. Scan barang, isi Jumlah, lalu Enter.</td></tr>';
     $('#rtTotal').textContent = `${items.length} baris · ${num(items.reduce((s, i) => s + pieces(i), 0))} Biji`;
+    const short = shortList();
+    const note = $('#rtShortNote');
+    note.classList.toggle('hidden', !short.length);
+    note.innerHTML = short.length ? `<b>${num(short.length)} barang stok ${esc(state.meta.zones[from.value])}-nya tidak cukup</b> — retur tetap bisa disimpan:
+      stoknya menjadi minus dan barangnya dicatat di <b>Catatan Barang Stok Tidak Cukup</b>.` : '';
+  }
+  // Barang di form yang stok asalnya tidak cukup (barang sama di baris Biji & Coly dijumlahkan)
+  function shortList() {
+    const col = ZONE_COL[from.value];
+    const out = new Map();
+    for (const i of items) {
+      const o = out.get(i.product.sku) || { name: i.product.name, stock: Number(i.product[col]) || 0, qty: 0 };
+      o.qty += pieces(i);
+      out.set(i.product.sku, o);
+    }
+    return [...out.values()].filter((o) => o.stock < o.qty);
   }
   from.addEventListener('change', render);
   $('#rtItems').addEventListener('click', (e) => {
@@ -1435,8 +1451,12 @@ views.returns = (() => {
     if (!items.length) { toast('Tambahkan minimal satu barang ke list.', 'err'); picker.focus(); return; }
     const total = items.reduce((s, i) => s + pieces(i), 0);
     const supplier = $('#rtSupplier').value.trim();
-    const ok = await confirmDialog('Simpan Retur', `Simpan retur dari <b>${esc(state.meta.zones[from.value])}</b>${supplier ? ` ke <b>${esc(supplier)}</b>` : ' ke supplier'}
-      berisi ${items.length} baris (${num(total)} Biji)? Stok ${esc(state.meta.zones[from.value])} akan langsung berkurang.`, { okLabel: 'Simpan' });
+    const zone = esc(state.meta.zones[from.value]);
+    const short = shortList();
+    const shortHtml = short.length ? `<div class="alert warn" style="margin-top:10px"><b>Stok ${zone} tidak cukup untuk ${num(short.length)} barang</b> — tetap diretur,
+        stoknya menjadi minus dan dicatat:<br>${short.map((s) => `${esc(s.name)}: stok ${num(s.stock)}, diretur ${num(s.qty)}`).join('<br>')}</div>` : '';
+    const ok = await confirmDialog('Simpan Retur', `Simpan retur dari <b>${zone}</b>${supplier ? ` ke <b>${esc(supplier)}</b>` : ' ke supplier'}
+      berisi ${items.length} baris (${num(total)} Biji)? Stok ${zone} akan langsung berkurang.${shortHtml}`, { okLabel: short.length ? 'Tetap Simpan' : 'Simpan' });
     if (!ok) return;
     try {
       const d = await api('returns:create', {
@@ -1446,9 +1466,11 @@ views.returns = (() => {
           : { sku: i.product.sku, qty: i.qty })),
       });
       toast(`Retur ${d.doc_no} tersimpan: ${num(d.line_count)} baris, ${num(d.total_qty)} Biji.`, 'ok');
+      if (d.short && d.short.length) toast(`${num(d.short.length)} barang stoknya tidak cukup — dicatat di Catatan Barang Stok Tidak Cukup.`, 'warn', 7000);
       reset();
       loadHistory();
       loadSuppliers();
+      loadShorts();
     } catch (e) { toast(e.message, 'err', 6000); }
   });
 
@@ -1458,7 +1480,7 @@ views.returns = (() => {
   async function loadHistory() {
     const rows = await api('returns:list', { q: $('#rtSearch').value, limit: 300 });
     $('#rtHistory').innerHTML = rows.length ? rows.map((d) => `<tr class="${d.cancelled_at ? 'cancelled' : ''}">
-        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b>${cancelledTag(d)}${d.ref_no ? `<div class="psub">${esc(d.ref_no)}</div>` : ''}</td>
+        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b>${cancelledTag(d)}${d.short_count ? ` <span class="badge bs" title="Stok asal tidak cukup saat retur">Stok kurang ${num(d.short_count)}</span>` : ''}${d.ref_no ? `<div class="psub">${esc(d.ref_no)}</div>` : ''}</td>
         <td>${esc(d.supplier_name || '-')}</td><td>${zoneTag(d.from_zone)}</td>
         <td class="r">${num(d.line_count)}</td><td class="r"><b>${num(d.total_qty)}</b></td><td>${esc(d.reason || '-')}</td>
         <td><button class="btn sm ghost" data-id="${d.id}">Detail</button></td></tr>`).join('')
@@ -1480,6 +1502,8 @@ views.returns = (() => {
         ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td><td class="r"><b>${num(i.pack_type === 'Coly' ? i.pack_qty : i.qty)}</b></td>
           <td>${i.pack_type === 'Coly' ? `Coly <span class="muted">(isi ${num(i.qty / i.pack_qty)}) = ${num(i.qty)} Biji</span>` : 'Biji'}</td></tr>`).join('')}
         </tbody></table></div>
+        ${(d.short || []).length ? `<div class="alert warn" style="margin-top:10px"><b>Stok ${esc(state.meta.zones[d.from_zone] || d.from_zone)} tidak cukup saat retur:</b><br>
+          ${d.short.map((s) => `${esc(s.name || s.sku)}: stok sebelum ${num(s.stock)}, diretur ${num(s.qty)}, kurang ${num(s.short)}`).join('<br>')}</div>` : ''}
         ${!d.cancelled_at && d.cancel_block ? `<p class="muted small">${esc(d.cancel_block)}</p>` : ''}`,
       actions: [
         ...(!d.cancel_block ? [{ label: 'Batalkan Retur', kind: 'danger', onClick: ({ close }) => { close(); cancelDoc(d); } }] : []),
@@ -1498,8 +1522,18 @@ views.returns = (() => {
         await api('transfers:cancel', { id: d.id, reason, approver_pin });
         toast(`Retur ${d.doc_no} dibatalkan, stok dikembalikan.`, 'ok', 6000);
         loadHistory();
+        loadShorts();
       },
     });
+  }
+
+  async function loadShorts() {
+    const rows = await api('returns:shorts', { limit: 300 }).catch(() => []);
+    $('#rtShorts').innerHTML = rows.length ? rows.map((r) => `<tr>
+        <td class="muted">${fmtTime(r.created_at)}</td><td class="mono"><b>${esc(r.doc_no)}</b></td><td>${zoneTag(r.from_zone)}</td>
+        <td class="mono">${esc(r.sku)}</td><td>${esc(r.name || r.sku)}</td><td class="r">${num(r.stock)}</td><td class="r">${num(r.qty)}</td>
+        <td class="r diff-neg"><b>${num(r.short)}</b></td></tr>`).join('')
+      : '<tr><td colspan="8" class="empty-row">Belum ada retur dengan stok tidak cukup.</td></tr>';
   }
 
   async function loadSuppliers() {
@@ -1518,6 +1552,7 @@ views.returns = (() => {
     render();
     loadHistory();
     loadSuppliers();
+    loadShorts();
     setTimeout(() => picker.focus(), 30);
   }
   return { show };

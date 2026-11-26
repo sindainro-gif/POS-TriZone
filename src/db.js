@@ -332,7 +332,9 @@ const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfe
   // Penerimaan: received_at = tanggal barang diterima (diisi di form), entered_at = waktu dicatat di aplikasi
   ['stock_receptions', 'entered_at', 'DATETIME'],
   // Retur Barang (dokumen RB- ke Supplier): nama supplier & no. dokumen retur
-  ['stock_transfer_docs', 'supplier_name', 'TEXT'], ['stock_transfer_docs', 'ref_no', 'TEXT']];
+  ['stock_transfer_docs', 'supplier_name', 'TEXT'], ['stock_transfer_docs', 'ref_no', 'TEXT'],
+  // Retur: barang yang stok asalnya tidak cukup (JSON: sku, name, stock, qty, short)
+  ['stock_transfer_docs', 'short_json', 'TEXT']];
 
 // Tabel lama punya CHECK zona tanpa Gudang Shopee. SQLite tidak bisa mengubah CHECK,
 // jadi tabelnya dibangun ulang dari definisi lamanya (kolom tambahan ikut) dengan daftar zona baru.

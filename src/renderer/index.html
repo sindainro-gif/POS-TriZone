@@ -214,6 +214,7 @@
           <thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Jumlah</th><th>Satuan</th><th class="r">Stok Asal</th><th class="w-act"></th></tr></thead>
           <tbody id="rtItems"></tbody>
         </table></div>
+        <div id="rtShortNote" class="alert warn hidden" style="margin-top:10px"></div>
         <div class="field" style="margin-top:12px">
           <label>Alasan Retur <span class="muted">(opsional, berlaku untuk semua barang)</span></label>
           <input id="rtReason" maxlength="200" placeholder="Contoh: Cacat pabrik">
@@ -232,6 +233,14 @@
         <div class="tbl-wrap"><table class="tbl">
           <thead><tr><th>Waktu</th><th>No. Retur</th><th>Supplier</th><th>Dari</th><th class="r">Baris</th><th class="r">Total Biji</th><th>Alasan</th><th class="w-act"></th></tr></thead>
           <tbody id="rtHistory"></tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h2>Catatan Barang Stok Tidak Cukup</h2>
+        <p class="muted small">Barang yang tetap diretur walau stok asalnya tidak cukup. Stoknya menjadi minus: periksa fisik / lakukan stok opname untuk barang-barang ini. Retur yang dibatalkan tidak ikut.</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Waktu</th><th>No. Retur</th><th>Dari</th><th>Kode Item</th><th>Barang</th><th class="r">Stok Sebelum</th><th class="r">Diretur</th><th class="r">Kurang</th></tr></thead>
+          <tbody id="rtShorts"></tbody>
         </table></div>
       </div>
     </section>

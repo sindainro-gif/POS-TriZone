@@ -979,7 +979,9 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return getTransferDoc({ id });
   }
 
-  // Retur barang ke supplier (menu Retur Barang): dokumen RB-YYYYMMDD-001, stok asal langsung berkurang
+  // Retur barang ke supplier (menu Retur Barang): dokumen RB-YYYYMMDD-001, stok asal langsung berkurang.
+  // Stok asal tidak cukup tetap boleh (barang fisiknya ada): stok menjadi minus dan barangnya dicatat di dokumen
+  // (short_json: stok sebelum retur, jumlah diretur, kekurangan) untuk daftar "Barang Stok Tidak Cukup".
   function createReturnDoc({ from_zone, supplier_name, ref_no, reason, items = [] } = {}) {
     if (!RETURN_FROM.includes(from_zone)) fail('Asal stok retur harus Gudang BS atau Gudang Utama.');
     const supplier = toStr(supplier_name, 'Supplier', { max: 100 });
@@ -987,8 +989,31 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const why = toStr(reason, 'Alasan', { max: 200 });
     const lines = transferLines(items);
     const now = localNow();
-    const id = db.tx(() => writeTransferDoc(from_zone, 'supplier', why, lines, now, { prefix: 'RB', supplier_name: supplier, ref_no: ref }));
+    const id = db.tx(() => {
+      const col = ZONE_COL[from_zone];
+      const short = [];
+      for (const l of lines) {
+        const stock = Number((db.get(`SELECT ${col} AS n FROM inventory WHERE sku = ?`, [l.p.sku]) || {}).n) || 0;
+        if (stock < l.qty) short.push({ sku: l.p.sku, name: l.p.name, stock, qty: l.qty, short: l.qty - Math.max(0, stock) });
+      }
+      const did = writeTransferDoc(from_zone, 'supplier', why, lines, now, { prefix: 'RB', supplier_name: supplier, ref_no: ref, allowShort: true });
+      if (short.length) db.run('UPDATE stock_transfer_docs SET short_json = ? WHERE id = ?', [JSON.stringify(short), did]);
+      return did;
+    });
     return getTransferDoc({ id });
+  }
+
+  const shortOf = (d) => { try { return JSON.parse((d && d.short_json) || '[]') || []; } catch (_) { return []; } };
+
+  // Catatan barang yang stok asalnya tidak cukup saat retur (retur yang dibatalkan tidak ikut)
+  function listReturnShorts({ limit = 300 } = {}) {
+    const out = [];
+    for (const d of db.all(`SELECT id, doc_no, created_at, from_zone, supplier_name, short_json FROM stock_transfer_docs
+                            WHERE to_zone = 'supplier' AND short_json IS NOT NULL AND cancelled_at IS NULL ORDER BY id DESC LIMIT 1000`)) {
+      for (const s of shortOf(d)) out.push({ doc_id: d.id, doc_no: d.doc_no, created_at: d.created_at, from_zone: d.from_zone, supplier_name: d.supplier_name, ...s });
+      if (out.length >= Math.min(Number(limit) || 300, 2000)) break;
+    }
+    return out;
   }
 
   // Nama supplier yang pernah dipakai (retur & penerimaan) untuk pilihan cepat di form Retur Barang
@@ -1072,13 +1097,14 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
          SELECT 1 FROM stock_transfers t LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = d.id AND (p.name LIKE ? OR t.sku LIKE ?)))
        ORDER BY d.id DESC LIMIT ?`,
       [like, like, like, like, like, like, like, Math.min(Number(limit) || 200, 2000)],
-    );
+    ).map((d) => ({ ...d, short_count: shortOf(d).length }));
   }
 
   function getTransferDoc({ id } = {}) {
     const d = db.get('SELECT * FROM stock_transfer_docs WHERE id = ?', [id]);
     if (!d) fail('Dokumen mutasi tidak ditemukan.');
     d.cancel_block = transferCancelBlock(d);
+    d.short = shortOf(d); // retur: barang yang stok asalnya tidak cukup
     d.items = db.all(
       `SELECT t.sku, t.qty, COALESCE(t.pack_type, 'Biji') AS pack_type, COALESCE(t.pack_qty, t.qty) AS pack_qty, p.name, p.barcode FROM stock_transfers t
        LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = ? ORDER BY t.id`,
@@ -2077,7 +2103,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     createOrder, getOrder, listOrders, ordersDue, completeOrder, cancelOrder,
     archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,
-    createTransfer, listTransfers, createTransferDoc, createReturnDoc, returnSuppliers, listTransferDocs, getTransferDoc, cancelTransferDoc,
+    createTransfer, listTransfers, createTransferDoc, createReturnDoc, returnSuppliers, listReturnShorts, listTransferDocs, getTransferDoc, cancelTransferDoc,
     createReception, listReceptions, getReception, importReceptions, cancelReception,
     createOpname, listOpnames, getOpname, opnameSheet, planOpnameImport, importOpname,
     createReceptionDraft, listReceptionDrafts, countReceptionDrafts, processReceptionDraft, deleteReceptionDraft,

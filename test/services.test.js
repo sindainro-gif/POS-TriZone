@@ -116,7 +116,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
   });
 
   await t('mutasi melebihi stok asal ditolak & arah tidak valid ditolak', () => {
-    throwsMsg(() => svc.createReturnDoc({ from_zone: 'damaged', items: [{ sku: 'MNM-001', qty: 5 }] }), /tidak cukup/);
+    throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'warehouse', to_zone: 'damaged', qty: 99999 }), /tidak cukup/);
     // Gudang BS → Supplier pindah ke menu Retur Barang: tidak bisa lewat Mutasi
     throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'supplier', qty: 1 }), /Arah mutasi tidak valid/);
     throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'floor', qty: 1 }), /Arah mutasi tidak valid/);
@@ -188,7 +188,6 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.match(r2.doc_no, /-002$/);
     assert.deepStrictEqual(st(), [40, 5]);
     throwsMsg(() => s.createReturnDoc({ from_zone: 'floor', items: [{ sku: 'RB-A', qty: 1 }] }), /Gudang BS atau Gudang Utama/);
-    throwsMsg(() => s.createReturnDoc({ from_zone: 'damaged', items: [{ sku: 'RB-A', qty: 6 }] }), /Gudang BS untuk .* tidak cukup/);
     throwsMsg(() => s.createReturnDoc({ from_zone: 'damaged', items: [] }), /minimal satu barang/);
     // Mutasi biasa tetap bernomor MT-, riwayat Mutasi tanpa retur; riwayat Retur hanya dokumen ke Supplier
     const mt = s.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'RB-A', qty: 1 }] });
@@ -202,6 +201,23 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     const sent = s.mbBatch({ force: true }).dokumen.transfers.find((d) => d.doc_no === r1.doc_no);
     assert.deepStrictEqual([sent.to_zone, sent.reason, sent.supplier_name], ['supplier', 'Supplier: PT Plastik Jaya · No. SR-001 · Cacat pabrik', undefined]);
     assert.deepStrictEqual(sent.lines.map((l) => [l.sku, l.qty]), [['RB-A', 25]]);
+    assert.deepStrictEqual([r1.short, s.listReturnShorts()], [[], []]);
+    // Stok asal tidak cukup tetap boleh diretur: stok jadi minus, barangnya dicatat (yang cukup tidak ikut)
+    s.importRows([{ Barcode: '7880000000042', SKU: 'RB-B', Nama_Barang: 'Retur Uji B', Harga_Jual: 1000, Stok_Awal_BS: 2 }]);
+    const r3 = s.createReturnDoc({ from_zone: 'damaged', items: [{ sku: 'RB-A', qty: 6 }, { sku: 'RB-B', qty: 2 }] });
+    assert.deepStrictEqual([st(), s.getProduct('RB-B').damaged_stock], [[39, -1], 0]);
+    assert.deepStrictEqual(r3.short, [{ sku: 'RB-A', name: 'Retur Uji', stock: 5, qty: 6, short: 1 }]);
+    assert.strictEqual(s.listTransferDocs({ returns: true })[0].short_count, 1);
+    // Stok sudah minus: seluruh jumlah dicatat kurang; dari Gudang Utama juga boleh
+    const r4 = s.createReturnDoc({ from_zone: 'damaged', items: [{ sku: 'RB-A', qty: 2 }] });
+    assert.deepStrictEqual(r4.short.map((x) => [x.stock, x.qty, x.short]), [[-1, 2, 2]]);
+    const r5 = s.createReturnDoc({ from_zone: 'warehouse', items: [{ sku: 'RB-B', qty: 3 }] });
+    assert.deepStrictEqual([r5.short.map((x) => x.short), s.getProduct('RB-B').warehouse_stock], [[3], -3]);
+    assert.deepStrictEqual(s.listReturnShorts().map((x) => [x.doc_no, x.sku, x.from_zone, x.short]),
+      [[r5.doc_no, 'RB-B', 'warehouse', 3], [r4.doc_no, 'RB-A', 'damaged', 2], [r3.doc_no, 'RB-A', 'damaged', 1]]);
+    // Retur yang dibatalkan tidak ikut di catatan
+    d3.tx(() => d3.run("UPDATE stock_transfer_docs SET cancelled_at = '2026-01-01 10:00:00' WHERE id = ?", [r4.id]));
+    assert.deepStrictEqual(s.listReturnShorts().map((x) => x.doc_no), [r5.doc_no, r3.doc_no]);
   });
 
   await t('batal mutasi & penerimaan: PIN Admin / Pembatalan, stok dikembalikan (boleh minus), 7 hari, dokumen otomatis ditolak', async () => {

@@ -419,6 +419,26 @@ app.on('browser-window-created', (_e, win) => {
       await shot('04g-retur-detail');
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
       await wait(200);
+      // Stok Gudang BS tidak cukup (Sabun: BS 3, diretur 5): tetap bisa disimpan, stok jadi minus, dicatat
+      const bsSabun = svc.getProduct('SBN-005').damaged_stock;
+      await run(`(() => { const i = document.querySelector('#rtPicker'); i.focus(); i.value = '8990001112223'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await wait(400);
+      await run(`(() => { const q = document.querySelector('#rtQty'); q.value = '${bsSabun + 2}'; q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await wait(200);
+      const rtShortForm = await run(`({ note: document.querySelector('#rtShortNote').classList.contains('hidden') ? '' : document.querySelector('#rtShortNote').innerText,
+        cell: document.querySelector('#rtItems tr[data-i] td:nth-child(6)').innerText })`);
+      await run(`document.querySelector('#rtSubmit').click()`);
+      await wait(300);
+      const rtShortConfirm = await run(`({ text: document.querySelector('#modalRoot .modal-body').innerText, ok: document.querySelector('#modalRoot .btn.primary').innerText })`);
+      await shot('04h-retur-stok-kurang');
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(900);
+      const rtShort = await run(`({ first: document.querySelector('#rtHistory tr').innerText.replace(/\\s+/g, ' '), shorts: [...document.querySelectorAll('#rtShorts tr')].map((r) => r.innerText.replace(/\\s+/g, ' ')) })`);
+      console.log('retur stok kurang:', JSON.stringify({ rtShortForm, rtShortConfirm, rtShort }));
+      if (!/1 barang stok Gudang BS-nya tidak cukup/.test(rtShortForm.note) || !/KURANG/.test(rtShortForm.cell) || !/Sabun Mandi 85g: stok 3, diretur 5/.test(rtShortConfirm.text)
+        || rtShortConfirm.ok !== 'Tetap Simpan' || !/Stok kurang 1/.test(rtShort.first) || rtShort.shorts.length !== 1 || !/SBN-005 Sabun Mandi 85g 3 5 2$/.test(rtShort.shorts[0])
+        || svc.getProduct('SBN-005').damaged_stock !== bsSabun - 5) throw new Error('retur dengan stok Gudang BS tidak cukup seharusnya tetap tersimpan dan dicatat');
+      await shot('04i-retur-catatan-stok-kurang');
       if (svc.listTransferDocs().some((d) => d.to_zone === 'supplier')) throw new Error('retur seharusnya tidak muncul di riwayat Mutasi');
       await run(`go('transfers')`);
       await wait(500);
