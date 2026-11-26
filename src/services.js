@@ -30,9 +30,9 @@ const DIRECTIONS = [
   { from: 'warehouse', to: 'floor', label: 'Gudang Utama → Display Toko (Restock rak)' },
   { from: 'floor', to: 'damaged', label: 'Display Toko → Gudang BS (Rusak / pecah di rak)' },
   { from: 'warehouse', to: 'damaged', label: 'Gudang Utama → Gudang BS (Cacat bawaan supplier)' },
-  { from: 'customer', to: 'damaged', label: 'Retur Pelanggan → Gudang BS' },
+  // "Retur Pelanggan → Gudang BS" dan "Gudang BS → Dibuang / Dimusnahkan" dihapus (1.23.14). Nama zonanya tetap di
+  // ZONE_LABEL supaya dokumen lama di riwayat tetap terbaca.
   { from: 'damaged', to: 'supplier', label: 'Gudang BS → Supplier (Retur keluar)' },
-  { from: 'damaged', to: 'disposed', label: 'Gudang BS → Dibuang / Dimusnahkan' },
   { from: 'floor', to: 'warehouse', label: 'Display Toko → Gudang Utama (Tarik dari rak)' },
   { from: 'warehouse', to: 'shopee', label: 'Gudang Utama → Gudang Shopee (Isi stok online)' },
   { from: 'shopee', to: 'warehouse', label: 'Gudang Shopee → Gudang Utama (Tarik dari stok online)' },

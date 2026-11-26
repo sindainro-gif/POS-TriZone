@@ -74,7 +74,7 @@ function seedDemo(svc) {
   ] });
   svc.createTransfer({ sku: 'MNM-001', from_zone: 'warehouse', to_zone: 'floor', qty: 24, reason: 'Isi rak pagi' });
   svc.createTransfer({ sku: 'MKN-040', from_zone: 'floor', to_zone: 'damaged', qty: 1, reason: 'Telur pecah di rak' });
-  svc.createTransfer({ sku: 'SNK-011', from_zone: 'customer', to_zone: 'damaged', qty: 1, reason: 'Retur pelanggan: kemasan bocor' });
+  svc.createTransfer({ sku: 'SNK-011', from_zone: 'warehouse', to_zone: 'damaged', qty: 1, reason: 'Cacat bawaan: kemasan bocor' });
   svc.listLabelDesigns(); // buat desain label bawaan
   return { products: PRODUCTS.length, accounts: DEMO_ACCOUNTS.length };
 }

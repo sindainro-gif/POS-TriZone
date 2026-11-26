@@ -110,16 +110,19 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     svc.createTransfer({ sku: 'MNM-001', from_zone: 'warehouse', to_zone: 'floor', qty: 24, reason: 'Restock harian' });
     svc.createTransfer({ sku: 'MNM-001', from_zone: 'floor', to_zone: 'damaged', qty: 2, reason: 'Pecah terinjak' });
     svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'supplier', qty: 3, reason: 'Retur pabrik' });
-    svc.createTransfer({ sku: 'MNM-001', from_zone: 'customer', to_zone: 'damaged', qty: 1, reason: 'Retur konsumen' });
     const p = svc.getProduct('MNM-001');
-    assert.deepStrictEqual([p.floor_stock, p.warehouse_stock, p.damaged_stock], [27, 24, 1]);
-    assert.strictEqual(svc.listTransfers().length, 5); // + 1 mutasi isi rak di tes Saran Restock
+    assert.deepStrictEqual([p.floor_stock, p.warehouse_stock, p.damaged_stock], [27, 24, 0]);
+    assert.strictEqual(svc.listTransfers().length, 4); // + 1 mutasi isi rak di tes Saran Restock
   });
 
   await t('mutasi melebihi stok asal ditolak & arah tidak valid ditolak', () => {
     throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'supplier', qty: 5 }), /tidak cukup/);
     throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'floor', qty: 1 }), /Arah mutasi tidak valid/);
-    assert.strictEqual(svc.getProduct('MNM-001').damaged_stock, 1);
+    // Arah yang sudah dihapus dari menu Mutasi juga ditolak
+    throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'customer', to_zone: 'damaged', qty: 1 }), /Arah mutasi tidak valid/);
+    throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'disposed', qty: 1 }), /Arah mutasi tidak valid/);
+    assert.ok(!svc.meta().directions.some((d) => (d.from === 'customer' && d.to === 'damaged') || d.to === 'disposed'));
+    assert.strictEqual(svc.getProduct('MNM-001').damaged_stock, 0);
   });
 
   await t('form mutasi multi-barang: satu nomor, SKU sama digabung', () => {
@@ -248,7 +251,7 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     });
     assert.strictEqual(r.total_items_count, 48 + 5 + 40);
     const p = svc.getProduct('MNM-001');
-    assert.deepStrictEqual([p.warehouse_stock, p.damaged_stock], [72, 6]);
+    assert.deepStrictEqual([p.warehouse_stock, p.damaged_stock], [72, 5]);
     assert.strictEqual(svc.getProduct('SNK-010').floor_stock, 40);
     throwsMsg(() => svc.createReception({ reference_no: 'SJ-001', items: [{ sku: 'MNM-001', qty: 1, destination: 'floor' }] }), /sudah pernah dicatat/);
   });

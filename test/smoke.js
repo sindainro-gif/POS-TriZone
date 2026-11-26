@@ -292,18 +292,21 @@ app.on('browser-window-created', (_e, win) => {
       if (trNav.start !== 'trPicker' || trNav.toQty !== 'trQty' || trNav.back !== 'trPicker' || trNav.unit !== 'Biji') throw new Error('navigasi Enter Barang/Jumlah di Mutasi salah');
       // Form Mutasi multi-barang: scan → Jumlah → Enter = masuk list; Simpan = satu nomor mutasi
       const bsBefore = svc.getProduct('SNK-010').damaged_stock;
-      await run(`(() => { const d = document.querySelector('#trDirection'); d.value = 'customer>damaged'; d.dispatchEvent(new Event('change')); })()`);
+      // "Retur Pelanggan → Gudang BS" dan "Gudang BS → Dibuang / Dimusnahkan" sudah tidak ada di pilihan arah
+      const trDirs = await run(`[...document.querySelectorAll('#trDirection option')].map((o) => o.textContent)`);
+      if (trDirs.some((t) => /^Retur Pelanggan → Gudang BS|Dibuang/.test(t)) || trDirs.length !== 10) throw new Error(`pilihan arah Mutasi tidak sesuai: ${JSON.stringify(trDirs)}`);
+      await run(`(() => { const d = document.querySelector('#trDirection'); d.value = 'warehouse>damaged'; d.dispatchEvent(new Event('change')); })()`);
       const trAdd = async (code, n) => {
         await run(`(() => { const i = document.querySelector('#trPicker'); i.focus(); i.value = ${JSON.stringify(code)}; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
         await wait(400);
         await run(`(() => { const q = document.querySelector('#trQty'); q.value = '${n}'; q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
       };
       await trAdd('8997654321098', 2);
-      await trAdd('8990001112223', 1);
+      await trAdd('8991234567890', 1);
       await trAdd('8997654321098', 1); // barang sama → jumlah digabung
       const trList = await run(`({ rows: [...document.querySelectorAll('#trItems tr[data-i]')].map((r) => r.children[1].textContent + ':' + r.querySelector('[data-act=qty]').value), focus: document.activeElement.id, total: document.querySelector('#trTotal').textContent })`);
       console.log('list Mutasi:', JSON.stringify(trList));
-      if (trList.rows.join(',') !== 'SNK-010:3,SBN-005:1' || trList.focus !== 'trPicker') throw new Error('barang tidak masuk list Mutasi dengan benar');
+      if (trList.rows.join(',') !== 'SNK-010:3,MNM-001:1' || trList.focus !== 'trPicker') throw new Error('barang tidak masuk list Mutasi dengan benar');
       await shot('04-mutasi');
       await run(`document.querySelector('#trSubmit').click()`);
       await wait(300);
