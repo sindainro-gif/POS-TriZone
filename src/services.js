@@ -1622,7 +1622,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   function listUsers() {
-    return db.all(`${USER_SELECT} ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'gudang' THEN 1 ELSE 2 END, name COLLATE NOCASE`);
+    return db.all(`${USER_SELECT} ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'gudang' THEN 1 WHEN 'manukan' THEN 2 ELSE 3 END, name COLLATE NOCASE`);
   }
 
   function activeAdmins(exceptId = 0) {
@@ -1631,7 +1631,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   function saveUser({ id, name, role, pin, active = true } = {}) {
     const n = toStr(name, 'Nama pengguna', { required: true, max: 40 });
-    if (!ROLES.includes(role)) fail('Peran harus Admin, Gudang, atau Kasir.');
+    if (!ROLES.includes(role)) fail('Peran harus Admin, Gudang, Manukan, atau Kasir.');
     const p = String(pin ?? '').trim();
     if ((!id || p) && !/^\d{6}$/.test(p)) fail('PIN harus 6 digit angka.');
     const vp = p && currentVoidPin();

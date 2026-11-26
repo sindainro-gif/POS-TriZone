@@ -250,13 +250,14 @@ const state = {
 const ROLE_VIEWS = {
   admin: ['checkout', 'orders', 'transfers', 'returns', 'receiving', 'opname', 'products', 'barcode', 'shift', 'settings'],
   gudang: ['transfers', 'returns', 'receiving', 'opname', 'products', 'barcode', 'orders'], // Pesanan: Gudang hanya melihat
+  manukan: ['transfers', 'receiving', 'opname', 'products', 'barcode', 'orders'], // = Gudang tanpa Retur Barang
   kasir: ['checkout', 'orders', 'shift', 'products'],
 };
-const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', kasir: 'Kasir' };
+const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', manukan: 'Manukan', kasir: 'Kasir' };
 const role = () => (state.user ? state.user.role : '');
 const canView = (v) => !!state.user && ROLE_VIEWS[role()].includes(v);
 const canEditProducts = () => role() === 'admin'; // ubah / hapus barang: hanya Admin
-const canImportProducts = () => ['admin', 'gudang'].includes(role()); // Gudang: Import & antrian Barcode
+const canImportProducts = () => ['admin', 'gudang', 'manukan'].includes(role()); // Gudang: Import & antrian Barcode
 const canManualOpname = () => role() === 'admin'; // Gudang: stok opname hanya lewat template Excel
 
 // PC kasir terputus dari PC gudang tetapi data darurat siap → transaksi masuk antrian lokal

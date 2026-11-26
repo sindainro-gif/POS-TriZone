@@ -2,8 +2,9 @@
 // PIN login: disimpan sebagai hash scrypt dengan salt acak per akun (PIN asli tidak pernah disimpan).
 const crypto = require('crypto');
 
-const ROLES = ['admin', 'gudang', 'kasir'];
-const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', kasir: 'Kasir' };
+// Manukan = sama persis dengan Gudang, tanpa menu Retur Barang
+const ROLES = ['admin', 'gudang', 'manukan', 'kasir'];
+const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', manukan: 'Manukan', kasir: 'Kasir' };
 
 function hashPin(pin, salt = crypto.randomBytes(16).toString('hex')) {
   return { salt, hash: crypto.scryptSync(String(pin), salt, 32).toString('hex') };

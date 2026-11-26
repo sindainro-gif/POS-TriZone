@@ -292,11 +292,11 @@ CREATE TABLE IF NOT EXISTS checkout_refs (
     created_at DATETIME DEFAULT (datetime('now','localtime'))
 );
 
--- Akun login: admin (semua menu), gudang, kasir. PIN disimpan sebagai hash scrypt.
+-- Akun login: admin (semua menu), gudang, manukan (= gudang tanpa Retur Barang), kasir. PIN disimpan sebagai hash scrypt.
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL COLLATE NOCASE,
-    role TEXT NOT NULL CHECK(role IN ('admin', 'gudang', 'kasir')),
+    role TEXT NOT NULL CHECK(role IN ('admin', 'gudang', 'manukan', 'kasir')),
     pin_hash TEXT NOT NULL,
     pin_salt TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
@@ -336,16 +336,19 @@ const ADDED_COLUMNS = [['inventory', 'sold_out_at', 'DATETIME'], ['stock_transfe
 
 // Tabel lama punya CHECK zona tanpa Gudang Shopee. SQLite tidak bisa mengubah CHECK,
 // jadi tabelnya dibangun ulang dari definisi lamanya (kolom tambahan ikut) dengan daftar zona baru.
+// done = teks yang sudah ada di definisi tabel bila perbaikannya sudah pernah dijalankan.
 const ZONE_CHECK_FIXES = {
-  stock_reception_items: [["'damaged')", "'damaged', 'shopee')"]],
-  stock_transfers: [["'damaged', 'customer')", "'damaged', 'shopee', 'customer')"], ["'damaged', 'supplier'", "'damaged', 'shopee', 'supplier'"], ["'disposed')", "'disposed', 'shopee_sold')"]],
-  stock_opname_docs: [["'damaged')", "'damaged', 'shopee')"]],
+  stock_reception_items: { done: "'shopee'", fixes: [["'damaged')", "'damaged', 'shopee')"]] },
+  stock_transfers: { done: "'shopee'", fixes: [["'damaged', 'customer')", "'damaged', 'shopee', 'customer')"], ["'damaged', 'supplier'", "'damaged', 'shopee', 'supplier'"], ["'disposed')", "'disposed', 'shopee_sold')"]] },
+  stock_opname_docs: { done: "'shopee'", fixes: [["'damaged')", "'damaged', 'shopee')"]] },
+  // Peran baru Manukan (= Gudang tanpa Retur Barang)
+  users: { done: "'manukan'", fixes: [["'gudang', 'kasir')", "'gudang', 'manukan', 'kasir')"]] },
 };
 
 function widenZoneChecks(sqlDb) {
-  for (const [table, fixes] of Object.entries(ZONE_CHECK_FIXES)) {
+  for (const [table, { done, fixes }] of Object.entries(ZONE_CHECK_FIXES)) {
     const sql = sqlDb.exec(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '${table}'`)[0]?.values[0][0];
-    if (!sql || sql.includes("'shopee'")) continue;
+    if (!sql || sql.includes(done)) continue;
     let next = sql;
     for (const [a, b] of fixes) next = next.replace(a, b);
     next = next.replace(/^CREATE TABLE\s+(IF NOT EXISTS\s+)?"?\w+"?/i, `CREATE TABLE ${table}__baru`);

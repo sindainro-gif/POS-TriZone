@@ -105,6 +105,26 @@ async function t(name, fn) {
     assert.ok(!raw.includes('444444'));
   });
 
+  await t('peran Manukan: bisa dibuat & login; database lama (peran tanpa Manukan) dimigrasi tanpa kehilangan akun', async () => {
+    const SQL = await require('sql.js')({ locateFile: (f) => path.join(path.dirname(require.resolve('sql.js')), f) });
+    const old = new SQL.Database();
+    old.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL COLLATE NOCASE,
+        role TEXT NOT NULL CHECK(role IN ('admin', 'gudang', 'kasir')), pin_hash TEXT NOT NULL, pin_salt TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1, created_at DATETIME);`);
+    const h = hashPin('123456');
+    old.run("INSERT INTO users(name, role, pin_hash, pin_salt, active) VALUES('Pemilik', 'admin', ?, ?, 1)", [h.hash, h.salt]);
+    const oldFile = path.join(dir, 'akun-lama.db');
+    fs.writeFileSync(oldFile, Buffer.from(old.export()));
+    const s = createServices(await Database.open(oldFile));
+    assert.strictEqual(s.verifyLogin({ name: 'Pemilik', pin: '123456' }).role, 'admin');
+    s.saveUser({ name: 'Mira', role: 'manukan', pin: '777777' });
+    s.saveUser({ name: 'Budi', role: 'gudang', pin: '888888' });
+    assert.strictEqual(s.verifyLogin({ name: 'mira', pin: '777777' }).role, 'manukan');
+    // Urutan daftar: Admin, Gudang, Manukan, Kasir
+    assert.deepStrictEqual(s.listUsers().map((u) => u.role), ['admin', 'gudang', 'manukan']);
+    assert.throws(() => s.saveUser({ name: 'X', role: 'bos', pin: '111111' }), /Admin, Gudang, Manukan, atau Kasir/);
+  });
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(`\n${passed} tes login lulus${process.exitCode ? ', ada yang GAGAL' : ''}.`);
 })();

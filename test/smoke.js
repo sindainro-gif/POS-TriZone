@@ -933,6 +933,28 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#mbCard').scrollIntoView()`);
       await shot('10b-pengaturan-mother-base');
       const navOf = () => run(`[...document.querySelectorAll('.nav-btn')].filter((b) => !b.classList.contains('hidden')).map((b) => b.dataset.view).join(',')`);
+      // Peran Manukan = Gudang tanpa menu Retur Barang
+      svc.saveUser({ name: 'Mira', role: 'manukan', pin: '444444' });
+      await run(`document.querySelector('#logoutBtn').click()`);
+      await wait(1500);
+      await login('Mira', '444444');
+      const mNav = await navOf();
+      const mAcc = await run(`(async () => {
+        const call = (ch, a) => window.posBridge.call(ch, a);
+        const deny = (r) => !r.ok && /Akses ditolak/.test(r.error);
+        return { badge: document.querySelector('#userBadge') ? document.querySelector('#userBadge').innerText : '',
+          returns: deny(await call('returns:list', {})), returnsMake: deny(await call('returns:create', { from_zone: 'damaged', items: [] })),
+          transfers: (await call('transfers:list', {})).ok, receptions: (await call('receptions:list', {})).ok, opname: (await call('opname:list', {})).ok,
+          imp: !document.querySelector('#pdImport').classList.contains('hidden'), cancel: !deny(await call('transfers:cancel', { id: 0, reason: 'uji', approver_pin: '0' })),
+          drawer: deny(await call('drawer:open')), order: deny(await call('orders:create', { items: [] })), settings: deny(await call('settings:save', { store_name: 'X' })),
+          view: (go('returns'), state.view) };
+      })()`);
+      console.log('menu Mira (Manukan):', mNav, JSON.stringify(mAcc));
+      if (mNav !== 'orders,transfers,receiving,opname,products,barcode' || !mAcc.returns || !mAcc.returnsMake || !mAcc.transfers || !mAcc.receptions || !mAcc.opname
+        || !mAcc.imp || !mAcc.cancel || !mAcc.drawer || !mAcc.order || !mAcc.settings || mAcc.view === 'returns') {
+        throw new Error('peran Manukan seharusnya sama dengan Gudang tanpa Retur Barang');
+      }
+      await shot('11-login-mira-manukan');
       for (const [name, pin, want] of [['Rina', '222222', 'checkout,orders,products,shift'], ['Budi', '333333', 'orders,transfers,returns,receiving,opname,products,barcode']]) {
         await run(`document.querySelector('#logoutBtn').click()`);
         await wait(1500);
