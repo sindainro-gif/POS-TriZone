@@ -1115,7 +1115,7 @@ views.transfers = (() => {
   makePicker(picker, {
     onPick: (p) => {
       picked = p;
-      picker.value = '';
+      picker.value = p.name; // nama barang terpilih tetap terlihat di kolom Barang sampai masuk list
       colyLabel(p);
       $('#trPicked').innerHTML = `Dipilih: <b>${esc(p.name)}</b> · ${esc(p.sku)} · 1 Coly = ${num(ratioOf(p))} Biji — isi Jumlah lalu Enter`;
       qty.focus();
@@ -1127,12 +1127,20 @@ views.transfers = (() => {
     if (same) same.qty += n;
     else items.push({ product: p, qty: n, unit: u });
     picked = null;
+    picker.value = '';
     qty.value = 1;
     setUnit('Biji');
     colyLabel(null);
     $('#trPicked').innerHTML = HINT;
     render();
   }
+  // Nama di kolom Barang diubah / diketik ulang → pilihan sebelumnya batal (harus pilih barang lagi)
+  picker.addEventListener('input', () => {
+    if (!picked || picker.value === picked.name) return;
+    picked = null;
+    colyLabel(null);
+    $('#trPicked').innerHTML = HINT;
+  });
 
   const zoneStock = (p) => { const col = ZONE_COL[dir.value.split('>')[0]]; return col ? p[col] : null; };
 

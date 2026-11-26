@@ -299,7 +299,12 @@ app.on('browser-window-created', (_e, win) => {
       const trAdd = async (code, n) => {
         await run(`(() => { const i = document.querySelector('#trPicker'); i.focus(); i.value = ${JSON.stringify(code)}; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
         await wait(400);
+        // Barang terpilih: namanya tetap terlihat di kolom Barang; setelah masuk list kolom kosong lagi
+        const shown = await run(`document.querySelector('#trPicker').value`);
         await run(`(() => { const q = document.querySelector('#trQty'); q.value = '${n}'; q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+        const after = await run(`document.querySelector('#trPicker').value`);
+        const want = svc.findByCode({ code }).name;
+        if (shown !== want || after !== '') throw new Error(`nama barang terpilih tidak tampil di kolom Barang Mutasi: ${JSON.stringify({ shown, after, want })}`);
       };
       await trAdd('8997654321098', 2);
       await trAdd('8991234567890', 1);
