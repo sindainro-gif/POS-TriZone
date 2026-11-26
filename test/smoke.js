@@ -294,7 +294,8 @@ app.on('browser-window-created', (_e, win) => {
       const bsBefore = svc.getProduct('SNK-010').damaged_stock;
       // "Retur Pelanggan → Gudang BS" dan "Gudang BS → Dibuang / Dimusnahkan" sudah tidak ada di pilihan arah
       const trDirs = await run(`[...document.querySelectorAll('#trDirection option')].map((o) => o.textContent)`);
-      if (trDirs.some((t) => /^Retur Pelanggan → Gudang BS|Dibuang/.test(t)) || trDirs.length !== 10) throw new Error(`pilihan arah Mutasi tidak sesuai: ${JSON.stringify(trDirs)}`);
+      // "Gudang BS → Supplier" pindah ke menu Retur Barang
+      if (trDirs.some((t) => /^Retur Pelanggan → Gudang BS|Dibuang|Supplier/.test(t)) || trDirs.length !== 9) throw new Error(`pilihan arah Mutasi tidak sesuai: ${JSON.stringify(trDirs)}`);
       await run(`(() => { const d = document.querySelector('#trDirection'); d.value = 'warehouse>damaged'; d.dispatchEvent(new Event('change')); })()`);
       const trAdd = async (code, n) => {
         await run(`(() => { const i = document.querySelector('#trPicker'); i.focus(); i.value = ${JSON.stringify(code)}; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
@@ -385,6 +386,42 @@ app.on('browser-window-created', (_e, win) => {
       await shot('04e-mutasi-dibatalkan');
       await run(`document.querySelector('#modalRoot .btn.primary').click()`);
       await wait(200);
+
+      // Retur Barang (menu sendiri): Gudang BS → supplier, dokumen RB-..., stok BS berkurang; tidak muncul di riwayat Mutasi
+      const bsRetur = svc.getProduct('SNK-010').damaged_stock;
+      await run(`document.querySelector('#nav [data-view="returns"]').click()`);
+      await wait(700);
+      const rtForm = await run(`({ view: state.view, from: [...document.querySelectorAll('#rtFrom option')].map((o) => o.value).join(','), focus: document.activeElement.id })`);
+      if (rtForm.view !== 'returns' || rtForm.from !== 'damaged,warehouse' || rtForm.focus !== 'rtPicker') throw new Error(`menu Retur Barang tidak terbuka dengan benar: ${JSON.stringify(rtForm)}`);
+      await run(`(() => { document.querySelector('#rtSupplier').value = 'PT Renyah Abadi'; document.querySelector('#rtRef').value = 'SR-0001';
+        const i = document.querySelector('#rtPicker'); i.focus(); i.value = '8997654321098'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await wait(400);
+      const rtPicked = await run(`({ name: document.querySelector('#rtPicker').value, focus: document.activeElement.id })`);
+      await run(`(() => { const q = document.querySelector('#rtQty'); q.value = '2'; q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await run(`[...document.querySelectorAll('#rtReasonChips .chip')].find((c) => c.textContent === 'Cacat pabrik').click()`);
+      const rtList = await run(`({ rows: [...document.querySelectorAll('#rtItems tr[data-i]')].map((r) => r.children[1].textContent + ':' + r.querySelector('[data-act=qty]').value).join(','),
+        picker: document.querySelector('#rtPicker').value, total: document.querySelector('#rtTotal').textContent })`);
+      console.log('form Retur:', JSON.stringify({ rtPicked, rtList }));
+      if (rtPicked.name !== 'Keripik Kentang 68g' || rtPicked.focus !== 'rtQty' || rtList.rows !== 'SNK-010:2' || rtList.picker !== '') throw new Error('barang tidak masuk list Retur dengan benar');
+      await shot('04f-retur-barang');
+      await run(`document.querySelector('#rtSubmit').click()`);
+      await wait(300);
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(800);
+      const rtDoc = await run(`({ first: document.querySelector('#rtHistory tr').innerText.replace(/\\s+/g, ' '), left: document.querySelectorAll('#rtItems tr[data-i]').length })`);
+      console.log('riwayat Retur teratas:', JSON.stringify(rtDoc));
+      if (!/RB-\d{8}-001/.test(rtDoc.first) || !/PT Renyah Abadi/.test(rtDoc.first) || !/SR-0001/.test(rtDoc.first) || !/Cacat pabrik/.test(rtDoc.first) || rtDoc.left !== 0
+        || svc.getProduct('SNK-010').damaged_stock !== bsRetur - 2) throw new Error('Retur Barang tidak tersimpan / stok BS tidak berkurang');
+      await run(`document.querySelector('#rtHistory [data-id]').click()`);
+      await wait(400);
+      const rtDetail = await run(`({ title: document.querySelector('#modalRoot .modal-head').innerText, btn: [...document.querySelectorAll('#modalRoot .modal-foot .btn')].map((b) => b.textContent).join(',') })`);
+      if (!/^Retur RB-/.test(rtDetail.title) || !/Batalkan Retur/.test(rtDetail.btn)) throw new Error(`detail Retur tidak sesuai: ${JSON.stringify(rtDetail)}`);
+      await shot('04g-retur-detail');
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(200);
+      if (svc.listTransferDocs().some((d) => d.to_zone === 'supplier')) throw new Error('retur seharusnya tidak muncul di riwayat Mutasi');
+      await run(`go('transfers')`);
+      await wait(500);
       const f12View = await run(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true })); return state.view + '/' + document.activeElement.id; })()`);
       if (f12View !== 'checkout/cashInput') throw new Error(`F12 dari layar lain seharusnya ke Uang Diterima Kasir, bukan ${f12View}`);
       await run(`document.querySelector('[data-view=receiving]').click()`);
@@ -896,7 +933,7 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('#mbCard').scrollIntoView()`);
       await shot('10b-pengaturan-mother-base');
       const navOf = () => run(`[...document.querySelectorAll('.nav-btn')].filter((b) => !b.classList.contains('hidden')).map((b) => b.dataset.view).join(',')`);
-      for (const [name, pin, want] of [['Rina', '222222', 'checkout,orders,products,shift'], ['Budi', '333333', 'orders,transfers,receiving,opname,products,barcode']]) {
+      for (const [name, pin, want] of [['Rina', '222222', 'checkout,orders,products,shift'], ['Budi', '333333', 'orders,transfers,returns,receiving,opname,products,barcode']]) {
         await run(`document.querySelector('#logoutBtn').click()`);
         await wait(1500);
         await run(`document.querySelector('#lgPin').value='999999'; document.querySelector('#lgName').value=${JSON.stringify(name)}; document.querySelector('#lgBtn').click();`);

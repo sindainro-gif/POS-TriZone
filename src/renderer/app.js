@@ -248,8 +248,8 @@ const state = {
 
 // Menu yang boleh dibuka per peran (Admin: semua)
 const ROLE_VIEWS = {
-  admin: ['checkout', 'orders', 'transfers', 'receiving', 'opname', 'products', 'barcode', 'shift', 'settings'],
-  gudang: ['transfers', 'receiving', 'opname', 'products', 'barcode', 'orders'], // Pesanan: Gudang hanya melihat
+  admin: ['checkout', 'orders', 'transfers', 'returns', 'receiving', 'opname', 'products', 'barcode', 'shift', 'settings'],
+  gudang: ['transfers', 'returns', 'receiving', 'opname', 'products', 'barcode', 'orders'], // Pesanan: Gudang hanya melihat
   kasir: ['checkout', 'orders', 'shift', 'products'],
 };
 const ROLE_LABEL = { admin: 'Admin', gudang: 'Gudang', kasir: 'Kasir' };
@@ -1302,6 +1302,221 @@ views.transfers = (() => {
     render();
     loadLow();
     loadHistory();
+    setTimeout(() => picker.focus(), 30);
+  }
+  return { show };
+})();
+
+// ================================================================ 2b. RETUR BARANG (ke supplier)
+// Menu sendiri, dipisah dari Mutasi. Tersimpan sebagai dokumen RB-... ke zona Supplier (kantor membacanya sebagai
+// retur toko). Detail & batal (PIN Admin / PIN Pembatalan) memakai perintah dokumen mutasi.
+views.returns = (() => {
+  let picked = null;
+  const items = []; // {product, qty, unit: 'Biji' | 'Coly'}
+  const from = $('#rtFrom');
+  const picker = $('#rtPicker');
+  const qty = $('#rtQty');
+  const unit = $('#rtUnit');
+  const HINT = $('#rtPicked').innerHTML;
+  const ZONE_COL = { warehouse: 'warehouse_stock', damaged: 'damaged_stock' };
+  const FROM_LABEL = { damaged: 'Gudang BS (rusak / cacat)', warehouse: 'Gudang Utama (salah kirim / kelebihan)' };
+  const ratioOf = (p) => Math.max(1, Number(p && p.pack_ratio) || 1);
+  const pieces = (i) => (i.unit === 'Coly' ? i.qty * ratioOf(i.product) : i.qty);
+  function setUnit(u) {
+    unit.value = u === 'Coly' ? 'Coly' : 'Biji';
+    unit.closest('.unit-field').classList.toggle('coly', unit.value === 'Coly');
+  }
+  const colyLabel = (p) => { unit.querySelector('option[value="Coly"]').textContent = p ? `Coly (isi ${num(ratioOf(p))})` : 'Coly'; };
+  unit.addEventListener('change', () => setUnit(unit.value));
+
+  // Alur sama dengan Mutasi: scan → Jumlah → Enter = masuk list, kembali ke Barang
+  qty.addEventListener('focus', () => qty.select());
+  function commitQty() {
+    const n = Number(qty.value);
+    if (!Number.isInteger(n) || n < 1) { sound('err'); toast('Jumlah minimal 1.', 'err'); qty.focus(); return; }
+    if (picked) add(picked, n, unit.value);
+    picker.focus();
+    picker.select();
+  }
+  qty.addEventListener('keydown', (e) => {
+    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); setUnit('Coly'); return; }
+    if (e.key === 'b' || e.key === 'B') { e.preventDefault(); setUnit('Biji'); return; }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    commitQty();
+  });
+  unit.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitQty(); } });
+  picker.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !picker.value.trim()) { e.preventDefault(); qty.focus(); }
+  });
+  makePicker(picker, {
+    onPick: (p) => {
+      picked = p;
+      picker.value = p.name; // nama barang terpilih tetap terlihat sampai masuk list
+      colyLabel(p);
+      $('#rtPicked').innerHTML = `Dipilih: <b>${esc(p.name)}</b> · ${esc(p.sku)} · 1 Coly = ${num(ratioOf(p))} Biji — isi Jumlah lalu Enter`;
+      qty.focus();
+    },
+  });
+  picker.addEventListener('input', () => {
+    if (!picked || picker.value === picked.name) return;
+    picked = null;
+    colyLabel(null);
+    $('#rtPicked').innerHTML = HINT;
+  });
+
+  function add(p, n, u = 'Biji') {
+    const same = items.find((i) => i.product.sku === p.sku && i.unit === u);
+    if (same) same.qty += n;
+    else items.push({ product: p, qty: n, unit: u });
+    picked = null;
+    picker.value = '';
+    qty.value = 1;
+    setUnit('Biji');
+    colyLabel(null);
+    $('#rtPicked').innerHTML = HINT;
+    render();
+  }
+
+  function render() {
+    const col = ZONE_COL[from.value];
+    $('#rtItems').innerHTML = items.length ? items.map((i, idx) => {
+      const avail = col ? i.product[col] : null;
+      const need = items.filter((x) => x.product.sku === i.product.sku).reduce((s, x) => s + pieces(x), 0);
+      const short = avail !== null && avail < need;
+      return `<tr data-i="${idx}">
+        <td class="r muted">${idx + 1}</td><td class="mono">${esc(i.product.sku)}</td><td>${esc(i.product.name)}</td>
+        <td class="r"><input type="number" min="1" value="${i.qty}" data-act="qty" style="width:80px;text-align:right"></td>
+        <td>${i.unit === 'Coly' ? `<b>Coly</b> <span class="muted small">(isi ${num(ratioOf(i.product))}) = ${num(pieces(i))} Biji</span>` : 'Biji'}</td>
+        <td class="r ${short ? 'diff-neg' : 'muted'}">${avail === null ? '-' : `${num(avail)}${short ? ' — KURANG' : ''}`}</td>
+        <td class="c"><button class="icon-btn" data-act="del">✕</button></td></tr>`;
+    }).join('')
+      : '<tr><td colspan="7" class="empty-row">Belum ada barang. Scan barang, isi Jumlah, lalu Enter.</td></tr>';
+    $('#rtTotal').textContent = `${items.length} baris · ${num(items.reduce((s, i) => s + pieces(i), 0))} Biji`;
+  }
+  from.addEventListener('change', render);
+  $('#rtItems').addEventListener('click', (e) => {
+    if (e.target.dataset.act === 'del') { items.splice(Number(e.target.closest('tr').dataset.i), 1); render(); picker.focus(); }
+  });
+  $('#rtItems').addEventListener('change', (e) => {
+    if (e.target.dataset.act !== 'qty') return;
+    const q = Number(e.target.value);
+    if (Number.isInteger(q) && q >= 1) items[Number(e.target.closest('tr').dataset.i)].qty = q;
+    render();
+  });
+  $('#rtItems').addEventListener('keydown', (e) => {
+    if (e.target.dataset.act === 'qty' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); picker.focus(); }
+  });
+
+  function reset() {
+    items.length = 0;
+    picked = null;
+    picker.value = '';
+    qty.value = 1;
+    setUnit('Biji');
+    colyLabel(null);
+    $('#rtRef').value = '';
+    $('#rtReason').value = '';
+    $('#rtPicked').innerHTML = HINT;
+    render();
+    picker.focus();
+  }
+  $('#rtReset').addEventListener('click', async () => {
+    if (items.length && !(await confirmDialog('Batalkan Retur', 'Semua barang di list akan dihapus dari form.', { okLabel: 'Ya, Batalkan', danger: true }))) return;
+    reset();
+  });
+
+  const REASONS = ['Cacat pabrik', 'Rusak / pecah', 'Kedaluwarsa', 'Salah kirim', 'Kelebihan kirim', 'Kemasan rusak'];
+  $('#rtReasonChips').innerHTML = REASONS.map((r) => `<span class="chip">${esc(r)}</span>`).join('');
+  $('#rtReasonChips').addEventListener('click', (e) => { if (e.target.classList.contains('chip')) $('#rtReason').value = e.target.textContent; });
+
+  $('#rtSubmit').addEventListener('click', async () => {
+    if (!items.length) { toast('Tambahkan minimal satu barang ke list.', 'err'); picker.focus(); return; }
+    const total = items.reduce((s, i) => s + pieces(i), 0);
+    const supplier = $('#rtSupplier').value.trim();
+    const ok = await confirmDialog('Simpan Retur', `Simpan retur dari <b>${esc(state.meta.zones[from.value])}</b>${supplier ? ` ke <b>${esc(supplier)}</b>` : ' ke supplier'}
+      berisi ${items.length} baris (${num(total)} Biji)? Stok ${esc(state.meta.zones[from.value])} akan langsung berkurang.`, { okLabel: 'Simpan' });
+    if (!ok) return;
+    try {
+      const d = await api('returns:create', {
+        from_zone: from.value, supplier_name: supplier, ref_no: $('#rtRef').value, reason: $('#rtReason').value,
+        items: items.map((i) => (i.unit === 'Coly'
+          ? { sku: i.product.sku, qty: pieces(i), pack_type: 'Coly', pack_qty: i.qty } // qty dalam Biji; coly sebagai keterangan
+          : { sku: i.product.sku, qty: i.qty })),
+      });
+      toast(`Retur ${d.doc_no} tersimpan: ${num(d.line_count)} baris, ${num(d.total_qty)} Biji.`, 'ok');
+      reset();
+      loadHistory();
+      loadSuppliers();
+    } catch (e) { toast(e.message, 'err', 6000); }
+  });
+
+  let searchTimer;
+  $('#rtSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadHistory, 200); });
+
+  async function loadHistory() {
+    const rows = await api('returns:list', { q: $('#rtSearch').value, limit: 300 });
+    $('#rtHistory').innerHTML = rows.length ? rows.map((d) => `<tr class="${d.cancelled_at ? 'cancelled' : ''}">
+        <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b>${cancelledTag(d)}${d.ref_no ? `<div class="psub">${esc(d.ref_no)}</div>` : ''}</td>
+        <td>${esc(d.supplier_name || '-')}</td><td>${zoneTag(d.from_zone)}</td>
+        <td class="r">${num(d.line_count)}</td><td class="r"><b>${num(d.total_qty)}</b></td><td>${esc(d.reason || '-')}</td>
+        <td><button class="btn sm ghost" data-id="${d.id}">Detail</button></td></tr>`).join('')
+      : '<tr><td colspan="8" class="empty-row">Belum ada retur barang.</td></tr>';
+  }
+  $('#rtHistory').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-id]');
+    if (!b) return;
+    const d = await api('transfers:get', { id: Number(b.dataset.id) });
+    modal({
+      title: `Retur ${d.doc_no}`,
+      wide: true,
+      body: `${cancelInfo(d)}<div class="kv"><span>Tanggal</span><b>${fmtTime(d.created_at)}</b></div>
+        <div class="kv"><span>Supplier</span><b>${esc(d.supplier_name || '-')}</b></div>
+        <div class="kv"><span>No. dokumen retur</span><b>${esc(d.ref_no || '-')}</b></div>
+        <div class="kv"><span>Diambil dari</span><b>${zoneTag(d.from_zone)}</b></div>
+        <div class="kv"><span>Alasan</span><b>${esc(d.reason || '-')}</b></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Jumlah</th><th>Satuan</th></tr></thead><tbody>
+        ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td><td class="r"><b>${num(i.pack_type === 'Coly' ? i.pack_qty : i.qty)}</b></td>
+          <td>${i.pack_type === 'Coly' ? `Coly <span class="muted">(isi ${num(i.qty / i.pack_qty)}) = ${num(i.qty)} Biji</span>` : 'Biji'}</td></tr>`).join('')}
+        </tbody></table></div>
+        ${!d.cancelled_at && d.cancel_block ? `<p class="muted small">${esc(d.cancel_block)}</p>` : ''}`,
+      actions: [
+        ...(!d.cancel_block ? [{ label: 'Batalkan Retur', kind: 'danger', onClick: ({ close }) => { close(); cancelDoc(d); } }] : []),
+        { label: 'Tutup', kind: 'primary' },
+      ],
+    });
+  });
+
+  // Batal retur: stok asal kembali bertambah (barang tidak jadi dikirim ke supplier)
+  function cancelDoc(d) {
+    openDocCancelForm({
+      title: `Batalkan Retur ${d.doc_no}`,
+      okLabel: 'Batalkan Retur',
+      changes: d.items.map((i) => ({ name: i.name || i.sku, text: `${esc(state.meta.zones[d.from_zone] || d.from_zone)} <b class="diff-pos">+${num(i.qty)}</b>` })),
+      submit: async (reason, approver_pin) => {
+        await api('transfers:cancel', { id: d.id, reason, approver_pin });
+        toast(`Retur ${d.doc_no} dibatalkan, stok dikembalikan.`, 'ok', 6000);
+        loadHistory();
+      },
+    });
+  }
+
+  async function loadSuppliers() {
+    const list = await api('returns:suppliers').catch(() => []);
+    $('#rtSupplierList').innerHTML = list.map((s) => `<option value="${esc(s)}"></option>`).join('');
+  }
+
+  let inited = false;
+  function show() {
+    if (!inited) {
+      from.innerHTML = (state.meta.returnFrom || ['damaged']).map((z) => `<option value="${z}">${esc(FROM_LABEL[z] || state.meta.zones[z] || z)}</option>`).join('');
+      inited = true;
+    }
+    // Perbarui stok barang di list (bisa berubah karena penjualan / mutasi)
+    Promise.all(items.map((i) => api('products:get', { sku: i.product.sku }).then((p) => { if (p) i.product = p; }))).then(render);
+    render();
+    loadHistory();
+    loadSuppliers();
     setTimeout(() => picker.focus(), 30);
   }
   return { show };

@@ -30,9 +30,8 @@ const DIRECTIONS = [
   { from: 'warehouse', to: 'floor', label: 'Gudang Utama → Display Toko (Restock rak)' },
   { from: 'floor', to: 'damaged', label: 'Display Toko → Gudang BS (Rusak / pecah di rak)' },
   { from: 'warehouse', to: 'damaged', label: 'Gudang Utama → Gudang BS (Cacat bawaan supplier)' },
-  // "Retur Pelanggan → Gudang BS" dan "Gudang BS → Dibuang / Dimusnahkan" dihapus (1.23.14). Nama zonanya tetap di
-  // ZONE_LABEL supaya dokumen lama di riwayat tetap terbaca.
-  { from: 'damaged', to: 'supplier', label: 'Gudang BS → Supplier (Retur keluar)' },
+  // "Retur Pelanggan → Gudang BS" dan "Gudang BS → Dibuang / Dimusnahkan" dihapus (1.23.14); "Gudang BS → Supplier"
+  // pindah ke menu Retur Barang (1.23.16). Nama zonanya tetap di ZONE_LABEL supaya dokumen lama tetap terbaca.
   { from: 'floor', to: 'warehouse', label: 'Display Toko → Gudang Utama (Tarik dari rak)' },
   { from: 'warehouse', to: 'shopee', label: 'Gudang Utama → Gudang Shopee (Isi stok online)' },
   { from: 'shopee', to: 'warehouse', label: 'Gudang Shopee → Gudang Utama (Tarik dari stok online)' },
@@ -42,6 +41,11 @@ const DIRECTIONS = [
 ];
 
 const DESTINATIONS = ['warehouse', 'floor', 'damaged', 'shopee'];
+
+// Retur Barang ke supplier (menu sendiri): stok diambil dari Gudang BS (rusak / cacat) atau Gudang Utama
+// (salah kirim / kelebihan). Disimpan sebagai dokumen mutasi ke zona 'supplier' bernomor RB-..., sehingga
+// kantor (mother base) tetap membacanya sebagai retur toko ke supplier.
+const RETURN_FROM = ['damaged', 'warehouse'];
 
 const TEMPLATE_HEADERS = [
   'Barcode', 'SKU', 'Nama_Barang', 'Merk', 'Kategori', 'Harga_Jual', 'Satuan_Masuk',
@@ -175,7 +179,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   }
 
   function meta() {
-    return { directions: DIRECTIONS, zones: ZONE_LABEL, paymentMethods: PAYMENT_METHODS, destinations: DESTINATIONS, master_locked: masterLocked() };
+    return { directions: DIRECTIONS, zones: ZONE_LABEL, paymentMethods: PAYMENT_METHODS, destinations: DESTINATIONS, returnFrom: RETURN_FROM, master_locked: masterLocked() };
   }
 
   // ---------------------------------------------------------------- Produk
@@ -969,6 +973,34 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     const dir = DIRECTIONS.find((d) => d.from === from_zone && d.to === to_zone);
     if (!dir) fail('Arah mutasi tidak valid.');
     const why = toStr(reason, 'Alasan', { max: 200 });
+    const lines = transferLines(items);
+    const now = localNow();
+    const id = db.tx(() => writeTransferDoc(from_zone, to_zone, why, lines, now));
+    return getTransferDoc({ id });
+  }
+
+  // Retur barang ke supplier (menu Retur Barang): dokumen RB-YYYYMMDD-001, stok asal langsung berkurang
+  function createReturnDoc({ from_zone, supplier_name, ref_no, reason, items = [] } = {}) {
+    if (!RETURN_FROM.includes(from_zone)) fail('Asal stok retur harus Gudang BS atau Gudang Utama.');
+    const supplier = toStr(supplier_name, 'Supplier', { max: 100 });
+    const ref = toStr(ref_no, 'No. dokumen retur', { max: 60 });
+    const why = toStr(reason, 'Alasan', { max: 200 });
+    const lines = transferLines(items);
+    const now = localNow();
+    const id = db.tx(() => writeTransferDoc(from_zone, 'supplier', why, lines, now, { prefix: 'RB', supplier_name: supplier, ref_no: ref }));
+    return getTransferDoc({ id });
+  }
+
+  // Nama supplier yang pernah dipakai (retur & penerimaan) untuk pilihan cepat di form Retur Barang
+  function returnSuppliers() {
+    return db.all(`SELECT name FROM (
+        SELECT supplier_name AS name, MAX(created_at) AS at FROM stock_transfer_docs WHERE COALESCE(supplier_name, '') <> '' GROUP BY supplier_name
+        UNION ALL SELECT supplier_name, MAX(received_at) FROM stock_receptions WHERE COALESCE(supplier_name, '') <> '' GROUP BY supplier_name)
+      GROUP BY name ORDER BY MAX(at) DESC LIMIT 50`).map((r) => r.name);
+  }
+
+  // Barang di form mutasi / retur → baris dokumen (qty dalam Biji; SKU sama digabung)
+  function transferLines(items) {
     if (!Array.isArray(items) || !items.length) fail('Tambahkan minimal satu barang.');
     const lines = [];
     items.forEach((it, idx) => {
@@ -990,14 +1022,12 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         else { same.pack_type = 'Biji'; same.pack_qty = same.qty; }
       }
     });
-    const now = localNow();
-    const id = db.tx(() => writeTransferDoc(from_zone, to_zone, why, lines, now));
-    return getTransferDoc({ id });
+    return lines;
   }
 
   // Tulis dokumen mutasi (dipanggil di dalam transaksi). allowShort hanya untuk proses internal
   // (batal nota → barang rusak ke Gudang BS) yang boleh membuat display toko minus.
-  function writeTransferDoc(from_zone, to_zone, why, lines, now, { allowShort = false } = {}) {
+  function writeTransferDoc(from_zone, to_zone, why, lines, now, { allowShort = false, prefix = 'MT', supplier_name = '', ref_no = '' } = {}) {
     for (const { p, qty: n } of lines) {
       db.run('INSERT OR IGNORE INTO inventory(sku) VALUES(?)', [p.sku]);
       if (ZONE_COL[from_zone]) {
@@ -1011,9 +1041,9 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         if (to_zone === 'floor') clearSoldOut(p.sku);
       }
     }
-    const docNo = nextDocNo('MT', 'stock_transfer_docs', now);
-    db.run('INSERT INTO stock_transfer_docs(doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty) VALUES(?, ?, ?, ?, ?, ?, ?)', [
-      docNo, from_zone, to_zone, String(why).slice(0, 200), now, lines.length, lines.reduce((s, l) => s + l.qty, 0),
+    const docNo = nextDocNo(prefix, 'stock_transfer_docs', now);
+    db.run('INSERT INTO stock_transfer_docs(doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty, supplier_name, ref_no) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+      docNo, from_zone, to_zone, String(why).slice(0, 200), now, lines.length, lines.reduce((s, l) => s + l.qty, 0), supplier_name, ref_no,
     ]);
     const did = db.lastId();
     for (const { p, qty: n, pack_type: unit, pack_qty: packQty } of lines) {
@@ -1031,14 +1061,17 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     return getProduct(sku);
   }
 
-  function listTransferDocs({ limit = 200, q = '' } = {}) {
+  // returns = true: riwayat Retur Barang (dokumen ke Supplier, termasuk mutasi Gudang BS → Supplier dari versi lama);
+  // selain itu riwayat Mutasi tanpa retur.
+  function listTransferDocs({ limit = 200, q = '', returns = false } = {}) {
     const like = `%${String(q || '').trim()}%`;
     return db.all(
       `SELECT d.* FROM stock_transfer_docs d
-       WHERE (? = '%%' OR d.doc_no LIKE ? OR d.reason LIKE ? OR EXISTS (
+       WHERE d.to_zone ${returns ? '=' : '<>'} 'supplier'
+         AND (? = '%%' OR d.doc_no LIKE ? OR d.reason LIKE ? OR COALESCE(d.supplier_name, '') LIKE ? OR COALESCE(d.ref_no, '') LIKE ? OR EXISTS (
          SELECT 1 FROM stock_transfers t LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = d.id AND (p.name LIKE ? OR t.sku LIKE ?)))
        ORDER BY d.id DESC LIMIT ?`,
-      [like, like, like, like, like, Math.min(Number(limit) || 200, 2000)],
+      [like, like, like, like, like, like, like, Math.min(Number(limit) || 200, 2000)],
     );
   }
 
@@ -1067,7 +1100,8 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   // Alasan dokumen ini tidak bisa dibatalkan (null = bisa). Dipakai layar untuk menampilkan tombol Batalkan.
   function transferCancelBlock(d) {
     if (!d) return 'Dokumen mutasi tidak ditemukan.';
-    if (d.cancelled_at) return 'Mutasi ini sudah dibatalkan.';
+    if (d.cancelled_at) return `${d.to_zone === 'supplier' ? 'Retur' : 'Mutasi'} ini sudah dibatalkan.`;
+    if (d.to_zone === 'supplier' && String(d.created_at || '') < cancelCutoff()) return `Hanya retur ${CANCEL_DAYS} hari terakhir yang bisa dibatalkan.`;
     if (/^MT-LAMA-/.test(d.doc_no)) return 'Mutasi dari versi lama tidak bisa dibatalkan.';
     if (/^Pesanan PSN-/.test(d.reason || '')) return 'Mutasi ini dibuat otomatis saat pesanan diambil, tidak bisa dibatalkan di sini.';
     if (/batal nota/i.test(d.reason || '')) return 'Mutasi ini dibuat otomatis oleh Batal Nota, tidak bisa dibatalkan di sini.';
@@ -1841,10 +1875,13 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       return { docs: docs.map(({ id, ...r }) => ({ ...r, items: numbered(items.get(id), 'reception_id') })), last: docs.length ? docs[docs.length - 1].id : cur, full: docs.length === limit };
     }
     if (kind === 'transfers') {
-      const docs = db.all('SELECT id, doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty FROM stock_transfer_docs WHERE id > ? ORDER BY id LIMIT ?', [cur, limit]);
+      const docs = db.all('SELECT id, doc_no, from_zone, to_zone, reason, created_at, line_count, total_qty, supplier_name, ref_no FROM stock_transfer_docs WHERE id > ? ORDER BY id LIMIT ?', [cur, limit]);
       const lines = docs.length ? groupBy(db.all('SELECT doc_id, sku, qty FROM stock_transfers WHERE doc_id BETWEEN ? AND ? ORDER BY id',
         [docs[0].id, docs[docs.length - 1].id]), 'doc_id') : new Map();
-      return { docs: docs.map(({ id, ...r }) => ({ ...r, lines: numbered(lines.get(id), 'doc_id') })), last: docs.length ? docs[docs.length - 1].id : cur, full: docs.length === limit };
+      // Retur Barang: supplier & no. dokumen retur ikut di kolom alasan (kolom yang sudah dibaca kantor)
+      const why = (r) => [r.supplier_name && `Supplier: ${r.supplier_name}`, r.ref_no && `No. ${r.ref_no}`, r.reason].filter(Boolean).join(' · ').slice(0, 300);
+      return { docs: docs.map(({ id, supplier_name, ref_no, ...r }) => ({ ...r, reason: why({ ...r, supplier_name, ref_no }), lines: numbered(lines.get(id), 'doc_id') })),
+        last: docs.length ? docs[docs.length - 1].id : cur, full: docs.length === limit };
     }
     const docs = db.all('SELECT id, doc_no, zone, notes, created_at, count_at, line_count, plus_qty, minus_qty FROM stock_opname_docs WHERE id > ? ORDER BY id LIMIT ?', [cur, limit]);
     const lines = docs.length ? groupBy(db.all(
@@ -2040,7 +2077,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     createOrder, getOrder, listOrders, ordersDue, completeOrder, cancelOrder,
     archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,
-    createTransfer, listTransfers, createTransferDoc, listTransferDocs, getTransferDoc, cancelTransferDoc,
+    createTransfer, listTransfers, createTransferDoc, createReturnDoc, returnSuppliers, listTransferDocs, getTransferDoc, cancelTransferDoc,
     createReception, listReceptions, getReception, importReceptions, cancelReception,
     createOpname, listOpnames, getOpname, opnameSheet, planOpnameImport, importOpname,
     createReceptionDraft, listReceptionDrafts, countReceptionDrafts, processReceptionDraft, deleteReceptionDraft,

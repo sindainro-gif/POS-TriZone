@@ -846,6 +846,7 @@ const ACCESS = {
   // Tambah / ubah / hapus barang & unduh template: hanya Admin (tidak tercantum = Admin). Gudang hanya lewat Import
   'products:import': GUDANG,
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
+  'returns:create': GUDANG, 'returns:list': GUDANG, 'returns:suppliers': GUDANG, // Retur Barang ke supplier
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
   'transfers:cancel': GUDANG, 'receptions:cancel': GUDANG, // batal dokumen dengan PIN Admin / PIN Pembatalan
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
@@ -1072,6 +1073,10 @@ const handlers = {
   'transfers:create': (a) => svc.createTransferDoc(a),
   'transfers:list': (a) => svc.listTransferDocs(a),
   'transfers:get': (a) => svc.getTransferDoc(a),
+  // Retur Barang ke supplier (dokumen RB-); detail & batal memakai transfers:get / transfers:cancel
+  'returns:create': (a) => svc.createReturnDoc(a),
+  'returns:list': (a = {}) => svc.listTransferDocs({ ...a, returns: true }),
+  'returns:suppliers': () => svc.returnSuppliers(),
   'transfers:cancel': (a = {}) => withPinDelay(() => svc.cancelTransferDoc({ ...a, requested_by: session.name })),
   'receptions:cancel': (a = {}) => withPinDelay(() => svc.cancelReception({ ...a, requested_by: session.name })),
 

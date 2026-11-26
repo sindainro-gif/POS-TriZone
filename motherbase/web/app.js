@@ -1335,7 +1335,7 @@ async function hRetur(el, { tab } = {}) {
         { k: 'no_dok', judul: 'No. retur', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'waktu', judul: 'Tanggal', fmt: (v) => esc(fmtWaktu(v)) },
         { k: 'alasan', judul: 'Alasan' }, { k: 'jumlah_barang', judul: 'Barang', num: true, fmt: (v) => num(v) }, { k: 'qty', judul: 'Qty (Biji)', num: true, fmt: (v) => num(v) },
         { k: 'qty_accurate', judul: 'Di Accurate', num: true, fmt: (v) => num(v) }, { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_DOK_RETUR, v) }],
-      rows, { klik: true, kosong: 'Belum ada retur ke supplier dari toko (di Trizone: Mutasi Gudang BS → Supplier).' });
+      rows, { klik: true, kosong: 'Belum ada retur ke supplier dari toko (di Trizone: menu Retur Barang).' });
       onBaris(box, rows, detail);
     };
     $('#rtToko', isi).addEventListener('change', (e) => { f.toko = e.target.value; muat(); });
@@ -1462,7 +1462,7 @@ async function hRetur(el, { tab } = {}) {
 async function hSjRetur(el) {
   const daftar = [['sj', 'Surat jalan'], ['toko', 'Retur dari toko'], ['cocok', 'Pencocokan retur Accurate']];
   let tab = daftar.some(([k]) => k === S.tabKiriman) ? S.tabKiriman : daftar[0][0];
-  el.innerHTML = `${head('Surat Jalan & Retur', 'Surat jalan dari Accurate (<b>Rincian Pengiriman Pesanan</b>) untuk penerimaan toko, dan retur barang dari toko ke supplier (di Trizone: mutasi <b>Gudang BS → Supplier</b>) yang dicocokkan dengan <b>Retur Penjualan</b> di Accurate.')}
+  el.innerHTML = `${head('Surat Jalan & Retur', 'Surat jalan dari Accurate (<b>Rincian Pengiriman Pesanan</b>) untuk penerimaan toko, dan retur barang dari toko ke supplier (di Trizone: menu <b>Retur Barang</b>) yang dicocokkan dengan <b>Retur Penjualan</b> di Accurate.')}
     ${tabs('kjTab', daftar, tab)}<div id="kjTabIsi"></div>`;
   const isi = $('#kjTabIsi', el);
   async function tampil() {

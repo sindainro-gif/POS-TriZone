@@ -106,22 +106,24 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     throwsMsg(() => svc.checkout({ items: [{ sku: 'MNM-001', qty: 1 }], payment_method: 'Tunai', cash_received: 100 }), /kurang/);
   });
 
-  await t('mutasi gudang → toko, toko → BS, BS → supplier', () => {
+  await t('mutasi gudang → toko, toko → BS; retur BS → supplier', () => {
     svc.createTransfer({ sku: 'MNM-001', from_zone: 'warehouse', to_zone: 'floor', qty: 24, reason: 'Restock harian' });
     svc.createTransfer({ sku: 'MNM-001', from_zone: 'floor', to_zone: 'damaged', qty: 2, reason: 'Pecah terinjak' });
-    svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'supplier', qty: 3, reason: 'Retur pabrik' });
+    svc.createReturnDoc({ from_zone: 'damaged', supplier_name: 'PT Segar', items: [{ sku: 'MNM-001', qty: 3 }], reason: 'Retur pabrik' });
     const p = svc.getProduct('MNM-001');
     assert.deepStrictEqual([p.floor_stock, p.warehouse_stock, p.damaged_stock], [27, 24, 0]);
     assert.strictEqual(svc.listTransfers().length, 4); // + 1 mutasi isi rak di tes Saran Restock
   });
 
   await t('mutasi melebihi stok asal ditolak & arah tidak valid ditolak', () => {
-    throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'supplier', qty: 5 }), /tidak cukup/);
+    throwsMsg(() => svc.createReturnDoc({ from_zone: 'damaged', items: [{ sku: 'MNM-001', qty: 5 }] }), /tidak cukup/);
+    // Gudang BS → Supplier pindah ke menu Retur Barang: tidak bisa lewat Mutasi
+    throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'supplier', qty: 1 }), /Arah mutasi tidak valid/);
     throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'floor', qty: 1 }), /Arah mutasi tidak valid/);
     // Arah yang sudah dihapus dari menu Mutasi juga ditolak
     throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'customer', to_zone: 'damaged', qty: 1 }), /Arah mutasi tidak valid/);
     throwsMsg(() => svc.createTransfer({ sku: 'MNM-001', from_zone: 'damaged', to_zone: 'disposed', qty: 1 }), /Arah mutasi tidak valid/);
-    assert.ok(!svc.meta().directions.some((d) => (d.from === 'customer' && d.to === 'damaged') || d.to === 'disposed'));
+    assert.ok(!svc.meta().directions.some((d) => (d.from === 'customer' && d.to === 'damaged') || d.to === 'disposed' || d.to === 'supplier'));
     assert.strictEqual(svc.getProduct('MNM-001').damaged_stock, 0);
   });
 
@@ -173,6 +175,35 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     throwsMsg(() => svc.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [] }), /minimal satu barang/);
   });
 
+  await t('retur barang ke supplier: dokumen RB-, asal BS / Gudang Utama, riwayat terpisah dari Mutasi, ikut ke kantor', async () => {
+    const d3 = await Database.open(null);
+    const s = createServices(d3);
+    s.importRows([{ Barcode: '7880000000028', SKU: 'RB-A', Nama_Barang: 'Retur Uji', Harga_Jual: 1000, Rasio_Isi_Dus: 12, Stok_Awal_Gudang: 50, Stok_Awal_BS: 30 }]);
+    const st = () => { const p = s.getProduct('RB-A'); return [p.warehouse_stock, p.damaged_stock]; };
+    const r1 = s.createReturnDoc({ from_zone: 'damaged', supplier_name: ' PT Plastik Jaya ', ref_no: 'SR-001', reason: 'Cacat pabrik',
+      items: [{ sku: 'RB-A', qty: 24, pack_type: 'Coly', pack_qty: 2 }, { sku: 'RB-A', qty: 1 }] });
+    assert.match(r1.doc_no, /^RB-\d{8}-001$/);
+    assert.deepStrictEqual([r1.from_zone, r1.to_zone, r1.supplier_name, r1.ref_no, r1.line_count, r1.total_qty], ['damaged', 'supplier', 'PT Plastik Jaya', 'SR-001', 1, 25]);
+    const r2 = s.createReturnDoc({ from_zone: 'warehouse', items: [{ sku: 'RB-A', qty: 10 }] });
+    assert.match(r2.doc_no, /-002$/);
+    assert.deepStrictEqual(st(), [40, 5]);
+    throwsMsg(() => s.createReturnDoc({ from_zone: 'floor', items: [{ sku: 'RB-A', qty: 1 }] }), /Gudang BS atau Gudang Utama/);
+    throwsMsg(() => s.createReturnDoc({ from_zone: 'damaged', items: [{ sku: 'RB-A', qty: 6 }] }), /Gudang BS untuk .* tidak cukup/);
+    throwsMsg(() => s.createReturnDoc({ from_zone: 'damaged', items: [] }), /minimal satu barang/);
+    // Mutasi biasa tetap bernomor MT-, riwayat Mutasi tanpa retur; riwayat Retur hanya dokumen ke Supplier
+    const mt = s.createTransferDoc({ from_zone: 'warehouse', to_zone: 'floor', items: [{ sku: 'RB-A', qty: 1 }] });
+    assert.match(mt.doc_no, /^MT-/);
+    assert.deepStrictEqual(s.listTransferDocs().map((d) => d.doc_no), [mt.doc_no]);
+    assert.deepStrictEqual(s.listTransferDocs({ returns: true }).map((d) => d.doc_no), [r2.doc_no, r1.doc_no]);
+    assert.deepStrictEqual(s.listTransferDocs({ returns: true, q: 'plastik' }).map((d) => d.doc_no), [r1.doc_no]);
+    assert.deepStrictEqual(s.listTransferDocs({ returns: true, q: 'SR-001' }).map((d) => d.doc_no), [r1.doc_no]);
+    assert.deepStrictEqual(s.returnSuppliers(), ['PT Plastik Jaya']);
+    // Kantor: supplier & no. dokumen retur ikut di alasan, tetap ke zona supplier
+    const sent = s.mbBatch({ force: true }).dokumen.transfers.find((d) => d.doc_no === r1.doc_no);
+    assert.deepStrictEqual([sent.to_zone, sent.reason, sent.supplier_name], ['supplier', 'Supplier: PT Plastik Jaya · No. SR-001 · Cacat pabrik', undefined]);
+    assert.deepStrictEqual(sent.lines.map((l) => [l.sku, l.qty]), [['RB-A', 25]]);
+  });
+
   await t('batal mutasi & penerimaan: PIN Admin / Pembatalan, stok dikembalikan (boleh minus), 7 hari, dokumen otomatis ditolak', async () => {
     const d2 = await Database.open(null);
     const s = createServices(d2, { encrypt: (x) => `enc:${x}`, decrypt: (x) => (String(x).startsWith('enc:') ? String(x).slice(4) : '') });
@@ -197,8 +228,8 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.deepStrictEqual(st(), [-40, 100, 5]);
     throwsMsg(() => s.cancelTransferDoc({ id: mt.id, ...req() }), /sudah dibatalkan/);
     assert.match(s.getTransferDoc({ id: mt.id }).cancel_block, /sudah dibatalkan/);
-    // Zona luar: BS → Supplier 3, batal → BS kembali 5 (PIN Admin juga berlaku)
-    const ret = s.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', items: [{ sku: 'BT-A', qty: 3 }] });
+    // Retur Barang BS → Supplier 3, batal → BS kembali 5 (PIN Admin juga berlaku)
+    const ret = s.createReturnDoc({ from_zone: 'damaged', items: [{ sku: 'BT-A', qty: 3 }] });
     assert.strictEqual(s.cancelTransferDoc({ id: ret.id, ...req({ approver_pin: '111111' }) }).cancel_approved_by, 'Bos');
     assert.deepStrictEqual(st(), [-40, 100, 5]);
     // Penerimaan 2 Dus (48) ke gudang + 5 ke toko; 60 keluar dari gudang → batal: gudang −48 (boleh minus), toko −5
