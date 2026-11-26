@@ -745,6 +745,32 @@ app.on('browser-window-created', (_e, win) => {
       await shot('05b2-cetak-barcode-kertas');
       await run(`document.querySelector('[data-view=products]').click()`);
       await shot('06-daftar-barang');
+      // Unduh Laporan Stok (Excel): semua barang, lalu sesuai pencarian; baris TOTAL & lembar Ringkasan
+      process.env.POS_SAVE_DIR = path.join(out, 'unduhan');
+      const XLSX = require('xlsx');
+      const stockFile = async () => {
+        await run(`document.querySelector('#pdStockReport').click()`);
+        await wait(1500);
+        const f = fs.readdirSync(process.env.POS_SAVE_DIR).filter((n) => /^Laporan_Stok_\d{8}_\d{4}\.xlsx$/.test(n)).sort().pop();
+        const wb = XLSX.readFile(path.join(process.env.POS_SAVE_DIR, f));
+        return { f, sheets: wb.SheetNames, rows: XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 }), sum: XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[1]], { header: 1 }) };
+      };
+      const all = svc.listProducts();
+      const repAll = await stockFile();
+      const totRow = repAll.rows[repAll.rows.length - 1];
+      const sumZone = (k) => all.reduce((s, p) => s + p[k], 0);
+      console.log('laporan stok:', repAll.f, JSON.stringify(repAll.sheets), JSON.stringify(repAll.rows[0]), JSON.stringify(totRow));
+      if (JSON.stringify(repAll.sheets) !== '["Laporan Stok","Ringkasan"]' || repAll.rows[0][1] !== 'Kode Item' || repAll.rows.length !== all.length + 2
+        || totRow[1] !== 'TOTAL' || totRow[7] !== sumZone('floor_stock') || totRow[8] !== sumZone('warehouse_stock') || totRow[9] !== sumZone('damaged_stock')
+        || !repAll.rows.some((r) => r[1] === 'SNK-010' && r[2] === '8997654321098' && r[13] === 'MINUS')
+        || !repAll.sum.some((r) => r[0] === 'Jumlah barang' && r[1] === all.length)) throw new Error('isi laporan stok tidak sesuai');
+      await run(`(() => { const s = document.querySelector('#pdSearch'); s.value = 'sabun'; s.dispatchEvent(new Event('input')); })()`);
+      await wait(500);
+      const repQ = await stockFile();
+      console.log('laporan stok "sabun":', repQ.rows.slice(1).map((r) => r[1]).join(','), JSON.stringify(repQ.sum.find((r) => r[0] === 'Pencarian')));
+      if (repQ.rows.length !== 3 || repQ.rows[1][1] !== 'SBN-005' || !repQ.sum.some((r) => r[0] === 'Pencarian' && r[1] === 'sabun')) throw new Error('laporan stok tidak mengikuti pencarian');
+      await run(`(() => { const s = document.querySelector('#pdSearch'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
+      await wait(400);
       await run(`document.querySelector('[data-view=shift]').click()`);
       await wait(400);
       await shot('07-shift');

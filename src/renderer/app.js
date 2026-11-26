@@ -2124,6 +2124,16 @@ views.products = (() => {
   $('#pdSearch').addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 200); });
   $('#pdFilter').addEventListener('change', load);
 
+  // Unduh Laporan Stok (Excel): barang sesuai pencarian & filter yang sedang tampil
+  $('#pdStockReport').addEventListener('click', async () => {
+    const btn = $('#pdStockReport');
+    btn.disabled = true;
+    try {
+      const r = await api('products:stockReport', { q: $('#pdSearch').value, filter: $('#pdFilter').value });
+      if (r) toast(`Laporan stok (${num(r.count)} barang) tersimpan: ${r.path}`, 'ok', 7000);
+    } catch (e) { sound('err'); toast(e.message, 'err', 7000); } finally { btn.disabled = false; }
+  });
+
   async function load() {
     rows = await api('products:list', { q: $('#pdSearch').value, filter: $('#pdFilter').value });
     $('#pdBody').innerHTML = rows.length ? rows.map((p) => `<tr class="${p.floor_stock <= p.min_floor_alert ? 'low' : ''}">

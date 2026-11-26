@@ -201,7 +201,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     if (filter === 'shopee') where.push('COALESCE(i.shopee_stock,0) > 0');
     if (filter === 'empty') where.push('COALESCE(i.floor_stock,0) = 0');
     const sql = `${PRODUCT_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY p.name COLLATE NOCASE LIMIT ?`;
-    params.push(Math.min(Number(limit) || 5000, 20000));
+    params.push(Math.min(Number(limit) || 5000, 100000)); // layar: 5000; laporan stok: semua barang
     return db.all(sql, params);
   }
 

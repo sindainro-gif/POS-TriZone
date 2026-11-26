@@ -592,7 +592,10 @@ async function saveWorkbook({ title, fileName, sheets, csv = true }) {
         if (c) { c.t = 's'; c.z = '@'; }
       }
     }
-    ws['!cols'] = s.headers.map((h) => ({ wch: Math.max(12, String(h).length + 2) }));
+    // Lebar kolom mengikuti isi terpanjang (min 12, maks 50 karakter) agar nama barang tidak terpotong
+    ws['!cols'] = s.headers.map((h, ci) => ({
+      wch: Math.min(50, s.rows.reduce((w, r) => Math.max(w, String((r && r[ci]) ?? '').length + 2), Math.max(12, String(h).length + 2))),
+    }));
     XLSX.utils.book_append_sheet(wb, ws, String(s.name).slice(0, 31));
   }
   XLSX.writeFile(wb, filePath, filePath.toLowerCase().endsWith('.csv') ? { bookType: 'csv', FS: ';' } : undefined);
@@ -627,6 +630,49 @@ async function saveReturnPdf({ id } = {}) {
   }
   if (process.env.POS_NO_SHELL_OPEN !== '1') shell.openPath(filePath).catch(() => {});
   return { path: filePath, doc_no: doc.doc_no };
+}
+
+// Laporan stok (Daftar Barang → Unduh Laporan Stok): Excel stok per zona sesuai pencarian / filter yang tampil.
+// Lembar 1 = rincian per barang + baris TOTAL; lembar 2 = ringkasan (toko, waktu, filter, total per zona, nilai stok).
+const STOCK_FILTER_LABEL = { all: 'Semua barang', low: 'Display toko menipis', empty: 'Display toko habis', damaged: 'Ada barang BS', shopee: 'Ada stok Shopee' };
+async function stockReport({ q = '', filter = 'all' } = {}) {
+  const rows = await svc.listProducts({ q, filter, limit: 100000 });
+  if (!rows.length) throw userError('Tidak ada barang untuk dilaporkan (periksa pencarian / filter).');
+  const now = localNow();
+  const status = (p) => (p.floor_stock < 0 ? 'MINUS' : p.floor_stock === 0 ? 'HABIS' : p.floor_stock <= p.min_floor_alert ? 'MENIPIS' : 'AMAN');
+  const zones = ['floor_stock', 'warehouse_stock', 'damaged_stock', 'shopee_stock'];
+  const sum = (k) => rows.reduce((s, p) => s + (Number(p[k]) || 0), 0);
+  const totalOf = (p) => zones.reduce((s, k) => s + (Number(p[k]) || 0), 0);
+  const detail = rows.map((p, i) => [i + 1, p.sku, p.barcode, p.name, p.brand, p.category, p.unit_price,
+    p.floor_stock, p.warehouse_stock, p.damaged_stock, p.shopee_stock, totalOf(p), p.min_floor_alert, status(p)]);
+  detail.push(['', 'TOTAL', '', `${rows.length} barang`, '', '', '', ...zones.map(sum), rows.reduce((s, p) => s + totalOf(p), 0), '', '']);
+  const store = await getSettings();
+  const value = (k) => rows.reduce((s, p) => s + (Number(p[k]) || 0) * (Number(p.unit_price) || 0), 0);
+  const ZN = [['Display Toko', 'floor_stock'], ['Gudang Utama', 'warehouse_stock'], ['Gudang BS', 'damaged_stock'], ['Gudang Shopee', 'shopee_stock']];
+  const summary = [
+    ['Toko', store.store_name || '-'],
+    ['Waktu laporan', now.slice(0, 16)],
+    ['Filter', STOCK_FILTER_LABEL[filter] || filter],
+    ['Pencarian', String(q || '').trim() || '-'],
+    ['Jumlah barang', rows.length],
+    ['Display toko minus / habis / menipis', `${rows.filter((p) => status(p) === 'MINUS').length} / ${rows.filter((p) => status(p) === 'HABIS').length} / ${rows.filter((p) => status(p) === 'MENIPIS').length}`],
+    [],
+    ['Zona', 'Total Biji', 'Nilai (Harga Jual, Rp)'],
+    ...ZN.map(([label, k]) => [label, sum(k), value(k)]),
+    ['Total', zones.reduce((s, k) => s + sum(k), 0), zones.reduce((s, k) => s + value(k), 0)],
+  ];
+  const stamp = now.slice(0, 16).replace(/[-:]/g, '').replace(' ', '_');
+  const filePath = await saveWorkbook({
+    title: 'Simpan laporan stok',
+    fileName: `Laporan_Stok_${stamp}.xlsx`,
+    sheets: [
+      { name: 'Laporan Stok', textCols: ['B', 'C'],
+        headers: ['No', 'Kode Item', 'Barcode', 'Nama Barang', 'Merk', 'Kategori', 'Harga Jual', 'Display Toko', 'Gudang Utama', 'Gudang BS', 'Gudang Shopee', 'Total Stok', 'Min Display Toko', 'Status Display Toko'],
+        rows: detail },
+      { name: 'Ringkasan', headers: ['Laporan Stok', ''], rows: summary },
+    ],
+  });
+  return filePath ? { path: filePath, count: rows.length } : null;
 }
 
 function saveTemplate({ title, fileName, sheet, headers, sample, textCols }) {
@@ -873,6 +919,7 @@ const ACCESS = {
   'settings:get': ALL, 'printer:list': ALL, 'stock:low': ALL, 'shift:get': ALL,
   'products:list': ALL, 'products:categories': ALL, 'products:get': ALL, 'products:findByCode': ALL, 'products:search': ALL,
   'products:pullMaster': ALL,
+  'products:stockReport': ALL, // Unduh Laporan Stok (Excel) dari Daftar Barang
   'mb:sendSales': KASIR,
   // Tambah / ubah / hapus barang & unduh template: hanya Admin (tidak tercantum = Admin). Gudang hanya lewat Import
   'products:import': GUDANG,
@@ -977,6 +1024,7 @@ const handlers = {
   },
 
   'products:list': (a) => svc.listProducts(a),
+  'products:stockReport': (a) => stockReport(a),
   'products:categories': () => svc.categories(),
   'products:get': ({ sku }) => viaGudang(() => svc.getProduct(sku), () => offline.getProduct(sku)),
   'products:findByCode': (a) => viaGudang(() => svc.findByCode(a), () => offline.findByCode(a)),
