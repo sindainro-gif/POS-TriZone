@@ -1487,14 +1487,44 @@ views.returns = (() => {
   $('#rtSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadHistory, 200); });
 
   async function loadHistory() {
-    const rows = await api('returns:list', { q: $('#rtSearch').value, limit: 300 });
+    const kirim = $('#rtKirim').value;
+    const [rows, diToko] = await Promise.all([
+      api('returns:list', { q: $('#rtSearch').value, kirim, limit: 300 }),
+      api('returns:list', { kirim: 'toko', limit: 2000 }),
+    ]);
+    histRows = rows;
+    $('#rtTokoCount').textContent = diToko.length ? `${num(diToko.length)} retur barangnya masih di toko (belum dikirim)` : 'Semua retur sudah dikirim';
     $('#rtHistory').innerHTML = rows.length ? rows.map((d) => `<tr class="${d.cancelled_at ? 'cancelled' : ''}">
         <td class="muted">${fmtTime(d.created_at)}</td><td class="mono"><b>${esc(d.doc_no)}</b>${cancelledTag(d)}${d.short_count ? ` <span class="badge bs" title="Stok asal tidak cukup saat retur">Stok kurang ${num(d.short_count)}</span>` : ''}${d.ref_no ? `<div class="psub">${esc(d.ref_no)}</div>` : ''}</td>
         <td>${esc(d.supplier_name || '-')}</td><td>${zoneTag(d.from_zone)}</td>
         <td class="r">${num(d.line_count)}</td><td class="r"><b>${num(d.total_qty)}</b></td><td>${esc(d.reason || '-')}</td>
+        <td>${shipCell(d)}</td>
         <td><div class="btn-row"><button class="btn sm ghost" data-pdf="${d.id}" title="Unduh PDF Surat Retur untuk dicetak">PDF</button><button class="btn sm ghost" data-id="${d.id}">Detail</button></div></td></tr>`).join('')
-      : '<tr><td colspan="8" class="empty-row">Belum ada retur barang.</td></tr>';
+      : `<tr><td colspan="9" class="empty-row">${kirim === 'toko' ? 'Tidak ada retur yang barangnya masih di toko.' : kirim === 'dikirim' ? 'Belum ada retur yang ditandai dikirim.' : 'Belum ada retur barang.'}</td></tr>`;
   }
+  let histRows = [];
+  // Status kirim (centang per dokumen): ☐ Masih di toko / ☑ Dikirim + waktu & nama. Retur batal tanpa centang.
+  function shipCell(d) {
+    if (d.cancelled_at) return '<span class="muted">-</span>';
+    return d.shipped_at
+      ? `<label class="check ship-check"><input type="checkbox" data-ship="${d.id}" checked> <span><b>Dikirim</b><div class="psub">${fmtTime(d.shipped_at)}${d.shipped_by ? ` · ${esc(d.shipped_by)}` : ''}</div></span></label>`
+      : `<label class="check ship-check"><input type="checkbox" data-ship="${d.id}"> <span class="diff-neg">Masih di toko</span></label>`;
+  }
+  // Centang / batal centang (dengan konfirmasi)
+  async function setShipped(d, shipped) {
+    const ok = await confirmDialog(shipped ? 'Tandai Sudah Dikirim' : 'Batalkan Tanda Dikirim', shipped
+      ? `Tandai retur <b>${esc(d.doc_no)}</b>${d.supplier_name ? ` (${esc(d.supplier_name)})` : ''} — ${num(d.total_qty)} Biji — <b>sudah dimuat ke truk / dikembalikan ke gudang</b>?`
+      : `Batalkan tanda dikirim retur <b>${esc(d.doc_no)}</b>? Retur akan kembali tercatat <b>masih di toko</b>.`, { okLabel: shipped ? 'Ya, Sudah Dikirim' : 'Batalkan Tanda' });
+    if (ok) {
+      try {
+        await api('returns:ship', { id: d.id, shipped });
+        toast(shipped ? `Retur ${d.doc_no} ditandai sudah dikirim.` : `Tanda dikirim retur ${d.doc_no} dibatalkan.`, 'ok', 5000);
+      } catch (e) { sound('err'); toast(e.message, 'err', 7000); }
+    }
+    loadHistory();
+    return ok;
+  }
+  $('#rtKirim').addEventListener('change', loadHistory);
   // PDF Surat Retur Barang (A4): disimpan lalu dibuka, siap dicetak toko
   async function downloadPdf(id) {
     try {
@@ -1504,6 +1534,14 @@ views.returns = (() => {
   }
 
   $('#rtHistory').addEventListener('click', async (e) => {
+    // Centang status kirim: tanda baru berubah setelah dikonfirmasi
+    const ship = e.target.closest('input[data-ship]');
+    if (ship) {
+      e.preventDefault();
+      const row = histRows.find((x) => x.id === Number(ship.dataset.ship));
+      if (row) setShipped(row, !row.shipped_at);
+      return;
+    }
     const pdf = e.target.closest('[data-pdf]');
     if (pdf) { downloadPdf(Number(pdf.dataset.pdf)); return; }
     const b = e.target.closest('[data-id]');
@@ -1517,6 +1555,7 @@ views.returns = (() => {
         <div class="kv"><span>No. dokumen retur</span><b>${esc(d.ref_no || '-')}</b></div>
         <div class="kv"><span>Diambil dari</span><b>${zoneTag(d.from_zone)}</b></div>
         <div class="kv"><span>Alasan</span><b>${esc(d.reason || '-')}</b></div>
+        ${d.cancelled_at ? '' : `<div class="kv"><span>Status kirim</span><b>${d.shipped_at ? `Sudah dimuat / dikirim · ${fmtTime(d.shipped_at)}${d.shipped_by ? ` · ${esc(d.shipped_by)}` : ''}` : '<span class="diff-neg">Masih di toko</span>'}</b></div>`}
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="r">No</th><th>Kode Item</th><th>Keterangan</th><th class="r">Jumlah</th><th>Satuan</th></tr></thead><tbody>
         ${d.items.map((i, idx) => `<tr><td class="r muted">${idx + 1}</td><td class="mono">${esc(i.sku)}</td><td>${esc(i.name || i.sku)}</td><td class="r"><b>${num(i.pack_type === 'Coly' ? i.pack_qty : i.qty)}</b></td>
           <td>${i.pack_type === 'Coly' ? `Coly <span class="muted">(isi ${num(i.qty / i.pack_qty)}) = ${num(i.qty)} Biji</span>` : 'Biji'}</td></tr>`).join('')}
@@ -1526,6 +1565,7 @@ views.returns = (() => {
         ${!d.cancelled_at && d.cancel_block ? `<p class="muted small">${esc(d.cancel_block)}</p>` : ''}`,
       actions: [
         { label: 'Unduh PDF', kind: 'ghost', onClick: () => downloadPdf(d.id) },
+        ...(!d.cancelled_at ? [{ label: d.shipped_at ? 'Batalkan Tanda Dikirim' : 'Tandai Sudah Dikirim', kind: 'ghost', onClick: ({ close }) => { close(); setShipped(d, !d.shipped_at); } }] : []),
         ...(!d.cancel_block ? [{ label: 'Batalkan Retur', kind: 'danger', onClick: ({ close }) => { close(); cancelDoc(d); } }] : []),
         { label: 'Tutup', kind: 'primary' },
       ],

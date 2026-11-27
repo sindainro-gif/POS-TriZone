@@ -472,6 +472,34 @@ app.on('browser-window-created', (_e, win) => {
         || rtShortConfirm.ok !== 'Tetap Simpan' || !/Stok kurang 1/.test(rtShort.first) || rtShort.shorts.length !== 1 || !/SBN-005 Sabun Mandi 85g 3 5 2$/.test(rtShort.shorts[0])
         || svc.getProduct('SBN-005').damaged_stock !== bsSabun - 5) throw new Error('retur dengan stok Gudang BS tidak cukup seharusnya tetap tersimpan dan dicatat');
       await shot('04i-retur-catatan-stok-kurang');
+      // Status kirim (centang per dokumen): RB-…-001 dicentang dimuat / dikirim → filter "Masih di toko" hanya RB-…-002
+      const rtRow = (no) => `[...document.querySelectorAll('#rtHistory tr')].find((r) => r.innerText.includes(${JSON.stringify(no)}))`;
+      const rb1 = svc.listTransferDocs({ returns: true }).find((d) => /-001$/.test(d.doc_no));
+      const rb2 = svc.listTransferDocs({ returns: true }).find((d) => /-002$/.test(d.doc_no));
+      const tokoCount0 = await run(`document.querySelector('#rtTokoCount').innerText`);
+      await run(`${rtRow(rb1.doc_no)}.querySelector('input[data-ship]').click()`);
+      await wait(300);
+      const shipAsk = await run(`({ title: document.querySelector('#modalRoot .modal-head').innerText, box: ${rtRow(rb1.doc_no)}.querySelector('input[data-ship]').checked })`);
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(800);
+      const shipRow = await run(`${rtRow(rb1.doc_no)}.innerText.replace(/\\s+/g, ' ')`);
+      await run(`(() => { const s = document.querySelector('#rtKirim'); s.value = 'toko'; s.dispatchEvent(new Event('change')); })()`);
+      await wait(600);
+      const tokoRows = await run(`[...document.querySelectorAll('#rtHistory tr')].map((r) => r.innerText.replace(/\\s+/g, ' '))`);
+      const tokoCount = await run(`document.querySelector('#rtTokoCount').innerText`);
+      await run(`(() => { const s = document.querySelector('#rtKirim'); s.value = ''; s.dispatchEvent(new Event('change')); })()`);
+      await wait(500);
+      await run(`${rtRow(rb1.doc_no)}.querySelector('[data-id]').click()`);
+      await wait(500);
+      const shipDetail = await run(`({ body: document.querySelector('#modalRoot .modal-body').innerText.replace(/\\s+/g, ' '), btn: [...document.querySelectorAll('#modalRoot .modal-foot .btn')].map((b) => b.textContent).join(',') })`);
+      await shot('04j-retur-status-kirim');
+      await run(`document.querySelector('#modalRoot .btn.primary').click()`);
+      await wait(200);
+      console.log('status kirim retur:', JSON.stringify({ tokoCount0, shipAsk, shipRow, tokoRows, tokoCount, shipDetail: shipDetail.btn }));
+      if (!/2 retur barangnya masih di toko/.test(tokoCount0) || !/Tandai Sudah Dikirim/.test(shipAsk.title) || shipAsk.box || !/Dikirim .*Pemilik/.test(shipRow)
+        || tokoRows.length !== 1 || !tokoRows[0].includes(rb2.doc_no) || !/1 retur barangnya masih di toko/.test(tokoCount)
+        || !/Sudah dimuat \/ dikirim/.test(shipDetail.body) || /Batalkan Retur/.test(shipDetail.btn) || !/Batalkan Tanda Dikirim/.test(shipDetail.btn)
+        || !svc.getTransferDoc({ id: rb1.id }).shipped_at) throw new Error('centang status kirim retur tidak sesuai');
       if (svc.listTransferDocs().some((d) => d.to_zone === 'supplier')) throw new Error('retur seharusnya tidak muncul di riwayat Mutasi');
       await run(`go('transfers')`);
       await wait(500);

@@ -1154,11 +1154,13 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   // returns = true: riwayat Retur Barang (dokumen ke Supplier, termasuk mutasi Gudang BS → Supplier dari versi lama);
   // selain itu riwayat Mutasi tanpa retur.
-  function listTransferDocs({ limit = 200, q = '', returns = false } = {}) {
+  // kirim (khusus retur): 'toko' = barang masih di toko (belum dikirim, tidak batal) | 'dikirim' = sudah dimuat / dikirim
+  function listTransferDocs({ limit = 200, q = '', returns = false, kirim = '' } = {}) {
     const like = `%${String(q || '').trim()}%`;
+    const kirimSql = !returns ? '' : kirim === 'toko' ? ' AND d.shipped_at IS NULL AND d.cancelled_at IS NULL' : kirim === 'dikirim' ? ' AND d.shipped_at IS NOT NULL' : '';
     return db.all(
       `SELECT d.* FROM stock_transfer_docs d
-       WHERE d.to_zone ${returns ? '=' : '<>'} 'supplier'
+       WHERE d.to_zone ${returns ? '=' : '<>'} 'supplier'${kirimSql}
          AND (? = '%%' OR d.doc_no LIKE ? OR d.reason LIKE ? OR COALESCE(d.supplier_name, '') LIKE ? OR COALESCE(d.ref_no, '') LIKE ? OR EXISTS (
          SELECT 1 FROM stock_transfers t LEFT JOIN products p ON p.sku = t.sku WHERE t.doc_id = d.id AND (p.name LIKE ? OR t.sku LIKE ?)))
        ORDER BY d.id DESC LIMIT ?`,
@@ -1193,6 +1195,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
   function transferCancelBlock(d) {
     if (!d) return 'Dokumen mutasi tidak ditemukan.';
     if (d.cancelled_at) return `${d.to_zone === 'supplier' ? 'Retur' : 'Mutasi'} ini sudah dibatalkan.`;
+    if (d.to_zone === 'supplier' && d.shipped_at) return 'Retur ini sudah dimuat / dikirim. Hapus centang Sudah Dikirim dulu bila memang batal.';
     if (d.to_zone === 'supplier' && String(d.created_at || '') < cancelCutoff()) return `Hanya retur ${CANCEL_DAYS} hari terakhir yang bisa dibatalkan.`;
     if (/^MT-LAMA-/.test(d.doc_no)) return 'Mutasi dari versi lama tidak bisa dibatalkan.';
     if (/^Pesanan PSN-/.test(d.reason || '')) return 'Mutasi ini dibuat otomatis saat pesanan diambil, tidak bisa dibatalkan di sini.';
@@ -1248,6 +1251,27 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
         [localNow(), why, by, approved_by, r.id]);
     });
     return getReception({ id: r.id });
+  }
+
+  // Retur Barang: tandai barang sudah dimuat ke truk / dikirim (per dokumen). shipped = false → centang dibatalkan.
+  // Stok tidak berubah (sudah berkurang saat retur disimpan); hanya penanda barang fisik masih di toko / sudah dikirim.
+  function markReturnShipped({ id, shipped = true, by } = {}) {
+    const d = db.get('SELECT * FROM stock_transfer_docs WHERE id = ?', [Number(id) || 0]);
+    if (!d || d.to_zone !== 'supplier') fail('Dokumen retur tidak ditemukan.');
+    if (d.cancelled_at) fail('Retur ini sudah dibatalkan.');
+    const on = shipped === true || shipped === 1 || shipped === '1';
+    const who = toStr(by, 'Ditandai oleh', { max: 80 });
+    db.tx(() => db.run('UPDATE stock_transfer_docs SET shipped_at = ?, shipped_by = ? WHERE id = ?', on ? [localNow(), who, d.id] : [null, null, d.id]));
+    return getTransferDoc({ id: d.id });
+  }
+
+  // Untuk kantor: status kirim retur (60 hari terakhir, tidak batal) — ikut snapshot sebagai retur_dikirim.
+  // Yang belum dikirim ikut (dikirim_at null) supaya centang yang dibatalkan juga sampai ke kantor.
+  function returnShipmentsForMb() {
+    const d = new Date(`${localNow().slice(0, 10)}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 60);
+    return db.all(`SELECT doc_no AS no_dokumen, shipped_at AS dikirim_at, shipped_by AS dikirim_oleh FROM stock_transfer_docs
+                   WHERE to_zone = 'supplier' AND cancelled_at IS NULL AND created_at >= ? ORDER BY id`, [`${d.toISOString().slice(0, 10)} 00:00:00`]);
   }
 
   // Untuk kantor: mutasi & penerimaan yang dibatalkan dalam 60 hari terakhir (ikut snapshot)
@@ -1926,6 +1950,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
       } : null,
       orders: ordersForMb(),
       dokumen_batal: cancelledDocsForMb(),
+      retur_dikirim: returnShipmentsForMb(),
     };
   }
 
@@ -2168,7 +2193,7 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
     createOrder, getOrder, listOrders, ordersDue, completeOrder, cancelOrder,
     archiveShift, pruneShiftHistory, listShiftHistory,
     importOfflineSale, offlineChecks, markOfflineChecked,
-    createTransfer, listTransfers, createTransferDoc, createReturnDoc, returnSuppliers, listReturnShorts, listTransferDocs, getTransferDoc, cancelTransferDoc,
+    createTransfer, listTransfers, createTransferDoc, createReturnDoc, returnSuppliers, listReturnShorts, markReturnShipped, listTransferDocs, getTransferDoc, cancelTransferDoc,
     createReception, listReceptions, getReception, importReceptions, cancelReception,
     createOpname, listOpnames, getOpname, opnameSheet, planOpnameImport, importOpname,
     createReceptionDraft, listReceptionDrafts, countReceptionDrafts, processReceptionDraft, deleteReceptionDraft,

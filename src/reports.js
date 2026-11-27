@@ -128,6 +128,7 @@ ${doc.cancelled_at ? `<div class="batal">DIBATALKAN — retur ini tidak berlaku$
   <div><span>No. Dokumen Retur</span><b>${esc(doc.ref_no || '-')}</b></div>
   <div><span>Diambil dari</span><b>${esc(RETURN_FROM_LABEL[doc.from_zone] || doc.from_zone || '-')}</b></div>
   <div style="grid-column:1 / span 2"><span>Alasan retur</span><b>${esc(doc.reason || '-')}</b></div>
+  ${doc.shipped_at && !doc.cancelled_at ? `<div style="grid-column:1 / span 2"><span>Status</span><b>Sudah dimuat / dikirim ${esc(String(doc.shipped_at).replace(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}).*$/, '$3-$2-$1 $4'))}${doc.shipped_by ? ` (${esc(doc.shipped_by)})` : ''}</b></div>` : ''}
 </div>
 <table>
   <tr><th class="c" style="width:32px">No</th><th style="width:110px">Kode Item</th><th style="width:120px">Barcode</th><th>Nama Barang</th><th class="r" style="width:120px">Jumlah</th><th class="r" style="width:80px">Total Biji</th></tr>

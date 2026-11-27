@@ -1300,9 +1300,14 @@ function kartuPenjualanTokoItem(kartu) {
 const STATUS_RETUR = { COCOK: ['ok', 'Cocok'], BELUM_DI_ACCURATE: ['warn', 'Belum diinput Accurate'], LEBIH_DI_ACCURATE: ['bad', 'Lebih di Accurate'],
   BARANG_TIDAK_DIKENAL: ['bad', 'Barang tidak dikenal'], PELANGGAN_BELUM_DIPETAKAN: ['warn', 'Pelanggan belum dipetakan'] };
 const STATUS_DOK_RETUR = { SUDAH: ['ok', 'Sudah di Accurate'], SEBAGIAN: ['warn', 'Sebagian di Accurate'], BELUM: ['bad', 'Belum di Accurate'] };
+// Status kirim retur (dicentang toko per dokumen): barang masih di toko / sudah dimuat ke truk
+const KIRIM_RETUR = { TOKO: 'Masih di toko', DIKIRIM: 'Sudah dikirim' };
+const pillKirim = (r) => (r.dikirim_at
+  ? `<span class="pill ok" title="${esc(r.dikirim_oleh || '')}">Dikirim ${esc(fmtWaktu(r.dikirim_at))}</span>`
+  : '<span class="pill warn">Masih di toko</span>');
 
 async function hRetur(el, { tab } = {}) {
-  const f = S.retur || (S.retur = { tab: 'toko', toko: '', statusDok: '', statusCocok: 'masalah' });
+  const f = S.retur || (S.retur = { tab: 'toko', toko: '', statusDok: '', statusCocok: 'masalah', kirim: '' });
   f.tab = tab || f.tab;
   el.innerHTML = '<div id="rtIsi"></div>';
   const isi = $('#rtIsi', el);
@@ -1323,23 +1328,28 @@ async function hRetur(el, { tab } = {}) {
     const tgl = await mulai();
     isi.innerHTML = `<div class="card"><div class="card-head"><div><h2>Retur dari toko</h2>
         <div class="muted small">Status di Accurate: jumlah retur per barang di Accurate dipakai untuk retur toko yang paling lama dulu.
-        ${tgl ? `Dihitung sejak ${esc(fmtTgl(tgl))}.` : 'Dihitung sejak laporan retur Accurate pertama diunggah.'}</div></div>
+        ${tgl ? `Dihitung sejak ${esc(fmtTgl(tgl))}.` : 'Dihitung sejak laporan retur Accurate pertama diunggah.'}
+        Status kirim: dicentang toko setelah barang retur dimuat ke truk / dikembalikan ke gudang.</div></div>
       <div class="row">${pilihToko('rtToko', f.toko)}<select id="rtStatus" aria-label="Status">${[['', 'Semua status'], ...Object.entries(STATUS_DOK_RETUR).map(([k, [, l]]) => [k, l])]
-        .map(([v, l]) => `<option value="${v}" ${v === f.statusDok ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div></div>
+        .map(([v, l]) => `<option value="${v}" ${v === f.statusDok ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <select id="rtKirim" aria-label="Status kirim">${[['', 'Semua status kirim'], ...Object.entries(KIRIM_RETUR)]
+        .map(([v, l]) => `<option value="${v}" ${v === f.kirim ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div></div>
       <div id="rtDaftar"><div class="kosong">Memuat…</div></div></div>`;
     const muat = async () => {
       const box = $('#rtDaftar', isi);
-      const rows = await rpc('laporan_retur_toko', { p_kode_toko: f.toko || null, p_status: f.statusDok || null });
+      const rows = await rpc('laporan_retur_toko', { p_kode_toko: f.toko || null, p_status: f.statusDok || null, ...(f.kirim ? { p_kirim: f.kirim } : {}) });
       if (!box.isConnected) return;
       box.innerHTML = tabel([{ k: 'kode_toko', judul: 'Toko', fmt: (v) => `<b>${esc(v)}</b> <span class="muted">${esc(namaToko(v))}</span>` },
         { k: 'no_dok', judul: 'No. retur', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'waktu', judul: 'Tanggal', fmt: (v) => esc(fmtWaktu(v)) },
         { k: 'alasan', judul: 'Alasan' }, { k: 'jumlah_barang', judul: 'Barang', num: true, fmt: (v) => num(v) }, { k: 'qty', judul: 'Qty (Biji)', num: true, fmt: (v) => num(v) },
-        { k: 'qty_accurate', judul: 'Di Accurate', num: true, fmt: (v) => num(v) }, { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_DOK_RETUR, v) }],
+        { k: 'qty_accurate', judul: 'Di Accurate', num: true, fmt: (v) => num(v) }, { k: 'status', judul: 'Status', fmt: (v) => pill(STATUS_DOK_RETUR, v) },
+        { k: 'dikirim_at', judul: 'Status kirim', fmt: (_v, r) => pillKirim(r) }],
       rows, { klik: true, kosong: 'Belum ada retur ke supplier dari toko (di Trizone: menu Retur Barang).' });
       onBaris(box, rows, detail);
     };
     $('#rtToko', isi).addEventListener('change', (e) => { f.toko = e.target.value; muat(); });
     $('#rtStatus', isi).addEventListener('change', (e) => { f.statusDok = e.target.value; muat(); });
+    $('#rtKirim', isi).addEventListener('change', (e) => { f.kirim = e.target.value; muat(); });
     await muat();
   }
 
@@ -1348,7 +1358,7 @@ async function hRetur(el, { tab } = {}) {
     const nama = baris.length ? Object.fromEntries((await q(sb.from('produk_toko').select('sku,nama').eq('kode_toko', d.kode_toko).in('sku', baris.map((b) => b.sku)))).map((p) => [p.sku, p.nama])) : {};
     modal({
       judul: `Retur ${d.no_dok}`, lebar: true,
-      isi: `<p style="margin-top:0">${esc(d.kode_toko)} · ${esc(namaToko(d.kode_toko))} · ${esc(fmtWaktu(d.waktu))} · ${esc(d.alasan || '-')} · ${pill(STATUS_DOK_RETUR, d.status)}</p>
+      isi: `<p style="margin-top:0">${esc(d.kode_toko)} · ${esc(namaToko(d.kode_toko))} · ${esc(fmtWaktu(d.waktu))} · ${esc(d.alasan || '-')} · ${pill(STATUS_DOK_RETUR, d.status)} · ${pillKirim(d)}${d.dikirim_oleh ? ` <span class="muted small">oleh ${esc(d.dikirim_oleh)}</span>` : ''}</p>
         ${tabel([{ k: 'sku', judul: 'SKU', fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: 'nama', judul: 'Nama' },
           { k: 'qty', judul: 'Qty retur (Biji)', num: true, fmt: (v) => num(v) }, { k: 'qty_accurate', judul: 'Sudah di Accurate', num: true, fmt: (v) => num(v) },
           { k: 'kurang', judul: 'Belum', num: true, fmt: (v) => (v ? `<span class="pill warn">${num(v)}</span>` : '0') }],

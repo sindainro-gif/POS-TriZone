@@ -924,7 +924,7 @@ const ACCESS = {
   // Tambah / ubah / hapus barang & unduh template: hanya Admin (tidak tercantum = Admin). Gudang hanya lewat Import
   'products:import': GUDANG,
   'transfers:create': GUDANG, 'transfers:list': GUDANG, 'transfers:get': GUDANG,
-  'returns:create': RETUR, 'returns:list': RETUR, 'returns:suppliers': RETUR, 'returns:shorts': RETUR, 'returns:pdf': RETUR, // Retur Barang ke supplier
+  'returns:create': RETUR, 'returns:list': RETUR, 'returns:suppliers': RETUR, 'returns:shorts': RETUR, 'returns:pdf': RETUR, 'returns:ship': RETUR, // Retur Barang ke supplier
   'receptions:create': GUDANG, 'receptions:list': GUDANG, 'receptions:get': GUDANG,
   'transfers:cancel': GUDANG, 'receptions:cancel': GUDANG, // batal dokumen dengan PIN Admin / PIN Pembatalan
   'receptions:template': GUDANG, 'receptions:importFile': GUDANG, 'receptions:import': GUDANG,
@@ -1163,6 +1163,7 @@ const handlers = {
   'returns:suppliers': () => svc.returnSuppliers(),
   'returns:shorts': (a) => svc.listReturnShorts(a),
   'returns:pdf': (a) => saveReturnPdf(a), // PDF Surat Retur Barang (A4) untuk dicetak
+  'returns:ship': (a = {}) => svc.markReturnShipped({ ...a, by: session.name }), // centang sudah dimuat / dikirim
   'transfers:cancel': (a = {}) => withPinDelay(() => svc.cancelTransferDoc({ ...a, requested_by: session.name })),
   'receptions:cancel': (a = {}) => withPinDelay(() => svc.cancelReception({ ...a, requested_by: session.name })),
 

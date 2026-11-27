@@ -225,6 +225,27 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     for (const re of [/SURAT RETUR BARANG/, /Toko Uji/, /Jl\. A<br>Kota B/, new RegExp(rc.doc_no), /PT &lt;Coly&gt;/, /Gudang Utama/, /Retur Uji/, /2 Coly/, /isi 12/, /Diterima oleh/]) assert.match(html, re);
     assert.doesNotMatch(html, /DIBATALKAN/);
     assert.match(returnDocHtml({ doc: { ...s.getTransferDoc({ id: rc.id }), cancelled_at: '2026-01-01 10:00:00', cancel_reason: 'salah' } }), /DIBATALKAN/);
+    // Status kirim per dokumen: masih di toko → dicentang dikirim (waktu & nama) → batal centang; stok tidak berubah
+    const stockBefore = st();
+    const kirimOf = () => s.mbBatch({ force: true }).snapshot.retur_dikirim.find((x) => x.no_dokumen === rc.doc_no);
+    assert.deepStrictEqual(kirimOf(), { no_dokumen: rc.doc_no, dikirim_at: null, dikirim_oleh: null });
+    assert.ok(s.listTransferDocs({ returns: true, kirim: 'toko' }).some((d) => d.id === rc.id));
+    const shipped = s.markReturnShipped({ id: rc.id, shipped: true, by: 'Budi' });
+    assert.ok(shipped.shipped_at && shipped.shipped_by === 'Budi');
+    assert.deepStrictEqual(st(), stockBefore);
+    assert.deepStrictEqual([kirimOf().dikirim_at, kirimOf().dikirim_oleh], [shipped.shipped_at, 'Budi']);
+    assert.ok(!s.listTransferDocs({ returns: true, kirim: 'toko' }).some((d) => d.id === rc.id));
+    assert.deepStrictEqual(s.listTransferDocs({ returns: true, kirim: 'dikirim' }).map((d) => d.id), [rc.id]);
+    assert.match(s.getTransferDoc({ id: rc.id }).cancel_block, /sudah dimuat \/ dikirim/);
+    throwsMsg(() => s.cancelTransferDoc({ id: rc.id, reason: 'salah', approver_pin: '000000' }), /sudah dimuat \/ dikirim/);
+    assert.match(returnDocHtml({ doc: s.getTransferDoc({ id: rc.id }) }), /Sudah dimuat \/ dikirim .*\(Budi\)/);
+    s.markReturnShipped({ id: rc.id, shipped: false, by: 'Budi' });
+    assert.deepStrictEqual(kirimOf(), { no_dokumen: rc.doc_no, dikirim_at: null, dikirim_oleh: null });
+    assert.ok(!s.getTransferDoc({ id: rc.id }).cancel_block || !/dimuat/.test(s.getTransferDoc({ id: rc.id }).cancel_block));
+    // Bukan retur / retur batal → ditolak; mutasi biasa tidak punya status kirim
+    throwsMsg(() => s.markReturnShipped({ id: mt.id, shipped: true }), /Dokumen retur tidak ditemukan/);
+    throwsMsg(() => s.markReturnShipped({ id: r4.id, shipped: true }), /sudah dibatalkan/);
+    assert.ok(!s.mbBatch({ force: true }).snapshot.retur_dikirim.some((x) => x.no_dokumen === r4.doc_no || x.no_dokumen === mt.doc_no));
   });
 
   await t('batal mutasi & penerimaan: PIN Admin / Pembatalan, stok dikembalikan (boleh minus), 7 hari, dokumen otomatis ditolak', async () => {

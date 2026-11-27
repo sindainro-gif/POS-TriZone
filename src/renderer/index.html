@@ -227,11 +227,19 @@
       </div>
       <div class="card">
         <div class="card-head">
-          <h2>Riwayat Retur</h2>
-          <input id="rtSearch" class="search" placeholder="Cari no. retur / supplier / barang / alasan…">
+          <div><h2>Riwayat Retur</h2><div id="rtTokoCount" class="muted small"></div></div>
+          <div class="btn-row">
+            <select id="rtKirim" aria-label="Status kirim">
+              <option value="">Semua retur</option>
+              <option value="toko">Masih di toko</option>
+              <option value="dikirim">Sudah dikirim</option>
+            </select>
+            <input id="rtSearch" class="search" placeholder="Cari no. retur / supplier / barang / alasan…">
+          </div>
         </div>
+        <p class="muted small" style="margin-top:-4px">Centang <b>Status Kirim</b> setelah barang retur dimuat ke truk / dikembalikan ke gudang. Yang belum dicentang = barangnya masih di toko.</p>
         <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Waktu</th><th>No. Retur</th><th>Supplier</th><th>Dari</th><th class="r">Baris</th><th class="r">Total Biji</th><th>Alasan</th><th class="w-act"></th></tr></thead>
+          <thead><tr><th>Waktu</th><th>No. Retur</th><th>Supplier</th><th>Dari</th><th class="r">Baris</th><th class="r">Total Biji</th><th>Alasan</th><th>Status Kirim</th><th class="w-act"></th></tr></thead>
           <tbody id="rtHistory"></tbody>
         </table></div>
       </div>

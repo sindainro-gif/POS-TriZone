@@ -85,7 +85,7 @@ function fileAccurate() {
   run('postgres', ['-c', `drop database if exists ${DB}`]);
   run('postgres', ['-c', `create database ${DB}`]);
   const dir = path.join(__dirname, '..', 'supabase');
-  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'migrations/20261124000016_retur_barang.sql', 'migrations/20261124000017_penjualan_toko_item.sql', 'migrations/20261124000018_stok_penjualan_toko_item.sql', 'migrations/20261124000019_omzet_kategori_harian.sql', 'migrations/20261124000020_omzet_kategori_toko.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
+  for (const f of ['tests/stub_supabase.sql', 'migrations/20261116000001_mother_base.sql', 'migrations/20261116000002_aplikasi.sql', 'migrations/20261116000003_import_barang.sql', 'migrations/20261119000004_satuan_masuk.sql', 'migrations/20261119000005_tanpa_principal.sql', 'migrations/20261119000006_pembatalan_nota.sql', 'migrations/20261120000007_filter_stok.sql', 'migrations/20261120000008_pesanan_toko.sql', 'migrations/20261120000009_minta_update.sql', 'migrations/20261122000010_opname_kantor.sql', 'migrations/20261123000011_riwayat_stok.sql', 'migrations/20261123000012_dokumen_batal.sql', 'migrations/20261123000013_kata_sandi.sql', 'migrations/20261123000014_laporan_mutasi.sql', 'migrations/20261123000015_mutasi_penjualan.sql', 'migrations/20261124000016_retur_barang.sql', 'migrations/20261124000017_penjualan_toko_item.sql', 'migrations/20261124000018_stok_penjualan_toko_item.sql', 'migrations/20261124000019_omzet_kategori_harian.sql', 'migrations/20261124000020_omzet_kategori_toko.sql', 'migrations/20261127000021_retur_dikirim.sql', 'seed.sql']) run(DB, ['-f', path.join(dir, f)]);
   const q = (sql) => run(DB, [], sql + ';');
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   // Seperti Supabase: anon & authenticated punya hak tabel, RLS yang membatasi
@@ -748,12 +748,14 @@ function fileAccurate() {
 
   // Toko: BS diisi lewat opname, lalu 3 retur ke supplier (yang ketiga dibatalkan)
   T.createOpname({ zone: 'damaged', notes: 'Hitung BS', items: [{ sku: 'UJ-KESET', counted: 10 }, { sku: 'UJ-EMBER', counted: 5 }] });
-  T.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', reason: 'Retur BS 1', items: [{ sku: 'UJ-KESET', qty: 2 }, { sku: 'UJ-EMBER', qty: 2 }] });
+  // Trizone 1.23.16+: retur lewat menu Retur Barang (dokumen RB-…, tetap mutasi ke 'supplier' di mother base)
+  T.createReturnDoc({ from_zone: 'damaged', reason: 'Retur BS 1', items: [{ sku: 'UJ-KESET', qty: 2 }, { sku: 'UJ-EMBER', qty: 2 }] });
   tidur(1100);
-  T.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', reason: 'Retur BS 2', items: [{ sku: 'UJ-KESET', qty: 1 }] });
+  T.createReturnDoc({ from_zone: 'damaged', reason: 'Retur BS 2', items: [{ sku: 'UJ-KESET', qty: 1 }] });
   tidur(1100);
-  T.createTransferDoc({ from_zone: 'damaged', to_zone: 'supplier', reason: 'Retur BS salah', items: [{ sku: 'UJ-KESET', qty: 1 }] });
-  batalMt('Retur BS salah', 'Salah catat');
+  T.createReturnDoc({ from_zone: 'damaged', reason: 'Retur BS salah', items: [{ sku: 'UJ-KESET', qty: 1 }] });
+  const docRt = (alasan) => T.listTransferDocs({ returns: true }).find((d) => d.reason === alasan);
+  T.cancelTransferDoc({ id: docRt('Retur BS salah').id, reason: 'Salah catat', requested_by: 'Dewi', approver_pin: '246810' });
   await mb.kirim({ force: true });
 
   const retur1 = AR.bacaFileRetur(fileRetur(tglId(awalRetur), tglId(akhirRetur), [
@@ -781,6 +783,24 @@ function fileAccurate() {
     .map((r) => [r.alasan, [Number(r.qty), Number(r.qty_accurate), r.status]]));
   assert.deepStrictEqual(dokRetur(), { 'Retur BS 1': [4, 3, 'SEBAGIAN'], 'Retur BS 2': [1, 0, 'BELUM'] }); // FIFO: yang lama dulu
   assert.strictEqual(sebagai(ADMIN, "select count(*) from public.laporan_retur_toko('TRP', 'BELUM')"), '1');
+  // Status kirim (dicentang toko per dokumen) ikut snapshot retur_dikirim; dibatalkan centang → kembali "masih di toko"
+  const kirimRetur = () => Object.fromEntries(JSON.parse(sebagai(ADMIN, "select coalesce(json_agg(r), '[]') from public.laporan_retur_toko(null, null) r"))
+    .map((r) => [r.alasan, [!!r.dikirim_at, r.dikirim_oleh]]));
+  assert.deepStrictEqual(kirimRetur(), { 'Retur BS 1': [false, null], 'Retur BS 2': [false, null] });
+  T.markReturnShipped({ id: docRt('Retur BS 1').id, shipped: true, by: 'Dewi' });
+  tidur(1100);
+  await mb.kirim();
+  assert.deepStrictEqual(kirimRetur(), { 'Retur BS 1': [true, 'Dewi'], 'Retur BS 2': [false, null] });
+  assert.deepStrictEqual([sebagai(ADMIN, "select count(*) from public.laporan_retur_toko(null, null, 'TOKO')"), sebagai(ADMIN, "select count(*) from public.laporan_retur_toko(null, null, 'DIKIRIM')")], ['1', '1']);
+  assert.strictEqual(q("select mb.terapkan_retur_dikirim('TRP', " + lit(T.mbBatch({ force: true }).snapshot.retur_dikirim) + ')'), '0'); // isi sama → tidak ditulis ulang
+  T.markReturnShipped({ id: docRt('Retur BS 1').id, shipped: false, by: 'Dewi' });
+  tidur(1100);
+  await mb.kirim();
+  assert.deepStrictEqual(kirimRetur(), { 'Retur BS 1': [false, null], 'Retur BS 2': [false, null] });
+  T.markReturnShipped({ id: docRt('Retur BS 2').id, shipped: true, by: 'Dewi' });
+  tidur(1100);
+  await mb.kirim();
+  assert.deepStrictEqual(kirimRetur()['Retur BS 2'], [true, 'Dewi']);
 
   // Kantor menginput sisanya; impor ulang file yang sama tidak dobel
   const retur2 = AR.bacaFileRetur(fileRetur(tglId(awalRetur), tglId(akhirRetur), [
