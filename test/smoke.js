@@ -500,6 +500,22 @@ app.on('browser-window-created', (_e, win) => {
         || tokoRows.length !== 1 || !tokoRows[0].includes(rb2.doc_no) || !/1 retur barangnya masih di toko/.test(tokoCount)
         || !/Sudah dimuat \/ dikirim/.test(shipDetail.body) || /Batalkan Retur/.test(shipDetail.btn) || !/Batalkan Tanda Dikirim/.test(shipDetail.btn)
         || !svc.getTransferDoc({ id: rb1.id }).shipped_at) throw new Error('centang status kirim retur tidak sesuai');
+      // Batal centang perlu PIN Admin / PIN Pembatalan: PIN salah ditolak (tetap dikirim), PIN Admin menyetujui
+      await run(`${rtRow(rb1.doc_no)}.querySelector('input[data-ship]').click()`);
+      await wait(300);
+      const unshipAsk = await run(`({ title: (document.querySelector('#modalRoot .modal-head') || {}).innerText || '', pin: !!document.querySelector('#shipPin'),
+        box: ${rtRow(rb1.doc_no)}.querySelector('input[data-ship]').checked })`);
+      await run(`(() => { document.querySelector('#shipPin').value = '000000'; document.querySelector('#modalRoot .modal-foot .btn.danger').click(); })()`);
+      await wait(1600);
+      const unshipWrong = { shipped: !!svc.getTransferDoc({ id: rb1.id }).shipped_at, open: await run(`!!document.querySelector('#shipPin')`) };
+      await run(`(() => { document.querySelector('#shipPin').value = '111111'; document.querySelector('#modalRoot .modal-foot .btn.danger').click(); })()`);
+      await wait(1000);
+      const unshipRow = await run(`${rtRow(rb1.doc_no)}.innerText.replace(/\\s+/g, ' ')`);
+      const unshipToast = await run(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ')`);
+      console.log('batal centang kirim:', JSON.stringify({ unshipAsk, unshipWrong, unshipRow }));
+      if (!/Batalkan Tanda Dikirim/.test(unshipAsk.title) || !unshipAsk.pin || !unshipAsk.box || !unshipWrong.shipped || !unshipWrong.open
+        || !/PIN Admin \/ PIN Pembatalan salah/.test(unshipToast) || !/disetujui Pemilik/.test(unshipToast)
+        || svc.getTransferDoc({ id: rb1.id }).shipped_at || !/Masih di toko/.test(unshipRow)) throw new Error('batal centang kirim retur seharusnya perlu PIN');
       if (svc.listTransferDocs().some((d) => d.to_zone === 'supplier')) throw new Error('retur seharusnya tidak muncul di riwayat Mutasi');
       await run(`go('transfers')`);
       await wait(500);

@@ -793,7 +793,7 @@ function fileAccurate() {
   assert.deepStrictEqual(kirimRetur(), { 'Retur BS 1': [true, 'Dewi'], 'Retur BS 2': [false, null] });
   assert.deepStrictEqual([sebagai(ADMIN, "select count(*) from public.laporan_retur_toko(null, null, 'TOKO')"), sebagai(ADMIN, "select count(*) from public.laporan_retur_toko(null, null, 'DIKIRIM')")], ['1', '1']);
   assert.strictEqual(q("select mb.terapkan_retur_dikirim('TRP', " + lit(T.mbBatch({ force: true }).snapshot.retur_dikirim) + ')'), '0'); // isi sama → tidak ditulis ulang
-  T.markReturnShipped({ id: docRt('Retur BS 1').id, shipped: false, by: 'Dewi' });
+  T.markReturnShipped({ id: docRt('Retur BS 1').id, shipped: false, by: 'Dewi', approver_pin: '246810' }); // batal centang perlu PIN Admin / PIN Pembatalan
   tidur(1100);
   await mb.kirim();
   assert.deepStrictEqual(kirimRetur(), { 'Retur BS 1': [false, null], 'Retur BS 2': [false, null] });

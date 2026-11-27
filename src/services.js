@@ -1255,14 +1255,17 @@ function createServices(db, { encrypt = (s) => s, decrypt = (s) => s } = {}) {
 
   // Retur Barang: tandai barang sudah dimuat ke truk / dikirim (per dokumen). shipped = false → centang dibatalkan.
   // Stok tidak berubah (sudah berkurang saat retur disimpan); hanya penanda barang fisik masih di toko / sudah dikirim.
-  function markReturnShipped({ id, shipped = true, by } = {}) {
+  // Membatalkan centang yang sudah ada perlu persetujuan PIN Admin / PIN Pembatalan (pemegang PIN).
+  function markReturnShipped({ id, shipped = true, by, approver_pin } = {}) {
     const d = db.get('SELECT * FROM stock_transfer_docs WHERE id = ?', [Number(id) || 0]);
     if (!d || d.to_zone !== 'supplier') fail('Dokumen retur tidak ditemukan.');
     if (d.cancelled_at) fail('Retur ini sudah dibatalkan.');
     const on = shipped === true || shipped === 1 || shipped === '1';
     const who = toStr(by, 'Ditandai oleh', { max: 80 });
+    let approved_by = '';
+    if (!on && d.shipped_at) approved_by = approverAdmin(approver_pin);
     db.tx(() => db.run('UPDATE stock_transfer_docs SET shipped_at = ?, shipped_by = ? WHERE id = ?', on ? [localNow(), who, d.id] : [null, null, d.id]));
-    return getTransferDoc({ id: d.id });
+    return { ...getTransferDoc({ id: d.id }), approved_by };
   }
 
   // Untuk kantor: status kirim retur (60 hari terakhir, tidak batal) — ikut snapshot sebagai retur_dikirim.

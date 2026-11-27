@@ -239,7 +239,18 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.match(s.getTransferDoc({ id: rc.id }).cancel_block, /sudah dimuat \/ dikirim/);
     throwsMsg(() => s.cancelTransferDoc({ id: rc.id, reason: 'salah', approver_pin: '000000' }), /sudah dimuat \/ dikirim/);
     assert.match(returnDocHtml({ doc: s.getTransferDoc({ id: rc.id }) }), /Sudah dimuat \/ dikirim .*\(Budi\)/);
-    s.markReturnShipped({ id: rc.id, shipped: false, by: 'Budi' });
+    // Batal centang perlu PIN Admin / PIN Pembatalan; PIN kasir / tanpa PIN ditolak (tanda tetap)
+    s.saveUser({ name: 'Bos', role: 'admin', pin: '111111', active: true });
+    s.saveUser({ name: 'Rina', role: 'kasir', pin: '222222', active: true });
+    s.setVoidPin({ pin: '765432' });
+    throwsMsg(() => s.markReturnShipped({ id: rc.id, shipped: false, by: 'Budi' }), /PIN Admin \/ PIN Pembatalan salah/);
+    throwsMsg(() => s.markReturnShipped({ id: rc.id, shipped: false, by: 'Budi', approver_pin: '222222' }), /PIN Admin \/ PIN Pembatalan salah/);
+    assert.ok(s.getTransferDoc({ id: rc.id }).shipped_at);
+    assert.strictEqual(s.markReturnShipped({ id: rc.id, shipped: false, by: 'Budi', approver_pin: '765432' }).approved_by, 'Kepala Toko (PIN Pembatalan)');
+    // Belum dicentang: batal centang tanpa PIN tidak mengubah apa-apa; centang ulang lalu batal dengan PIN Admin
+    assert.strictEqual(s.markReturnShipped({ id: rc.id, shipped: false }).approved_by, '');
+    s.markReturnShipped({ id: rc.id, shipped: true, by: 'Budi' });
+    assert.strictEqual(s.markReturnShipped({ id: rc.id, shipped: false, approver_pin: '111111' }).approved_by, 'Bos');
     assert.deepStrictEqual(kirimOf(), { no_dokumen: rc.doc_no, dikirim_at: null, dikirim_oleh: null });
     assert.ok(!s.getTransferDoc({ id: rc.id }).cancel_block || !/dimuat/.test(s.getTransferDoc({ id: rc.id }).cancel_block));
     // Bukan retur / retur batal → ditolak; mutasi biasa tidak punya status kirim

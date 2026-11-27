@@ -1512,17 +1512,51 @@ views.returns = (() => {
   }
   // Centang / batal centang (dengan konfirmasi)
   async function setShipped(d, shipped) {
-    const ok = await confirmDialog(shipped ? 'Tandai Sudah Dikirim' : 'Batalkan Tanda Dikirim', shipped
-      ? `Tandai retur <b>${esc(d.doc_no)}</b>${d.supplier_name ? ` (${esc(d.supplier_name)})` : ''} — ${num(d.total_qty)} Biji — <b>sudah dimuat ke truk / dikembalikan ke gudang</b>?`
-      : `Batalkan tanda dikirim retur <b>${esc(d.doc_no)}</b>? Retur akan kembali tercatat <b>masih di toko</b>.`, { okLabel: shipped ? 'Ya, Sudah Dikirim' : 'Batalkan Tanda' });
+    if (!shipped) { unshipWithPin(d); return false; }
+    const ok = await confirmDialog('Tandai Sudah Dikirim',
+      `Tandai retur <b>${esc(d.doc_no)}</b>${d.supplier_name ? ` (${esc(d.supplier_name)})` : ''} — ${num(d.total_qty)} Biji — <b>sudah dimuat ke truk / dikembalikan ke gudang</b>?
+       <br><span class="muted small">Membatalkan tanda ini nanti perlu PIN Admin / PIN Pembatalan.</span>`, { okLabel: 'Ya, Sudah Dikirim' });
     if (ok) {
       try {
-        await api('returns:ship', { id: d.id, shipped });
-        toast(shipped ? `Retur ${d.doc_no} ditandai sudah dikirim.` : `Tanda dikirim retur ${d.doc_no} dibatalkan.`, 'ok', 5000);
+        await api('returns:ship', { id: d.id, shipped: true });
+        toast(`Retur ${d.doc_no} ditandai sudah dikirim.`, 'ok', 5000);
       } catch (e) { sound('err'); toast(e.message, 'err', 7000); }
     }
     loadHistory();
     return ok;
+  }
+  // Batal centang dikirim: perlu PIN Admin / PIN Pembatalan (kepala toko / pemegang PIN)
+  function unshipWithPin(d) {
+    modal({
+      title: `Batalkan Tanda Dikirim ${d.doc_no}`,
+      body: `<p class="muted small" style="margin-top:0">Retur ini sudah ditandai <b>dimuat / dikirim</b>${d.shipped_at ? ` (${fmtTime(d.shipped_at)}${d.shipped_by ? ` · ${esc(d.shipped_by)}` : ''})` : ''}.
+          Membatalkan tanda perlu persetujuan <b>PIN Admin</b> atau <b>PIN Pembatalan</b> (kepala toko / pemegang PIN). Retur akan kembali tercatat <b>masih di toko</b>.</p>
+        <div class="field"><label>PIN Admin / PIN Pembatalan *</label><input id="shipPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></div>`,
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        {
+          label: 'Batalkan Tanda',
+          kind: 'danger',
+          onClick: async ({ close, el, btn }) => {
+            btn.disabled = true;
+            try {
+              const r = await api('returns:ship', { id: d.id, shipped: false, approver_pin: $('#shipPin', el).value });
+              close();
+              toast(`Tanda dikirim retur ${d.doc_no} dibatalkan${r && r.approved_by ? ` (disetujui ${r.approved_by})` : ''}.`, 'ok', 6000);
+              loadHistory();
+            } catch (err) {
+              btn.disabled = false;
+              sound('err');
+              toast(err.message, 'err', 7000);
+              if (/PIN/.test(err.message)) { $('#shipPin', el).value = ''; $('#shipPin', el).focus(); }
+            }
+          },
+        },
+      ],
+      onOpen: (el) => $('#shipPin', el).addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); $('.modal-foot .btn.danger', el).click(); }
+      }),
+    });
   }
   $('#rtKirim').addEventListener('change', loadHistory);
   // PDF Surat Retur Barang (A4): disimpan lalu dibuka, siap dicetak toko

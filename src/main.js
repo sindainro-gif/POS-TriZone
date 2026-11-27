@@ -1163,7 +1163,8 @@ const handlers = {
   'returns:suppliers': () => svc.returnSuppliers(),
   'returns:shorts': (a) => svc.listReturnShorts(a),
   'returns:pdf': (a) => saveReturnPdf(a), // PDF Surat Retur Barang (A4) untuk dicetak
-  'returns:ship': (a = {}) => svc.markReturnShipped({ ...a, by: session.name }), // centang sudah dimuat / dikirim
+  // centang sudah dimuat / dikirim; batal centang perlu PIN Admin / PIN Pembatalan (PIN salah dijeda)
+  'returns:ship': (a = {}) => withPinDelay(() => svc.markReturnShipped({ ...a, by: session.name })),
   'transfers:cancel': (a = {}) => withPinDelay(() => svc.cancelTransferDoc({ ...a, requested_by: session.name })),
   'receptions:cancel': (a = {}) => withPinDelay(() => svc.cancelReception({ ...a, requested_by: session.name })),
 
