@@ -3449,48 +3449,81 @@ const mbCard = (() => {
 // ================================================================ Pengguna & hak akses (Admin)
 // ================================================================ PIN Pembatalan (Admin)
 // PIN untuk kepala toko menyetujui batal nota tanpa mengetahui PIN Admin. Admin bisa melihat & menggantinya.
+// PIN Pembatalan: beberapa pemegang (kepala toko, wakil, dll.), masing-masing nama & PIN sendiri. Hanya Admin.
 const voidPinCard = (() => {
   let info = null;
   let shown = false;
 
   function render() {
-    const set = !!(info && info.set);
-    $('#vpBadge').className = `badge ${set ? 'floor ok' : 'wh'}`;
-    $('#vpBadge').textContent = set ? 'Aktif' : 'Belum diatur';
-    $('#vpStatus').textContent = set ? `Sudah diatur · pemegang: ${info.holder} · diubah ${fmtTime(info.updated_at)}` : 'Belum diatur (hanya PIN Admin yang bisa menyetujui batal nota)';
-    $('#vpShown').textContent = set ? (shown && info.pin ? info.pin : '••••••') : '-';
-    $('#vpReveal').textContent = shown ? 'Sembunyikan' : 'Tampilkan PIN';
-    $('#vpReveal').disabled = !set;
-    $('#vpClear').disabled = !set;
-    if (set && !$('#vpHolder').value) $('#vpHolder').value = info.holder;
+    const holders = (info && info.holders) || [];
+    const n = info ? info.count : 0;
+    $('#vpBadge').className = `badge ${n ? 'floor ok' : 'wh'}`;
+    $('#vpBadge').textContent = n ? `${num(n)} pemegang aktif` : 'Belum diatur';
+    $('#vpBody').innerHTML = holders.length ? holders.map((h) => `<tr class="${h.active ? '' : 'muted'}">
+        <td><b>${esc(h.name)}</b></td><td><code class="big-code">${shown && h.pin ? esc(h.pin) : '••••••'}</code></td>
+        <td>${h.active ? '<span class="badge floor ok">Aktif</span>' : '<span class="badge wh">Nonaktif</span>'}</td><td class="muted">${fmtTime(h.updated_at)}</td>
+        <td><div class="btn-row"><button class="btn sm" data-vp-edit="${h.id}">Ubah</button><button class="btn sm danger" data-vp-del="${h.id}">Hapus</button></div></td></tr>`).join('')
+      : '<tr><td colspan="5" class="empty-row">Belum ada pemegang PIN Pembatalan — hanya PIN Admin yang bisa menyetujui batal nota & cetak ulang.</td></tr>';
+    $('#vpReveal').textContent = shown ? 'Sembunyikan PIN' : 'Tampilkan PIN';
+    $('#vpReveal').disabled = !holders.length;
   }
 
-  async function load() {
+  async function load(reveal = false) {
     if (role() !== 'admin') return;
-    shown = false;
-    try { info = await api('settings:voidPin', {}); } catch (e) { info = null; $('#vpStatus').textContent = e.message; return; }
+    shown = reveal;
+    try { info = await api('settings:voidPin', { reveal }); } catch (e) { info = null; $('#vpBody').innerHTML = `<tr><td colspan="5" class="empty-row">${esc(e.message)}</td></tr>`; return; }
     render();
   }
 
-  $('#vpReveal').addEventListener('click', async () => {
-    if (shown) { shown = false; render(); return; }
-    try { info = await api('settings:voidPin', { reveal: true }); shown = true; render(); } catch (e) { toast(e.message, 'err', 6000); }
-  });
-  $('#vpSave').addEventListener('click', async () => {
-    const pin = $('#vpPin').value.trim();
-    if (pin !== $('#vpPin2').value.trim()) { toast('Ulangi PIN tidak sama.', 'err'); $('#vpPin2').focus(); return; }
-    try {
-      info = await api('settings:setVoidPin', { pin, holder: $('#vpHolder').value });
-      $('#vpPin').value = '';
-      $('#vpPin2').value = '';
-      shown = false;
-      render();
-      toast(`PIN Pembatalan disimpan untuk ${info.holder}.`, 'ok', 6000);
-    } catch (e) { toast(e.message, 'err', 7000); }
-  });
-  $('#vpClear').addEventListener('click', async () => {
-    if (!(await confirmDialog('Hapus PIN Pembatalan', 'PIN Pembatalan tidak berlaku lagi; batal nota hanya bisa disetujui dengan PIN Admin. Lanjutkan?', { okLabel: 'Hapus PIN', danger: true }))) return;
-    try { info = await api('settings:clearVoidPin'); $('#vpHolder').value = ''; shown = false; render(); toast('PIN Pembatalan dihapus.', 'ok'); } catch (e) { toast(e.message, 'err', 6000); }
+  function openForm(h) {
+    modal({
+      title: h ? `Ubah Pemegang PIN — ${h.name}` : 'Tambah Pemegang PIN Pembatalan',
+      body: `<div class="field"><label>Nama pemegang *</label><input id="vhName" maxlength="40" placeholder="Contoh: Kepala Toko - Sari" value="${esc(h ? h.name : '')}"></div>
+        <div class="row-2">
+          <div class="field"><label>PIN ${h ? 'baru (kosongkan bila tidak diubah)' : '(6 digit) *'}</label><input id="vhPin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
+          <div class="field"><label>Ulangi PIN</label><input id="vhPin2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
+        </div>
+        <label class="check"><input type="checkbox" id="vhActive" ${!h || h.active ? 'checked' : ''}> Aktif (PIN bisa dipakai menyetujui)</label>`,
+      actions: [
+        { label: 'Batal', kind: 'ghost' },
+        {
+          label: 'Simpan',
+          kind: 'primary',
+          onClick: async ({ close, el }) => {
+            const pin = $('#vhPin', el).value.trim();
+            if (pin !== $('#vhPin2', el).value.trim()) { toast('Ulangi PIN tidak sama.', 'err'); $('#vhPin2', el).focus(); return; }
+            try {
+              const r = await api('settings:saveVoidHolder', { id: h ? h.id : undefined, name: $('#vhName', el).value, pin, active: $('#vhActive', el).checked });
+              close();
+              toast(`PIN Pembatalan ${h ? 'diperbarui' : 'ditambahkan'} untuk ${r.name}.`, 'ok', 5000);
+              load(shown);
+            } catch (e) { toast(e.message, 'err', 7000); }
+          },
+        },
+      ],
+      onOpen: (el) => {
+        const order = ['#vhName', '#vhPin', '#vhPin2'].map((s) => $(s, el));
+        order.forEach((f, i) => f.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          if (order[i + 1]) order[i + 1].focus(); else $('.modal-foot .btn.primary', el).click();
+        }));
+      },
+    });
+  }
+
+  $('#vpAdd').addEventListener('click', () => openForm(null));
+  $('#vpReveal').addEventListener('click', () => load(!shown));
+  $('#vpBody').addEventListener('click', async (e) => {
+    const ed = e.target.closest('[data-vp-edit]');
+    const del = e.target.closest('[data-vp-del]');
+    const id = Number(ed ? ed.dataset.vpEdit : del ? del.dataset.vpDel : 0);
+    const h = info && info.holders.find((x) => x.id === id);
+    if (ed && h) openForm(h);
+    if (del && h) {
+      if (!(await confirmDialog('Hapus Pemegang PIN', `Hapus PIN Pembatalan milik <b>${esc(h.name)}</b>? PIN-nya tidak bisa dipakai menyetujui lagi.`, { okLabel: 'Hapus', danger: true }))) return;
+      try { await api('settings:deleteVoidHolder', { id: h.id }); toast(`PIN Pembatalan ${h.name} dihapus.`, 'ok'); load(shown); } catch (err) { toast(err.message, 'err', 6000); }
+    }
   });
 
   return { load };

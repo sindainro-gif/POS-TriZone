@@ -100,15 +100,17 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
   await t('PIN Pembatalan: diatur Admin, tidak sama dengan PIN login, tersimpan terenkripsi, bisa dilihat, menyetujui batal nota', () => {
     // Tiruan enkripsi akun Windows: nilai tersimpan dibungkus, bukan PIN polos
     const sv = createServices(db, { encrypt: (s) => 'enc:' + Buffer.from(s).toString('base64'), decrypt: (s) => (s.startsWith('enc:') ? Buffer.from(s.slice(4), 'base64').toString() : '') });
-    assert.deepStrictEqual(sv.voidPinInfo(), { set: false, holder: 'Kepala Toko', updated_at: '' });
+    const info0 = sv.voidPinInfo();
+    assert.deepStrictEqual([info0.set, info0.count, info0.holders, info0.holder], [false, 0, [], 'Kepala Toko']);
     throwsMsg(() => sv.setVoidPin({ pin: '12345' }), /6 digit/);
     throwsMsg(() => sv.setVoidPin({ pin: 'abcdef' }), /6 digit/);
     throwsMsg(() => sv.setVoidPin({ pin: '222222' }), /sama dengan PIN login/); // PIN kasir
     throwsMsg(() => sv.setVoidPin({ pin: '111111' }), /sama dengan PIN login/); // PIN admin
     const info = sv.setVoidPin({ pin: '765432', holder: 'Kepala Toko - Sari' });
-    assert.deepStrictEqual([info.set, info.holder, info.pin], [true, 'Kepala Toko - Sari', undefined]);
-    assert.ok(info.updated_at);
-    assert.strictEqual(sv.voidPinInfo({ reveal: true }).pin, '765432');
+    assert.deepStrictEqual([info.set, info.holder, info.holders[0].pin], [true, 'Kepala Toko - Sari', undefined]);
+    assert.ok(info.holders[0].updated_at);
+    assert.strictEqual(sv.voidPinInfo({ reveal: true }).holders[0].pin, '765432');
+    assert.strictEqual(db.get("SELECT COUNT(*) AS n FROM void_approvers WHERE pin_enc LIKE '%765432%'").n, 0);
     assert.strictEqual(db.get("SELECT COUNT(*) AS n FROM settings WHERE value LIKE '%765432%'").n, 0);
     assert.ok(!JSON.stringify(sv.getSettings()).includes('765432'));
     // PIN login baru tidak boleh sama dengan PIN Pembatalan
@@ -126,6 +128,52 @@ const throwsMsg = (fn, re) => assert.throws(fn, (e) => re.test(e.message), `haru
     assert.strictEqual(sv.clearVoidPin().set, false);
     throwsMsg(() => voidWith(sell(), '765432'), /PIN Admin \/ PIN Pembatalan salah/);
     throwsMsg(() => sv.checkApprover({ approver_pin: '765432' }), /PIN Admin \/ PIN Pembatalan salah/);
+  });
+
+  await t('PIN Pembatalan beberapa pemegang: nama & PIN sendiri, PIN tidak boleh kembar, nonaktif / hapus, PIN versi lama dipindah', () => {
+    const enc = (x) => 'enc:' + Buffer.from(x).toString('base64');
+    const dec = (x) => (String(x).startsWith('enc:') ? Buffer.from(String(x).slice(4), 'base64').toString() : '');
+    createServices(db, { encrypt: enc, decrypt: dec }).clearVoidPin();
+    // Versi lama: satu PIN di settings → jadi pemegang pertama saat dibaca
+    db.tx(() => {
+      db.run("INSERT OR REPLACE INTO settings(key, value) VALUES('void_pin', ?)", [enc('741852')]);
+      db.run("INSERT OR REPLACE INTO settings(key, value) VALUES('void_pin_holder', 'Kepala Toko Lama')");
+    });
+    const sv2 = createServices(db, { encrypt: enc, decrypt: dec });
+    assert.deepStrictEqual(sv2.voidPinInfo({ reveal: true }).holders.map((h) => [h.name, h.pin, h.active]), [['Kepala Toko Lama', '741852', true]]);
+    assert.strictEqual(db.get("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'void_pin%'").n, 0);
+    assert.strictEqual(sv2.checkApprover({ approver_pin: '741852' }).approved_by, 'Kepala Toko Lama (PIN Pembatalan)');
+    // Tambah pemegang lain: persetujuan atas nama masing-masing
+    const sari = sv2.saveVoidHolder({ name: 'Sari', pin: '963852' });
+    sv2.saveVoidHolder({ name: 'Dedi', pin: '159357' });
+    assert.strictEqual(sv2.voidPinInfo().count, 3);
+    assert.strictEqual(sv2.checkApprover({ approver_pin: '963852' }).approved_by, 'Sari (PIN Pembatalan)');
+    assert.strictEqual(sv2.checkApprover({ approver_pin: '159357' }).approved_by, 'Dedi (PIN Pembatalan)');
+    throwsMsg(() => sv2.saveVoidHolder({ name: 'Budi', pin: '963852' }), /sudah dipakai pemegang/);
+    throwsMsg(() => sv2.saveVoidHolder({ name: 'sari', pin: '111222' }), /sudah ada/);
+    throwsMsg(() => sv2.saveVoidHolder({ name: 'Budi', pin: '111111' }), /PIN login/);
+    throwsMsg(() => sv2.saveVoidHolder({ name: 'Budi' }), /6 digit/);
+    throwsMsg(() => sv2.saveUser({ name: 'Eko', role: 'kasir', pin: '159357' }), /PIN Pembatalan/);
+    // Ubah nama tanpa PIN = PIN lama tetap; lalu ubah PIN
+    sv2.saveVoidHolder({ id: sari.id, name: 'Sari (Wakil)' });
+    assert.strictEqual(sv2.checkApprover({ approver_pin: '963852' }).approved_by, 'Sari (Wakil) (PIN Pembatalan)');
+    sv2.saveVoidHolder({ id: sari.id, name: 'Sari (Wakil)', pin: '852963' });
+    throwsMsg(() => sv2.checkApprover({ approver_pin: '963852' }), /PIN Pembatalan salah/);
+    assert.strictEqual(sv2.checkApprover({ approver_pin: '852963' }).approved_by, 'Sari (Wakil) (PIN Pembatalan)');
+    // Nonaktif → PIN tidak berlaku (tetap di daftar); aktif lagi → berlaku
+    sv2.saveVoidHolder({ id: sari.id, name: 'Sari (Wakil)', active: false });
+    throwsMsg(() => sv2.checkApprover({ approver_pin: '852963' }), /PIN Pembatalan salah/);
+    assert.deepStrictEqual([sv2.voidPinInfo().count, sv2.voidPinInfo().holders.length], [2, 3]);
+    sv2.saveVoidHolder({ id: sari.id, name: 'Sari (Wakil)', active: true });
+    assert.strictEqual(sv2.checkApprover({ approver_pin: '852963' }).approved_by, 'Sari (Wakil) (PIN Pembatalan)');
+    // Hapus satu pemegang → hanya PIN-nya yang tidak berlaku
+    sv2.deleteVoidHolder({ id: sari.id });
+    throwsMsg(() => sv2.checkApprover({ approver_pin: '852963' }), /PIN Pembatalan salah/);
+    assert.strictEqual(sv2.checkApprover({ approver_pin: '159357' }).approved_by, 'Dedi (PIN Pembatalan)');
+    // setVoidPin (cara lama) memperbarui pemegang bernama sama, bukan menambah
+    sv2.setVoidPin({ pin: '258147', holder: 'dedi' });
+    assert.deepStrictEqual(sv2.voidPinInfo({ reveal: true }).holders.map((h) => [h.name, h.pin]), [['Dedi', '258147'], ['Kepala Toko Lama', '741852']]);
+    sv2.clearVoidPin();
   });
 
   console.log(`\n${passed} tes batal nota lulus${process.exitCode ? ', ada yang GAGAL' : ''}.`);

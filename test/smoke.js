@@ -985,14 +985,29 @@ app.on('browser-window-created', (_e, win) => {
       await run(`document.querySelector('[data-view=settings]').click()`);
       await wait(800);
       await shot('10-pengaturan-pengguna');
-      // PIN Pembatalan untuk kepala toko: diisi Admin di Pengaturan, bisa ditampilkan lagi
-      await run(`(() => { document.querySelector('#vpCard').scrollIntoView(); document.querySelector('#vpHolder').value = 'Kepala Toko'; document.querySelector('#vpPin').value = '765432'; document.querySelector('#vpPin2').value = '765432'; document.querySelector('#vpSave').click(); })()`);
-      await wait(800);
+      // PIN Pembatalan: beberapa pemegang (nama & PIN masing-masing), diisi Admin di Pengaturan, bisa ditampilkan lagi
+      const addHolder = async (name, pin) => {
+        await run(`document.querySelector('#vpCard').scrollIntoView(); document.querySelector('#vpAdd').click()`);
+        await wait(300);
+        await run(`(() => { const m = document.querySelector('#modalRoot'); m.querySelector('#vhName').value = ${JSON.stringify(name)};
+          m.querySelector('#vhPin').value = ${JSON.stringify(pin)}; m.querySelector('#vhPin2').value = ${JSON.stringify(pin)}; m.querySelector('.modal-foot .btn.primary').click(); })()`);
+        await wait(700);
+      };
+      await addHolder('Kepala Toko', '765432');
+      await addHolder('Wakil - Dedi', '765123');
+      await addHolder('Dobel', '765432'); // PIN sama dengan pemegang lain → ditolak
+      const vpDup = await run(`({ modal: !!document.querySelector('#modalRoot .modal-back'), toast: [...document.querySelectorAll('#toasts .toast')].map((t) => t.innerText).join(' | ') })`);
+      await run(`document.querySelector('#modalRoot .modal-foot .btn.ghost').click()`);
       await run(`document.querySelector('#vpReveal').click()`);
       await wait(600);
-      const vp = await run(`({ shown: document.querySelector('#vpShown').textContent, status: document.querySelector('#vpStatus').textContent, badge: document.querySelector('#vpBadge').textContent })`);
-      console.log('PIN Pembatalan:', JSON.stringify(vp));
-      if (vp.shown !== '765432' || !/Kepala Toko/.test(vp.status) || vp.badge !== 'Aktif') throw new Error('PIN Pembatalan tidak tersimpan / tidak bisa ditampilkan');
+      const vp = await run(`({ rows: [...document.querySelectorAll('#vpBody tr')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim()), badge: document.querySelector('#vpBadge').textContent })`);
+      console.log('PIN Pembatalan:', JSON.stringify({ vp, vpDup }));
+      if (vp.rows.length !== 2 || !/^Kepala Toko 765432 Aktif/.test(vp.rows[0]) || !/^Wakil - Dedi 765123 Aktif/.test(vp.rows[1]) || vp.badge !== '2 pemegang aktif'
+        || !vpDup.modal || !/sudah dipakai pemegang PIN Pembatalan lain/.test(vpDup.toast)) throw new Error('PIN Pembatalan (beberapa pemegang) tidak tersimpan / tidak bisa ditampilkan');
+      // Persetujuan tercatat atas nama pemegang PIN-nya
+      if (svc.checkApprover({ approver_pin: '765123' }).approved_by !== 'Wakil - Dedi (PIN Pembatalan)' || svc.checkApprover({ approver_pin: '765432' }).approved_by !== 'Kepala Toko (PIN Pembatalan)') {
+        throw new Error('persetujuan PIN Pembatalan tidak memakai nama pemegang');
+      }
       await shot('10c-pin-pembatalan');
       await run(`document.querySelector('#vpReveal').click()`);
       // Kartu Mother Base: belum diatur → isi lewat layar → tersimpan (kunci tidak tampil); kirim gagal tanpa server

@@ -1005,6 +1005,9 @@ const handlers = {
   'settings:voidPin': (a = {}) => svc.voidPinInfo({ reveal: !!a.reveal }),
   'settings:setVoidPin': (a) => svc.setVoidPin(a),
   'settings:clearVoidPin': () => svc.clearVoidPin(),
+  // Beberapa pemegang PIN Pembatalan (nama & PIN masing-masing)
+  'settings:saveVoidHolder': (a) => svc.saveVoidHolder(a),
+  'settings:deleteVoidHolder': (a) => svc.deleteVoidHolder(a),
   'settings:save': async (a) => {
     defaultPrinterCache = null;
     const own = {};

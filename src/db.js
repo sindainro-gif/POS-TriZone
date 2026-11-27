@@ -292,6 +292,17 @@ CREATE TABLE IF NOT EXISTS checkout_refs (
     created_at DATETIME DEFAULT (datetime('now','localtime'))
 );
 
+-- Pemegang PIN Pembatalan (kepala toko, dll.): bisa beberapa orang, masing-masing PIN sendiri, untuk menyetujui
+-- batal nota / cetak ulang / batal dokumen. PIN terenkripsi akun Windows (pin_enc), Admin bisa menampilkannya lagi.
+CREATE TABLE IF NOT EXISTS void_approvers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    pin_enc TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME,
+    updated_at DATETIME
+);
+
 -- Akun login: admin (semua menu), gudang, manukan (= gudang tanpa Retur Barang), kasir. PIN disimpan sebagai hash scrypt.
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
